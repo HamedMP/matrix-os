@@ -1,7 +1,7 @@
 import { canonicalChatApprovals, canonicalChatInputs, canonicalAssistantOutputMessages, canonicalAssistantOutputRootId } from "@matrix-os/contracts";
 import type { CanonicalChatMessage, CanonicalChatRun, CanonicalChatRunActivity, CanonicalChatTurn } from "@matrix-os/contracts";
 import { chatAgentAttribution, routineReceiptMessage, slackRuleReceiptMessage } from "@matrix-os/ui";
-import { nativeScheduledMessage } from "@matrix-os/ui/chat-scheduled-message";
+import { isNativeScheduledInput, isPrivateAutomationInput, nativeScheduledMessage } from "@matrix-os/ui/chat-scheduled-message";
 import type { ConversationTurnPresentation, ConversationWorkPresentation } from "../../components/conversation/presentation";
 import { historicalChatPresentation } from "./historical-chat-presentation";
 import { messagePresentation, messageWork, hasDisplayableMessageContent, promotedAssistantArtifacts, withoutAttachmentReferences } from "./canonical-chat-message-presentation";
@@ -35,7 +35,11 @@ export function canonicalChatPresentation(input: {
       return historicalChatPresentation(historical, turn.id, turn.inputMessageId);
     }
     const userMessage = input.messages.find((message) => message.id === turn.inputMessageId);
-    const scheduledMessage = userMessage && nativeScheduledMessage(userMessage, { chatId: input.record?.chat.id, turns: input.turns, runs: input.runs });
+    const messageContext = { chatId: input.record?.chat.id, turns: input.turns, runs: input.runs };
+    const scheduledMessage = userMessage && nativeScheduledMessage(userMessage, messageContext);
+    // Transcript handles anchored native rows; the exact input remains private when its Run ages out.
+    const hideUserMessage = userMessage && (isPrivateAutomationInput(userMessage, messageContext)
+      || (!scheduledMessage && isNativeScheduledInput(userMessage, messageContext)));
     const userFollowups = input.messages.filter((message) => (
       message.turnId === turn.id
       && message.role === "user"
@@ -151,7 +155,7 @@ export function canonicalChatPresentation(input: {
       startedAt,
       endedAt,
       active: isActiveRun(run),
-      ...(userMessage ? { user: { ...messagePresentation(userMessage, "commentary"), ...(scheduledMessage ? { scheduledMessage } : {}) } } : {}),
+      ...(userMessage && !hideUserMessage ? { user: { ...messagePresentation(userMessage, "commentary"), ...(scheduledMessage ? { scheduledMessage } : {}) } } : {}),
       ...(userFollowups.length > 0
         ? { userFollowups: userFollowups.map((message) => messagePresentation(message, "commentary")) }
         : {}),

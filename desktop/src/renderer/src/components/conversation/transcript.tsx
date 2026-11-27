@@ -332,7 +332,9 @@ function ConversationTurn({
   const timeline = turn.timeline;
   return (
     <>
-      {turn.user ? <UserMessage message={turn.user} callbacks={scopedCallbacks} scheduled={scheduled}/> : null}
+      {turn.user?.scheduledMessage ? null : scheduled && scheduled.fire.attempts > 0 ? (
+        scheduled.fire.status === "completed" ? null : <RoutineOccurrenceMessage occurrence={scheduled}/>
+      ) : turn.user ? <UserMessage message={turn.user} callbacks={scopedCallbacks} /> : null}
       <ChatContextReceipt context={turn.runContext} />
       <div data-agent-message-body={turn.id} className="min-w-0">
       {hasWork || turn.final || turn.active ? (
@@ -431,6 +433,7 @@ export function ConversationTranscript({
   const nested:RoutineOccurrence[][]=visibleTurns.map(()=>[]);
   const rows=routineMessageTimeline(visibleTurns,routines?.occurrences??[],row=>row.turn.user?row.turn.routineRequestId:undefined,row=>row.turn.user?.timestamp??row.turn.startedAt).filter(row=>{
     if(row.kind!=="occurrence")return true;
+    if (row.occurrence.fire.status === "completed") return false;
     const at=Date.parse(row.occurrence.fire.scheduledFor);
     const index=visibleTurns.findIndex(({turn})=>(turn.user?.timestamp??turn.startedAt)<=at&&at<=(turn.active?Date.now():turn.endedAt));
     if(index<0)return true;

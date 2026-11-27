@@ -46,8 +46,8 @@ import type {
   CanonicalProviderInstanceDescriptor,
   CanonicalProviderSetupAction,
 } from "@matrix-os/contracts";
-import { botTranscriptPlacement, BotTranscriptRunState, BotTranscriptFallback, BotTranscriptMessages, BotTranscriptLayout, BotScheduledInputText } from "./BotTranscriptState";
-import {RoutineMessageMeta,RoutineMessageReadNotice,ScheduledMessageMeta} from "@matrix-os/ui";
+import { botTranscriptPlacement, BotTranscriptRunState, BotTranscriptFallback, BotTranscriptMessages, BotTranscriptLayout } from "./BotTranscriptState";
+import {RoutineOccurrenceMessage, RoutineMessageReadNotice} from "@matrix-os/ui";
 import { type ChatMessage, groupMessages } from "@/lib/chat";
 import {
   Conversation,
@@ -771,14 +771,23 @@ function ChatAppContent({
                     return <div key={`tg-${id}`}><ToolCallGroup tools={group.messages} /><BotTranscriptRunState placement={botTranscript} index={groupIndex}/>{review}</div>;
                   }
                   const msg = group.message;
+                  const anchoredContent = <>
+                    <ChatContextReceipt context={ChatRunContextSchema.safeParse(msg.metadata?.chatRunContext).data} />
+                    <BotTranscriptRunState placement={botTranscript} index={groupIndex}/>
+                    {review}
+                  </>;
+                  if (msg.scheduledMessage) return anchoredContent;
+                  if (scheduled && scheduled.fire.attempts > 0) return <>
+                    {scheduled.fire.status === "completed" ? null : <RoutineOccurrenceMessage occurrence={scheduled}/>}
+                    {anchoredContent}
+                  </>;
                   return (
                     <div key={msg.id}>
-                      {msg.routineReceipt ? <RoutineReceipt sourceChatId={sessionId} receipt={msg.routineReceipt} text={msg.content} onOpenChat={onSwitchConversation}/> : msg.role === "user" || msg.scheduledMessage ? (
+                      {msg.routineReceipt ? <RoutineReceipt sourceChatId={sessionId} receipt={msg.routineReceipt} text={msg.content} onOpenChat={onSwitchConversation}/> : msg.role === "user" ? (
                         <Message from="user">
-                          {scheduled?<RoutineMessageMeta occurrence={scheduled}/>:msg.scheduledMessage?<ScheduledMessageMeta {...msg.scheduledMessage}/>:null}
                           {msg.attachments?.length ? <ChatAttachments attachments={msg.attachments} open={openMessageFile} loadImage={loadShellChatImage} /> : null}
                           {msg.content.trim() ? <MessageContent className="group-[.is-user]:rounded-2xl leading-relaxed">
-                            <BotScheduledInputText text={msg.content} scheduled={Boolean(scheduled || msg.scheduledMessage)}/>
+                            <span className="whitespace-pre-wrap break-words">{msg.content}</span>
                           </MessageContent> : null}
                         </Message>
                       ) : msg.metadata?.canonicalInput ? (
@@ -820,9 +829,7 @@ function ChatAppContent({
                       onAction={submitWithHermesSetup}
                     />
                       )}
-                    <ChatContextReceipt context={ChatRunContextSchema.safeParse(msg.metadata?.chatRunContext).data} />
-                    <BotTranscriptRunState placement={botTranscript} index={groupIndex}/>
-                    {review}
+                    {anchoredContent}
                     </div>
                   );
                 }}</BotTranscriptMessages>

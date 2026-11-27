@@ -2,7 +2,7 @@ import { canonicalChatToolActivities, canonicalChatInputs, canonicalChatApproval
 import { routineReceiptMessage, slackRuleReceiptMessage } from "@matrix-os/ui";
 import type { ChatMessage } from "./chat";
 import { projectCanonicalMessages } from "./canonical-chat-client";
-import { nativeScheduledMessage } from "@matrix-os/ui/chat-scheduled-message";
+import { isNativeScheduledInput, isPrivateAutomationInput, nativeScheduledMessage } from "@matrix-os/ui/chat-scheduled-message";
 
 /** Keep terminal outcomes attached to their turn, using only safe fixed copy. */
 export function projectCanonicalTranscript(detail: CanonicalChatDetailResponse): ChatMessage[] {
@@ -89,7 +89,13 @@ export function projectCanonicalTranscript(detail: CanonicalChatDetailResponse):
       ...(notice.code ? { metadata: { canonicalFailureCode: notice.code } } : {}),
     });
   }
-  return messages;
+  const automationContext = { chatId: detail.record?.chat.id, turns: detail.turns };
+  return messages.filter(message => {
+    const source = sourceById[message.id];
+    // Anchored native rows are suppressed by the transcript. Older rows may no longer carry the original Run.
+    return !source || (!isPrivateAutomationInput(source, automationContext)
+      && (message.scheduledMessage !== undefined || !isNativeScheduledInput(source, automationContext)));
+  });
 }
 
 type ActivityAnchor = { sequence?: number; time: number };

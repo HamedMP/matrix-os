@@ -7,7 +7,6 @@ import { compile } from "@tailwindcss/node";
 import { Scanner } from "@tailwindcss/oxide";
 import { beforeAll, expect, it } from "vitest";
 import type { ElectronApplication, Page } from "playwright";
-import { nativeScheduledMessageFixture } from "../helpers/native-scheduled-message-fixture";
 
 const root = resolve(import.meta.dirname, "../..");
 const requireDesktop = createRequire(join(root, "desktop/package.json"));
@@ -55,27 +54,19 @@ function documentFor(surface: string) {
     </style></head><body class="${surface === "electron" ? "" : "matrix-shell-fonts"}"><div id="root"></div></body></html>`;
 }
 async function verify(page: Page, name: string) {
-  await page.getByText("Scheduled result.", { exact: true }).waitFor({ timeout: 5000 });
-  expect(await page.getByText("Sent by scheduled task", { exact: true }).count()).toBe(1);
-  const time = page.locator("[data-scheduled-message] time");
-  const timestamp = nativeScheduledMessageFixture().messages[0]!.createdAt;
-  expect(await time.getAttribute("datetime")).toBe(timestamp);
-  // The saved input is Aug 25 00:00Z; the Web contexts explicitly use en-US/Shanghai.
-  if (name !== "electron") expect(await time.textContent()).toBe("Aug 25, 8:00 AM");
-  else expect(await time.textContent()).toBeTruthy();
-  const bounds = await page.locator("[data-scheduled-message]").boundingBox();
+  const result = page.getByText("Scheduled result.", { exact: true });
+  await result.waitFor({ timeout: 5000 });
+  expect(await page.locator("[data-scheduled-message]").count()).toBe(0);
+  expect(await page.getByText("Scheduled task triggered.", { exact: true }).count()).toBe(0);
+  const bounds = await result.boundingBox();
   expect(bounds!.width).toBeGreaterThan(0);
   expect(bounds!.x).toBeGreaterThanOrEqual(0);
   expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(page.viewportSize()!.width);
-  // A visible label alone does not prove the host theme/bubble CSS was loaded.
-  const input = page.getByText("Scheduled task triggered.", { exact: true });
-  const bubble = name === "electron" ? input.locator('xpath=ancestor::*[@data-slot="bubble-content"][1]') : input.locator("..");
-  expect(await bubble.evaluate(element => getComputedStyle(element).backgroundColor)).not.toBe("rgba(0, 0, 0, 0)");
   await page.evaluate(() => document.fonts.ready);
   await page.screenshot({ path: join(output, `${name}.png`) });
 }
 
-it.each(["web", "web-mobile"])("renders the shared native input row in %s with localized time and no network", async surface => {
+it.each(["web", "web-mobile"])("renders only the scheduled reply in %s without network access", async surface => {
   const browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE, headless: true });
   try {
     const page = await browser.newPage({ viewport: surface === "web" ? { width: 1280, height: 720 } : { width: 390, height: 844 }, timezoneId: "Asia/Shanghai", locale: "en-US" });
@@ -102,6 +93,7 @@ it.each(["web", "web-mobile"])("renders the shared native input row in %s with l
       await page.addScriptTag({ content: script });
       await page.getByText("Scheduled result.", { exact: true }).waitFor({ timeout: 5000 });
       expect(await page.locator("[data-scheduled-message]").count()).toBe(0);
+      expect(await page.getByText("Scheduled task triggered.", { exact: true }).count()).toBe(1);
       await page.evaluate(() => document.fonts.ready);
       const manual = await geometry();
       expect(native.x).toBeCloseTo(manual.x, 1);
