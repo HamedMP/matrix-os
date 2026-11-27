@@ -51,10 +51,10 @@ export function HarnessRail({
   return (
     <section className="matrix-ap-agent-groups" aria-label="Installed agents">
       {(["Coding agents", "General agents"] as const).map((group) => {
-        const order: ProviderHarnessKind[] =
-          group === "Coding agents"
-            ? ["claude", "codex", "opencode", "pi"]
-            : ["hermes", "openclaw"];
+        const isCodingGroup = group === "Coding agents";
+        const order: ProviderHarnessKind[] = isCodingGroup
+          ? ["claude", "codex", "opencode", "pi"]
+          : ["hermes", "openclaw"];
         const items = [
           ...harnesses.map((item) => ({
             id: item.id,
@@ -78,7 +78,7 @@ export function HarnessRail({
         return (
           <section
             key={group}
-            className="matrix-ap-agent-list"
+            className={isCodingGroup ? "matrix-ap-agent-list matrix-ap-coding-agents" : "matrix-ap-agent-list"}
             aria-label={group}
           >
             <div className="matrix-ap-list-heading">

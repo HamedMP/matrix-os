@@ -65,6 +65,8 @@ export function enableGatewaySharedResources<Project>(input: {
   apps: OwnerAppRegistrySource | null;
   /** The runtime's configured owner; a registered app resolves for no other owner. */
   ownerId: string | undefined;
+  /** The owner's app key-value store for organization-shared `readData`; omitted, those reads are unavailable. */
+  kv?: { read(app: string, key: string): Promise<string | null> } | null;
   /** Construction seam, like the `now` and `createId` seams elsewhere in this package. */
   createDriver?: typeof createOwnerResourceDriver;
 }): OwnerResourceDriverHandle {
@@ -126,6 +128,7 @@ export function enableGatewaySharedResources<Project>(input: {
         });
         return createAppInstanceAdapter({
           db, authority, bridge, catalog, onCommitted,
+          ...(input.kv ? { kv: input.kv } : {}),
           apps: {
             resolve: async (projectId, appId) => {
               const record = await registeredApp(appId);

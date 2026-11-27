@@ -38,6 +38,7 @@ const PreflightSchema = z.discriminatedUnion("eligible", [
   }),
 ]);
 const SAFE_UNAVAILABLE = "App collaboration readiness is unavailable.";
+const isShareableStatus = (status: CollaborativeAppReadiness["status"]) => status === "ready" || status === "blocked";
 const CHECKING_POLL_MS = 5_000;
 const MAX_CHECKING_POLLS = 36;
 const SAFE_SHARE_UNAVAILABLE = "App sharing is unavailable. Try again.";
@@ -243,7 +244,8 @@ export function useCollaborativeAppSharing(input: {
     setActionMessage(null);
     try {
       const parsed = CreateShareInputSchema.parse(rawInput);
-      if (!path || currentReadiness?.status !== "ready") throw new Error("ReadinessUnavailable");
+      // ENG-579: a completed check shares; `blocked` (not collaborative) opens view-only for members.
+      if (!path || !currentReadiness || !isShareableStatus(currentReadiness.status)) throw new Error("ReadinessUnavailable");
       const sharePath = path.replace(/\/readiness$/, "/share");
       const preflight = PreflightSchema.parse(await input.api.post(`${sharePath}/preflight`, {
         organizationId: parsed.organizationId,
@@ -329,7 +331,9 @@ export function useCollaborativeAppSharing(input: {
     safeMessage,
     actionState,
     actionMessage,
-    canShare: readinessRequestKey === requestKey && phase === "idle" && currentReadiness?.status === "ready",
+    canShare: readinessRequestKey === requestKey && phase === "idle" && !!currentReadiness && isShareableStatus(currentReadiness.status),
+    /** The current build passed every collaborative gate: members can edit, not only view. */
+    collaborative: readinessRequestKey === requestKey && currentReadiness?.status === "ready",
     refresh,
     refreshShare,
     recheck,

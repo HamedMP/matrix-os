@@ -136,6 +136,8 @@ export interface OwnerCollaborationStartupOptions {
   chatRepository: ChatRepository;
   appRegistry: AppRegistry;
   canvasRepository: CanvasRepository;
+  /** The owner's app key-value store; organization-shared apps read it through `readData`. */
+  kvStore?: { read(app: string, key: string): Promise<string | null> } | null;
   collaborationConfig: GatewayCollaborationConfig;
   providerSnapshotReader: CanonicalProviderSnapshotReader;
   codingAgentProjectManager: ReturnType<typeof createProjectManager>;
@@ -223,6 +225,7 @@ export async function constructOwnerCollaboration(options: OwnerCollaborationSta
         homePath,
         ownerId: collaborationConfig.ownerId,
         appRegistry,
+        kvStore: options.kvStore ?? null,
         canvasRepository,
         chatRepository: ownerChatRepository,
         chatExecutionRoots: ownerChatExecutionRoots,

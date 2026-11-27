@@ -32,6 +32,12 @@ export function createProviderTerminalLoginHandoff(
     ...(typeof store.completeClaudeKeyConnection === "function" ? {
       completeClaudeKeyConnection: (input: Parameters<NonNullable<ProviderSettingsStoreWriter["completeClaudeKeyConnection"]>>[0]) => store.completeClaudeKeyConnection!(input),
     } : {}),
+    ...(typeof store.captureExistingCodexLoginProof === "function" ? {
+      captureExistingCodexLoginProof: () => store.captureExistingCodexLoginProof!(),
+    } : {}),
+    ...(typeof store.deferCodexNativeRecovery === "function" ? {
+      deferCodexNativeRecovery: () => store.deferCodexNativeRecovery!(),
+    } : {}),
     ...(typeof store.completeCodexNativeLogin === "function" ? {
       completeCodexNativeLogin: (input: Parameters<NonNullable<ProviderSettingsStoreWriter["completeCodexNativeLogin"]>>[0]) => store.completeCodexNativeLogin!(input),
     } : {}),

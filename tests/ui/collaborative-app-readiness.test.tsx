@@ -54,17 +54,20 @@ const activeShare = {
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.useRealTimers(); });
 
 describe("collaborative app owner readiness", () => {
-  it("loads and validates the current exact-build certificate before allowing share", async () => {
+  // ENG-579: a completed `blocked` check is shareable view-only; only `ready` is collaborative.
+  it("loads and validates the current exact-build certificate before allowing a view-only share", async () => {
     const api = { get: vi.fn(async () => blocked), post: vi.fn() };
     const { result } = renderHook(() => useCollaborativeAppSharing({ appId: "team-tracker", api }));
     expect(result.current.state).toBe("loading");
+    expect(result.current.canShare).toBe(false);
     await waitFor(() => expect(result.current.state).toBe("blocked"));
     expect(result.current.readiness).toEqual(blocked);
-    expect(result.current.canShare).toBe(false);
+    expect(result.current.canShare).toBe(true);
+    expect(result.current.collaborative).toBe(false);
     expect(api.get).toHaveBeenCalledWith("/api/collaboration/apps/team-tracker/readiness");
   });
 
-  it("tracks a recheck, binds it to the exact incarnation, and enables share only after ready", async () => {
+  it("tracks a recheck, binds it to the exact incarnation, and marks the build collaborative after ready", async () => {
     let finish!: (value: unknown) => void;
     const api = {
       get: vi.fn(async () => blocked),
@@ -89,6 +92,7 @@ describe("collaborative app owner readiness", () => {
     await act(async () => { finish(ready); await pending; });
     expect(result.current.state).toBe("ready");
     expect(result.current.canShare).toBe(true);
+    expect(result.current.collaborative).toBe(true);
   });
 
   it("polls a saved checking result after reload until it is ready, then stops", async () => {

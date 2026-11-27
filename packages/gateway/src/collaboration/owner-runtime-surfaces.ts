@@ -30,6 +30,8 @@ export interface OwnerCollaborationSurfaceDependencies {
   /** The runtime's configured owner; an app identity is resolved for no one else. */
   ownerId: string | undefined;
   appRegistry: AppRegistry | null;
+  /** The owner's app key-value store; organization-shared apps read it through `readData`. */
+  kvStore?: { read(app: string, key: string): Promise<string | null> } | null;
   canvasRepository: CanvasRepository | null;
   chatRepository: ChatRepository;
   chatExecutionRoots: ChatExecutionRootResolver;
@@ -50,7 +52,7 @@ export async function enableOwnerCollaborationSurfaces(
   // The resource driver, its app binding and its close-on-failure path belong to
   // the resource wiring; this composition only names them.
   enableGatewaySharedResources({ runtime, homePath, ownerId: dependencies.ownerId,
-    projects: projectManager, apps: appRegistry });
+    projects: projectManager, apps: appRegistry, kv: dependencies.kvStore ?? null });
   const inventorySource = createGatewayProjectInventorySource({
     homePath,
     gitSetup: { get: projectGitDriver.getGitSetup },

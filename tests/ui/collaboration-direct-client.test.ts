@@ -247,6 +247,29 @@ describe("collaboration direct client", () => {
     expect(world.platform.tickets.filter((ticket) => ticket.purpose === "terminal")).toHaveLength(1);
   });
 
+  // ENG-579: a write to a view-only shared app keeps the session; other 403s still deny.
+  it("distinguishes a home's view-only refusal from a denial and keeps the session connected", async () => {
+    const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const path = new URL(String(input)).pathname;
+      if (path.endsWith("/apps/notes/actions")) return Response.json({ error: "This app is view-only", code: "read_only" }, { status: 403 });
+      if (path.endsWith("/apps/other/actions")) return Response.json({ error: "Collaboration unavailable", code: "forbidden" }, { status: 403 });
+      if (path.endsWith("/apps/large/actions")) {
+        // An oversized refusal must not be buffered: it is a plain denial, even if it names read_only.
+        return new Response(JSON.stringify({ code: "read_only", padding: "x".repeat(4_096) }), { status: 403, headers: { "content-type": "application/json" } });
+      }
+      return world.fetchImpl(input, init);
+    }) as typeof fetch;
+    const direct = client({ fetchImpl });
+    await direct.request(scopeId, "GET", `/api/collaboration/scopes/${scopeId}/chat`);
+    await expect(direct.request(scopeId, "POST", `/api/collaboration/scopes/${scopeId}/apps/notes/actions`, { action: {} }))
+      .rejects.toMatchObject({ code: "read_only" });
+    expect(direct.describe(scopeId).state).toBe("connected");
+    await expect(direct.request(scopeId, "POST", `/api/collaboration/scopes/${scopeId}/apps/other/actions`, { action: {} }))
+      .rejects.toMatchObject({ code: "denied" });
+    await expect(direct.request(scopeId, "POST", `/api/collaboration/scopes/${scopeId}/apps/large/actions`, { action: {} }))
+      .rejects.toMatchObject({ code: "denied" });
+  });
+
   it("fences an exchange completed after sign-out and does not restore its session", async () => {
     let release!: () => void;
     let entered!: () => void;

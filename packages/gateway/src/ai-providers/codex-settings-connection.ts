@@ -18,28 +18,50 @@ const run = promisify(execFile);
 // gcp account kind the bounded account reader rejects.
 // Other installed versions retain the independent official Terminal option.
 const qualifiedVersions = ["codex-cli 0.156.1", "codex-cli 0.162.1", "codex-cli 0.163.0", "codex-cli 0.164.0", "codex-cli 0.171.0"];
+
+type QualificationFailure = "scope_unavailable" | "version_process_failed" | "unsupported_version" | "unexpected_stderr";
+
+function reportQualificationFailure(reason: QualificationFailure, error: unknown, stdout?: unknown): { error: unknown } {
+  // The CLI may emit account details or other arbitrary text. Only a standard
+  // bounded numeric release version belongs in the diagnostic.
+  const version = typeof stdout === "string" ? /^codex-cli (\d{1,6}\.\d{1,6}\.\d{1,6})$/.exec(stdout.trim())?.[1] : undefined;
+  console.warn("[provider-workflow] Codex Settings protocol unavailable:", reason, version ?? "unknown_version");
+  return { error };
+}
+
 export function createCodexSettingsConnection(options: { homePath: string; profileGuard: NativeProviderProfileGuard }) {
-  const scope = () => {
-    const base = buildAgentRuntimeEnvironment(options.homePath);
-    const env = codexNativeEnvironment(options.homePath, base, process.env.CODEX_HOME);
-    return { command: resolveCodexNativeExecutable(options.homePath, env), env };
+  const checkVersion = async ({ command, env }: { command: string; env: Record<string, string> }) => {
+    let result;
+    try {
+      result = await run(command, ["--version"], { cwd: options.homePath, env, encoding: "utf8", timeout: 5000, maxBuffer: 8192, windowsHide: true });
+    } catch (error) {
+      const stdout = error instanceof Error && "stdout" in error ? error.stdout : undefined;
+      return reportQualificationFailure("version_process_failed", error, stdout);
+    }
+    const stderrPresent = Boolean(result.stderr.trim());
+    if (!stderrPresent && qualifiedVersions.includes(result.stdout.trim())) return null;
+    return reportQualificationFailure(stderrPresent ? "unexpected_stderr" : "unsupported_version", new ProviderWorkflowNotStartedError(), result.stdout);
   };
-  const qualify = async (command: string, env: Record<string, string>) => {
-    const result = await run(command, ["--version"], { cwd: options.homePath, env, encoding: "utf8", timeout: 5000, maxBuffer: 8192, windowsHide: true });
-    if (!qualifiedVersions.includes(result.stdout.trim()) || result.stderr.trim()) throw new ProviderWorkflowNotStartedError();
+
+  const qualifyScope = async () => {
+    let current;
+    try {
+      const base = buildAgentRuntimeEnvironment(options.homePath);
+      const env = codexNativeEnvironment(options.homePath, base, process.env.CODEX_HOME);
+      current = { command: resolveCodexNativeExecutable(options.homePath, env), env };
+    } catch (error) {
+      return reportQualificationFailure("scope_unavailable", error);
+    }
+    return await checkVersion(current) ?? current;
   };
+
   return {
     async available() {
-      try { const current = scope(); await qualify(current.command, current.env); return true; }
-      catch (error) { console.warn("[provider-workflow] Codex Settings protocol unavailable:", error instanceof Error ? error.name : "UnknownError"); return false; }
+      return !("error" in await qualifyScope());
     },
     async start(input: Parameters<ReturnType<typeof createCodexSettingsLogin>>[0]) {
-      let current: ReturnType<typeof scope>;
-      try { current = scope(); await qualify(current.command, current.env); }
-      catch (error) {
-        console.warn("[provider-workflow] Codex Settings protocol unavailable:", error instanceof Error ? error.name : "UnknownError");
-        throw new ProviderWorkflowNotStartedError();
-      }
+      const current = await qualifyScope();
+      if ("error" in current) throw new ProviderWorkflowNotStartedError();
       return createCodexSettingsLogin({ ...current, cwd: options.homePath,
         captureAccountProof: async spawnObserver => {
           // The login child has exited, but its writer lease is still ours.
@@ -61,8 +83,14 @@ export function createCodexSettingsConnection(options: { homePath: string; profi
           if (error instanceof NativeProviderAdmissionNotStartedError) throw new ProviderWorkflowNotStartedError(error.reason === "busy" ? "conflict" : "unavailable");
           throw error;
         }
-        try { await qualify(current.command, current.env); return release; }
-        catch (error) { await release(); throw error; }
+        try {
+          const failure = await checkVersion(current);
+          if (failure) throw failure.error;
+          return release;
+        } catch (error) {
+          await release();
+          throw error;
+        }
       } })(input);
     },
   };

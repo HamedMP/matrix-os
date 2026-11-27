@@ -22,6 +22,7 @@ import { registerInvitationIdentifierResolutionRoute } from "./identifier-resolu
 import { registerCollaborativeAppIconRoutes } from "./app-icon-routes.js";
 import { parseRelayRoute, type CollaborationRelay } from "./relay.js";
 import {
+  APP_ACCESS_HEADER,
   CollaborativeAppLaunchError,
   type CollaborativeAppLaunchSessions,
 } from "./app-launch-sessions.js";
@@ -791,10 +792,12 @@ async function injectCollaborativeAppBootstrap(
     throw error;
   }
   const context = JSON.stringify(participant).replaceAll("<", "\\u003c");
-  const bootstrap = `<base href="${basePath}"><script id="matrix-collaboration-context" type="application/json">${context}</script>${collaborativeAppBridgeBootstrap()}`;
+  const readOnly = response.headers.get(APP_ACCESS_HEADER) === "read_only";
+  const bootstrap = `<base href="${basePath}"><script id="matrix-collaboration-context" type="application/json">${context}</script>${collaborativeAppBridgeBootstrap({ readOnly })}`;
   const source = Buffer.concat(chunks).toString("utf8");
   const html = source.includes("<head>") ? source.replace("<head>", `<head>${bootstrap}`) : `${bootstrap}${source}`;
   const headers = new Headers(response.headers);
+  headers.delete(APP_ACCESS_HEADER);
   headers.set("content-length", String(Buffer.byteLength(html)));
   return new Response(html, { status: response.status, headers });
 }

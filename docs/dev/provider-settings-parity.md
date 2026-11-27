@@ -91,7 +91,44 @@ credential, by recording `system/ai-providers/codex-consent-alias.json`
 so session bindings and live native runners keep their identity; the alias is
 inert once the row changes. A different account still needs an explicit
 Reconnect. A saved login that needs
-sign-in shows "Needs sign-in" with one primary Reconnect on every surface.
+sign-in shows "Needs sign-in" with one primary reconnect action before verification starts.
+
+When the selected computer reports an existing ChatGPT sign-in, Settings
+offers **Use existing Codex account**. The v2 workflow exposes the native
+OpenAI subscription option `openai_existing_codex` with method
+`existing_codex`. The explicit start request sends the harness ID, option ID,
+and idempotency key to the existing owner-scoped workflow endpoint.
+
+The Gateway can use a fresh, source-matched local observation to offer this
+action. Completion requires fresh private proof of the current ChatGPT
+principal and the expected Settings revision. Success binds the owner source
+without launching a login process. Missing or changed proof fails in Settings.
+Only a verified ChatGPT subscription qualifies for binding. A rejected reuse
+start or a failed or expired reuse receipt opens the qualified Settings sign-in
+choices for new and saved connections. The choices survive **Check again** if
+the same local sign-in hint is still reported. Use device code where qualified
+and Terminal where both the runtime and the surface support it. Settings
+starts a fallback only when the owner chooses it. It drops unavailable choices
+on capability refresh and resets recovery when the account scope changes or
+the binding is confirmed.
+
+After device authorization captures the native account proof, the explicit
+workflow defers automatic Codex recovery until its Settings binding resolves.
+Passive Settings and Chat reads can still return a snapshot during the handoff.
+The explicit workflow checks the captured revision and verifies the same
+account before enabling the binding. Other owner writes retain the revision fence.
+
+The Coding agents sign-in panel keeps connection choices, progress, and actions in
+separate blocks. A single choice fills the available row. At narrow widths,
+choices stack and device-code controls wrap within the panel.
+
+Coding agents API-key forms keep credential labels with their inputs and group
+the actions after the fields. Scope these layout rules to the Coding agents section.
+
+On a transient workflow capability read failure, Settings keeps the last
+confirmed capabilities for the same computer so an in-flight sign-in can
+finish. Authorization failures, a computer switch, and a successful response
+that withdraws a capability clear the stale choices.
 
 Canvas, Web Desktop, and Electron must expose the same:
 

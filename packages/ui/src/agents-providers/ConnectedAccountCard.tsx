@@ -10,8 +10,7 @@ export function ConnectedAccountCard({ harness, account, source, action, disable
   source?: ProviderAccessSource;
   action?: ReactNode;
   saved?: boolean;
-  /** Why a saved account is not connected: it needs sign-in, or it is only Off. */
-  savedReason?: "sign_in" | "off";
+  savedReason?: "sign_in" | "off" | "existing_codex";
   /** Off when the owning panel already offers its own "Check again" action. */
   showRefresh?: boolean;
   disabled: boolean;
@@ -38,7 +37,8 @@ export function ConnectedAccountCard({ harness, account, source, action, disable
       </div>}
       <div className="matrix-ap-account-actions">{action}</div>
     </div>
-    {saved ? <p className="matrix-ap-help">{savedReason === "off" ? "Codex is off on this Computer. Reconnect to turn it back on."
+    {saved ? <p className="matrix-ap-help">{savedReason === "existing_codex" ? "Connect the Codex account already signed in on this computer."
+      : savedReason === "off" ? "Codex is off on this Computer. Reconnect to turn it back on."
       : "Sign in again so Chat can use this account."}</p> : null}
     {showRefresh && (!action || !usage || source?.usage.kind === "unavailable") ? <button type="button" className="matrix-ap-link-button" disabled={disabled} onClick={onRefresh}>Check account again</button> : null}
   </section>;

@@ -187,9 +187,14 @@ suite("Electron Desktop Agents & providers Figma workflows (synthetic gateway)",
       // A legacy fixture advertisement cannot restore excluded managed Codex login.
       // Personal-device Matrix plan authorization is a separate native flow.
       expect(await codex.getByRole("button", { name: /ChatGPT account/ }).count()).toBe(0);
-      expect(await codex.getByRole("button", { name: /Log in in Terminal/ }).count()).toBe(0);
+      expect(await codex.getByRole("button", { name: /Sign in with Codex CLI/ }).count()).toBe(0);
       expect(gateway.events.filter(event => event === "login")).toHaveLength(0);
       await capture("03-connect-chooser");
+      const methods = await codex.locator(".matrix-ap-connection-options").boundingBox();
+      const onlyMethod = await apiKey.boundingBox();
+      expect(methods).not.toBeNull();
+      expect(onlyMethod).not.toBeNull();
+      expect(Math.abs(onlyMethod!.width - methods!.width)).toBeLessThan(1);
       await apiKey.click();
       const key = codex.getByLabel("Paste your OpenAI API key", { exact: true });
       expect(await key.getAttribute("type")).toBe("password");

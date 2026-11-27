@@ -75,6 +75,7 @@ it("keeps keys transient and presents safe rejection with retry", async () => {
       "OpenAI didn't accept this key",
     ),
   );
+  expect(screen.getByRole("alert").firstChild?.nodeType).toBe(Node.TEXT_NODE);
   expect(document.body.textContent).not.toContain("sk-secret");
   expect(screen.getByRole("button", { name: "Try again" })).toBeEnabled();
   fireEvent.click(screen.getByRole("button", { name: "Back" }));

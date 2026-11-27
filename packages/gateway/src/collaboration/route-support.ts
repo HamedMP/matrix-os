@@ -656,6 +656,9 @@ export async function handle(c: Context, operation: () => Promise<Response>): Pr
       return c.json({ error: "Collaboration unavailable", code: error.code }, status);
     }
     if (error instanceof CollaborationAuthorizationError) {
+      if (error.code === "forbidden" && error.reason === "read_only") {
+        return c.json({ error: "This app is view-only", code: "read_only" }, 403);
+      }
       const status = error.code === "not_found" ? 404 : error.code === "forbidden" ? 403 : 503;
       return c.json({ error: "Collaboration unavailable", code: error.code }, status);
     }

@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { sql, type Kysely, type Selectable } from "kysely";
 import { z } from "zod/v4";
 
+import { SHAREABLE_APP_READINESS_STATUSES } from "./collaborative-app-access.js";
 import type { CollaborationAppBindingsTable, OwnerCollaborationDatabase } from "./database.js";
 import { appendMutationRecords, jsonb } from "./repository-shared.js";
 
@@ -202,7 +203,7 @@ export class CollaborativeAppShareRepository {
           .where("id", "=", input.readinessId).where("owner_id", "=", input.ownerId)
           .where("catalog_id", "=", catalog.id).where("registration_incarnation", "=", catalog.incarnation)
           .where("build_id", "=", input.expectedBuildId).where("revision", "=", input.expectedReadinessRevision)
-          .where("status", "=", "ready").where("invalidated_at", "is", null)
+          .where("status", "in", SHAREABLE_APP_READINESS_STATUSES).where("invalidated_at", "is", null)
           .forUpdate().executeTakeFirst();
         if (!readiness) throw new CollaborativeAppShareRepositoryError("conflict");
         const timestamp = this.now();
@@ -356,7 +357,7 @@ export class CollaborativeAppShareRepository {
           AND readiness.catalog_id = catalog.id
           AND readiness.registration_incarnation = catalog.incarnation
           AND readiness.build_id = ${buildId.data}
-          AND readiness.status = 'ready'
+          AND readiness.status IN ('ready', 'blocked')
           AND readiness.invalidated_at IS NULL
         WHERE scope.id = ${scopeId.data}
           AND scope.owner_id = ${ownerId.data}
@@ -445,7 +446,7 @@ export class CollaborativeAppShareRepository {
         AND readiness.catalog_id = binding.catalog_id
         AND readiness.registration_incarnation = binding.registration_incarnation
         AND readiness.build_id = ${input.expectedBuildId}
-        AND readiness.status = 'ready'
+        AND readiness.status IN ('ready', 'blocked')
         AND readiness.invalidated_at IS NULL
       RETURNING binding.*
     `.execute(this.db);

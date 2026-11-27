@@ -224,6 +224,11 @@ export const CollaborativeAppMutationResponseSchema = z.object({
   replayed: z.boolean(),
 }).strict();
 
+/** ENG-579: one owner key-value entry read by an organization-shared app's `readData`. */
+export const CollaborativeAppDataReadResponseSchema = z.object({
+  value: z.string().max(1024 * 1024).nullable(),
+}).strict();
+
 export const CollaborativeAppChangeSignalSchema = z.object({
   type: z.enum(["resource.app.changed", "share.access_ended", "share.needs_recheck", "refresh_required"]),
   eventId: CollaborationIdSchema,
@@ -262,4 +267,5 @@ export type CollaborativeAppParticipant = z.infer<typeof CollaborativeAppPartici
 export type CollaborativeAppMutationRequest = z.infer<typeof CollaborativeAppMutationRequestSchema>;
 export type CollaborativeAppMutationResponse = z.infer<typeof CollaborativeAppMutationResponseSchema>;
 export type CollaborativeAppChangeSignal = z.infer<typeof CollaborativeAppChangeSignalSchema>;
+export type CollaborativeAppDataReadResponse = z.infer<typeof CollaborativeAppDataReadResponseSchema>;
 export type CollaborativeAppSafeError = z.infer<typeof CollaborativeAppSafeErrorSchema>;
