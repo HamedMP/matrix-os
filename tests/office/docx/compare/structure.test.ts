@@ -251,3 +251,32 @@ describe("tables", () => {
     expect(describeRevisions(document)).toContainEqual(["insert", "text", " (revised)"]);
   });
 });
+
+describe("a paragraph break deleted in an input", () => {
+  const deletedMark = `<w:rPr><w:del w:id="91" w:author="${AUTHOR}" w:date="2027-01-01T00:00:00Z"/></w:rPr>`;
+  const alignments = (document: Awaited<ReturnType<typeof openDocx>>): string[] =>
+    document.getView().body.blocks.flatMap((block) => (block.type === "paragraph" ? [block.style.alignment] : []));
+
+  it("joins the two paragraphs with the formatting that accepting the deletion keeps", async () => {
+    const tracked = await buildDocx({
+      body: p(r("Centered opening"), `<w:jc w:val="center"/>${deletedMark}`) + p(r(" and its right-aligned end"), `<w:jc w:val="right"/>`),
+    });
+    const accepted = await openDocx(tracked);
+    accepted.acceptRevisions("all");
+    expect(alignments(accepted)).toEqual(["center"]);
+    const { document, summary } = await compareDocxDetailed(tracked, tracked, OPTIONS);
+    expect(summary.identical).toBe(true);
+    expect(alignments(document)).toEqual(alignments(accepted));
+  });
+
+  it("keeps the formatting of the following paragraph when the deleted one held no text", async () => {
+    const tracked = await buildDocx({
+      body: p("", `<w:jc w:val="center"/>${deletedMark}`) + p(r("Right-aligned text"), `<w:jc w:val="right"/>`),
+    });
+    const accepted = await openDocx(tracked);
+    accepted.acceptRevisions("all");
+    const { document } = await compareDocxDetailed(tracked, tracked, OPTIONS);
+    expect(alignments(document)).toEqual(alignments(accepted));
+    expect(alignments(document)).toEqual(["right"]);
+  });
+});

@@ -100,29 +100,44 @@ export function mergeParagraphs(index: DocxIndex, first: XmlElement, second: Xml
   const firstParent = elementParent(first);
   const secondParent = elementParent(second);
   const keepFirst = options.survivor === "first" || firstLength > 0;
+  const survivor = joinParagraphElements(first, second, keepFirst);
   if (keepFirst) {
-    moveMarkState(second, first);
-    for (const node of contentNodes(second)) appendChild(first, node);
-    remove(second);
     if (firstRecord !== null && secondRecord !== null) {
       options.tracker?.textMoved(secondRecord.id, 0, firstRecord.id, firstLength);
     }
     index.markDirty(first);
     if (secondParent !== null) index.markDirty(secondParent);
+    return survivor;
+  }
+  if (firstRecord !== null && secondRecord !== null) {
+    options.tracker?.textMoved(firstRecord.id, 0, secondRecord.id, 0);
+  }
+  index.markDirty(second);
+  if (firstParent !== null) index.markDirty(firstParent);
+  return survivor;
+}
+
+/**
+ * The tree change of {@link mergeParagraphs}, without index bookkeeping, for
+ * callers that work on bare XML. With `keepFirst` the first paragraph
+ * survives with its own properties and takes the mark state and content of
+ * the second. Otherwise what is left in the first (bookmarks, comment
+ * anchors) moves to the front of the second, which keeps its properties.
+ * Returns the survivor.
+ */
+export function joinParagraphElements(first: XmlElement, second: XmlElement, keepFirst: boolean): XmlElement {
+  if (keepFirst) {
+    moveMarkState(second, first);
+    for (const node of contentNodes(second)) appendChild(first, node);
+    remove(second);
     return first;
   }
-  // The first paragraph holds no text: what is left in it (bookmarks, comment anchors) moves to the front of the second.
   const anchor = contentNodes(second)[0] ?? null;
   for (const node of contentNodes(first)) {
     if (anchor === null) appendChild(second, node);
     else insertBefore(anchor, node);
   }
   remove(first);
-  if (firstRecord !== null && secondRecord !== null) {
-    options.tracker?.textMoved(firstRecord.id, 0, secondRecord.id, 0);
-  }
-  index.markDirty(second);
-  if (firstParent !== null) index.markDirty(firstParent);
   return second;
 }
 

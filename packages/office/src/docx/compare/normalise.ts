@@ -6,13 +6,14 @@
  * are removed, deleted rows and deleted cells are removed (a row with no
  * cell left goes with its last cell), property change records and move
  * range markers are dropped. A paragraph whose mark is deleted joins the
- * paragraph that follows it.
+ * paragraph that follows it, as `acceptRevisions` joins them.
  */
 
 import type { XmlChildNode, XmlElement } from "../../api/xml.js";
-import { appendChild, insertBefore, remove } from "../../xml/index.js";
+import { insertBefore, remove } from "../../xml/index.js";
+import { joinParagraphElements } from "../edit/marks.js";
 import type { DocxIndex } from "../internal.js";
-import { firstChild } from "../internal.js";
+import { firstChild, scanParagraph } from "../internal.js";
 
 const REMOVED_CONTENT: ReadonlySet<string> = new Set(["w:del", "w:moveFrom"]);
 const KEPT_CONTENT: ReadonlySet<string> = new Set(["w:ins", "w:moveTo"]);
@@ -100,7 +101,11 @@ function siblingBlocks(parent: XmlElement): XmlElement[] {
   return found;
 }
 
-/** Joins a paragraph whose mark is gone to the paragraph after it, which keeps its own properties. */
+/**
+ * Joins a paragraph whose mark is gone to the paragraph after it, by the
+ * rule `acceptRevisions` follows: the paragraph keeps its properties while
+ * it still holds text, otherwise the paragraph after it keeps its own.
+ */
 function joinWithNext(paragraph: XmlElement): void {
   const parent = elementParent(paragraph);
   if (parent === null) return;
@@ -108,17 +113,12 @@ function joinWithNext(paragraph: XmlElement): void {
   if (pPr !== null && firstChild(pPr, "w:sectPr") !== null) return;
   const blocks = siblingBlocks(parent);
   const next = blocks[blocks.indexOf(paragraph) + 1];
-  const content = paragraph.children.filter((node) => !(node.kind === "element" && node.name === "w:pPr"));
   if (next !== undefined && next.name === "w:p") {
-    const nextProperties = firstChild(next, "w:pPr");
-    const anchor = next.children.find((node) => node !== nextProperties) ?? null;
-    for (const node of content) {
-      if (anchor !== null) insertBefore(anchor, node);
-      else appendChild(next, node);
-    }
-    remove(paragraph);
+    // Scanned as the tree is now: the index's own scans predate the removals above.
+    joinParagraphElements(paragraph, next, scanParagraph(paragraph, [], -1).text.length > 0);
     return;
   }
+  const content = paragraph.children.filter((node) => !(node.kind === "element" && node.name === "w:pPr"));
   // No paragraph follows: an empty paragraph disappears unless it is the only block of its container.
   const empty = content.every((node) => node.kind !== "element");
   if (empty && blocks.length > 1) remove(paragraph);
