@@ -6,6 +6,7 @@ import { z } from "zod/v4";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { type CanonicalCreateChatTurnRequest } from "@matrix-os/contracts";
 import { ChatRepository } from "../../packages/gateway/src/chat/repository.js";
+import { createExecutionAdmissionFence } from "../../packages/gateway/src/execution-admission-fence.js";
 import { ChatAgentStore } from "../../packages/gateway/src/chat/agent-store.js";
 import { createCanonicalChatRuntime } from "../../packages/gateway/src/chat/runtime.js";
 import { CanonicalChatOrchestrator } from "../../packages/gateway/src/chat/orchestrator.js";
@@ -32,6 +33,7 @@ describe("Hermes Agent invocation through canonical Chat", () => {
   let agents: ChatAgentStore;
   let orchestrator: CanonicalChatOrchestrator;
   let chatContext: ChatAgentContext;
+  let executionFence: ReturnType<typeof createExecutionAdmissionFence>;
   let calls: Array<{ driver: string; resumed: boolean; input: CanonicalProviderRunInput }>;
   let enabled: boolean;
   let release: (() => void) | undefined;
@@ -85,7 +87,9 @@ describe("Hermes Agent invocation through canonical Chat", () => {
         start: (input) => execute(input, false), resume: (input) => execute(input, true),
       };
     };
+    executionFence = createExecutionAdmissionFence();
     const runtime = await createCanonicalChatRuntime({
+      executionAdmissionFence: executionFence,
       botChats: { directBot: async (actor, chatId) => await botChats?.directBot(actor, chatId) ?? null },
       homePath: home, recipeSkillsRoot, enabled: () => enabled,
       admitJevWorkflow: async (actor, agent) => {
@@ -641,6 +645,18 @@ describe("Hermes Agent invocation through canonical Chat", () => {
       await sendAgent();
     }
     expect(calls.map(call => call.driver)).toEqual(["codex"]);
+  });
+
+  it("limits a purge stop-wait admission fence to its affected Chat", async () => {
+    await repository.create(owner, { id: "chat_purging", clientRequestId: "req_create_purging", title: "Purging" });
+    const release = executionFence.tryAcquireChat("chat_purging")!;
+    try {
+      const request = await input("req_purge_fence", [{ type: "text", text: "Synthetic request" }]);
+      await expect(orchestrator.admitTurn(principal, owner, "chat_purging", { ...request, baseRevision: 0 }))
+        .rejects.toMatchObject({ safeError: { code: "run_unavailable" } });
+      await send("req_unrelated_chat", request.parts);
+      expect(calls.map(call => call.input.chatId)).toEqual(["chat_parent"]);
+    } finally { release(); }
   });
 
   it("rechecks the switch before dispatching an already queued Agent", async () => {

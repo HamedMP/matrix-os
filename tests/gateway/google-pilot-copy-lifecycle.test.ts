@@ -133,6 +133,51 @@ describe('durable exact-owner pilot copy cleanup', () => {
         await sql`UPDATE google_copy_purge_jobs SET next_attempt=clock_timestamp()`.execute(f.repository.kysely);
         expect((await lifecycle!.purgeAccount(command)).complete).toBe(true);
     });
+    it('lets unrelated Chats start while a background retry waits on a tracked run', async () => {
+        const f = await fixture(false);
+        expect((await lifecycle!.purgeAccount(command)).complete).toBe(false);
+        await sql`UPDATE google_copy_purge_jobs SET next_attempt=clock_timestamp()`.execute(f.repository.kysely);
+        let release!: () => void;
+        let entered!: () => void;
+        const waiting = new Promise<void>(resolve => { entered = resolve; });
+        f.stop.mockImplementation(async () => {
+            entered();
+            await new Promise<void>(resolve => { release = resolve; });
+            throw new ManagedPiStopUnavailable();
+        });
+        lifecycle!.start();
+        await waiting;
+        try {
+            expect(f.fence.blocked).toBe(false);
+            expect(f.fence.isChatBlocked('chat_one')).toBe(true);
+            expect(f.fence.isChatBlocked('chat_ordinary')).toBe(false);
+        } finally {
+            release();
+            await lifecycle!.close();
+        }
+        expect(f.fence.isChatBlocked('chat_one')).toBe(false);
+    });
+    it('purges only the superseded origin after renewed consent has been used', async () => {
+        const f = await fixture(true);
+        const old = (await f.contexts.sourcesForAccount(owner.ownerId, account))[0]!;
+        await admit(f.repository, 'renewed');
+        const future = new Date(Date.now()+60000).toISOString();
+        await f.contexts.mark({ ownerId: owner.ownerId, chatId: 'chat_renewed', googleAccountId: account,
+            consentId: 'consent_renewed', profileId: old.profileId, profileRevision: old.profileRevision,
+            purposeId: old.purposeId, expiresAt: future, retentionDeadline: future });
+        await f.repository.appendAssistantDelta(owner, { chatId: 'chat_renewed', runId: 'run_renewed',
+            messageId: 'msg_assistant_renewed', delta: 'Synthetic result under renewed consent', createdAt: new Date().toISOString() });
+        await f.repository.finishRun(owner, { chatId: 'chat_renewed', runId: 'run_renewed',
+            outcome: 'completed', completedAt: new Date().toISOString() });
+        const result = await lifecycle!.purgeAccount({ ...command, consentId: old.consentId, originId: old.originId });
+        expect(result.complete).toBe(true);
+        expect((await f.contexts.inspect(owner.ownerId, 'chat_one'))?.availability).toBe('deleted');
+        expect((await f.contexts.inspect(owner.ownerId, 'chat_renewed'))?.availability).toBe('available');
+        expect(await f.history.googleCopies!.provenance.inspect(owner.ownerId, 'derived', 'cm_msg_assistant_renewed'))
+            .toMatchObject({ state: 'active' });
+        expect(JSON.stringify(await f.repository.getDetailPage(owner, 'chat_renewed', { limit: 20 })))
+            .toContain('Synthetic result under renewed consent');
+    });
     it('never claims another account or owner job before their separate admission', async () => {
         const f = await fixture(true);
         const store = f.history.googleCopies!.provenance;
@@ -166,7 +211,8 @@ describe('durable exact-owner pilot copy cleanup', () => {
         const close = lifecycle!.close().then(() => { closed = true; });
         await Promise.resolve();
         expect(closed).toBe(false);
-        expect(f.fence.blocked).toBe(true);
+        expect(f.fence.blocked).toBe(false);
+        expect(f.fence.isChatBlocked('chat_one')).toBe(true);
         release();
         expect((await settled)[0]?.status).toBe('rejected');
         await close;

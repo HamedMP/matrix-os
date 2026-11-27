@@ -9,7 +9,7 @@ import type { BotRuntimeRegistry } from '../bots/runtime-registry.js';
 import type { ExecutionAdmissionFence } from '../execution-admission-fence.js';
 import type { GooglePilotStorage } from './google-pilot-storage.js';
 import { createGoogleStoppedRunReceipts } from './google-stop-receipts.js';
-import { createGoogleContextStore, googleContextRetentionExpired, type GoogleContextDeletionAuthority } from '../google-data/runtime/contexts.js';
+import { createGoogleContextStore, googleContextOriginId, googleContextRetentionExpired, type GoogleContextDeletionAuthority } from '../google-data/runtime/contexts.js';
 import { boundedProvenanceTransaction } from '../google-data/provenance/transaction.js';
 import { createGoogleCanonicalMessageDeletionHandler } from '../google-data/provenance/canonical-message-delete.js';
 import { createGoogleManagedPiSessionDeletionHandler } from '../google-data/provenance/managed-copy-writes.js';
@@ -67,14 +67,14 @@ export async function createGooglePilotCopyLifecycle(options: {
         stopAndDrain(input: ManagedPiStopInput): Promise<unknown>;
     } | undefined;
     let closed = false;
-    let held = false;
+    let releaseAdmission: (() => void) | undefined;
     let active: Promise<unknown> | undefined;
     let timer: ReturnType<typeof setInterval> | undefined;
     const closing = new AbortController();
     let operationSignal: AbortSignal | undefined;
     const check = (signal?: AbortSignal) => { if (closed || signal?.aborted || closing.signal.aborted || operationSignal?.aborted)
         deny(); };
-    const admitted = () => { check(); if (!held || !options.fence.blocked || options.pendingCount() !== 0)
+    const admitted = () => { check(); if (!releaseAdmission || !options.fence.blocked || options.pendingCount() !== 0)
         deny(); };
     const remainingContextCopies = (ownerId: string, chatId: string) => boundedProvenanceTransaction(db, tx => sql `SELECT 1 FROM google_copy_registry c WHERE c.owner_id=${ownerId}
     AND c.state<>'deleted' AND EXISTS(SELECT 1 FROM google_context_origins o JOIN google_context_markers m ON m.id=o.context_id
@@ -108,7 +108,16 @@ export async function createGooglePilotCopyLifecycle(options: {
         if (!receipt) {
             if (!managed)
                 deny();
-            await managed!.stopAndDrain({ ...key, signal });
+            const releaseChat = options.fence.tryAcquireChat(key.chatId);
+            if (!releaseChat) deny();
+            try {
+                releaseAdmission!();
+                releaseAdmission = undefined;
+                try { await managed!.stopAndDrain({ ...key, signal }); }
+                finally { await acquireAdmission(); }
+            } finally {
+                releaseChat!();
+            }
             admitted();
             check(signal);
             receipt = await stops.get({ ownerId: key.ownerId, chatId: key.chatId, runId: key.runId });
@@ -132,35 +141,35 @@ export async function createGooglePilotCopyLifecycle(options: {
             check(key.signal);
             return result;
         } });
+    async function acquireAdmission() {
+        check();
+        const release = options.fence.tryAcquire();
+        if (!release) deny();
+        releaseAdmission = release!;
+        const deadline = Date.now() + 5000;
+        while (options.pendingCount() > 0) {
+            check();
+            if (Date.now() >= deadline) deny();
+            await new Promise(resolve => setTimeout(resolve, 10));
+        }
+        admitted();
+    }
     async function withAdmission<T>(work: () => Promise<T>, parent?: AbortSignal): Promise<T> {
         check();
-        if (active)
-            deny();
-        const release = options.fence.tryAcquire();
-        if (!release)
-            deny();
+        if (active) deny();
         operationSignal = AbortSignal.any([closing.signal, AbortSignal.timeout(60000), ...(parent ? [parent] : [])]);
-        held = true;
         const task = (async () => {
-            const deadline = Date.now() + 5000;
-            while (options.pendingCount() > 0) {
-                check();
-                if (Date.now() >= deadline)
-                    deny();
-                await new Promise(resolve => setTimeout(resolve, 10));
-            }
-            admitted();
+            await acquireAdmission();
             return work();
         })();
         active = task;
         try {
             return await task;
-        }
-        finally {
-            held = false;
+        } finally {
+            releaseAdmission?.();
+            releaseAdmission = undefined;
             active = undefined;
             operationSignal = undefined;
-            release!();
         }
     }
     // Only live runs can still write copies. Finished runs of any driver and long histories never block a
@@ -329,6 +338,8 @@ export async function createGooglePilotCopyLifecycle(options: {
         const command = commandSchema.parse(input);
         if (command.ownerId !== options.ownerId)
             deny();
+        if ((command.originId || command.consentId) && (!command.consentId
+            || command.originId !== googleContextOriginId(command.ownerId, command.googleAccountId, command.consentId))) deny();
         const digest = createHash('sha256').update(JSON.stringify(command)).digest('hex');
         return withAdmission(async () => {
             const saved = await boundedProvenanceTransaction(db, async (tx) => {
@@ -361,13 +372,9 @@ export async function createGooglePilotCopyLifecycle(options: {
             admitted();
             if (saved?.complete)
                 return receiptSchema.parse(saved.result);
-            const sources = await contexts.sourcesForAccount(options.ownerId, command.googleAccountId);
+            if (!command.originId && (await contexts.sourcesForAccount(options.ownerId, command.googleAccountId)).length > 32) deny();
             admitted();
-            if (sources.length > 32)
-                deny();
-            if (command.originId && sources.some(s => s.originId === command.originId && command.consentId && s.consentId !== command.consentId))
-                deny();
-            const contextPurge = await contexts.beginPurge(options.ownerId, command.googleAccountId);
+            const contextPurge = await contexts.beginPurge(options.ownerId, command.googleAccountId, command.originId);
             admitted();
             const requestIds: string[] = [];
             for (const originId of contextPurge.originIds) {
@@ -411,7 +418,15 @@ export async function createGooglePilotCopyLifecycle(options: {
         // Resume accepted commands even before source expiry. Ignore superseded revisions
         // and keep the cursor moving across accounts with unavailable stop proof.
         try {
-            const latestIncomplete = sql`p.owner_id=${options.ownerId} AND NOT p.complete AND NOT EXISTS (
+            // Use the durable request links to skip retry backoff without taking execution admission.
+            const linked = sql`FROM google_copy_purge_links l
+                JOIN google_copy_purge_jobs j ON j.id=l.job_id AND j.owner_id=p.owner_id
+                JOIN google_copy_registry c ON c.id=j.copy_id AND c.owner_id=j.owner_id
+                WHERE p.result->'requestIds' ? l.request_id::text`;
+            const latestIncomplete = sql`p.owner_id=${options.ownerId} AND NOT p.complete
+              AND (p.result IS NULL OR EXISTS(SELECT 1 ${linked} AND (${dueForProof}))
+                OR NOT EXISTS(SELECT 1 ${linked} AND j.state<>'deleted'))
+              AND NOT EXISTS (
                 SELECT 1 FROM google_pilot_purge_commands newer WHERE newer.owner_id=p.owner_id
                 AND newer.command_id=p.command_id AND newer.revision>p.revision)`;
             const accounts = await boundedProvenanceTransaction(db, tx => sql<{ account_id: string }>`
