@@ -109,6 +109,18 @@ describe("app shim host", () => {
     expect(service.open).not.toHaveBeenCalled();
   });
 
+  it("accepts the genuine shim when a stale record names the same path", async () => {
+    // The owner moved the first Notes.app away and installed another Notes at the same path.
+    const stale: InstalledAppRecord = { ...record, installId: "0b6f7c8d-1e2f-4a3b-8c4d-5e6f7a8b9c0d",
+      cdHashes: ["0123456789abcdef0123456789abcdef01234567"] };
+    const { host, service, connect } = setup({ records: async () => [stale, record] });
+    host.start();
+    const shim = new FakeShim();
+    await connect(shim);
+    expect(shim.quit).not.toHaveBeenCalled();
+    expect(service.open).toHaveBeenCalledWith(ID, { appShim: shim });
+  });
+
   it("rejects a shim whose bundle identifier is not the install's", async () => {
     const { host, service, connect } = setup();
     host.start();

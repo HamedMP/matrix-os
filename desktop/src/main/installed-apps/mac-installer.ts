@@ -97,15 +97,19 @@ export function createMacInstaller(options: MacInstallerOptions) {
     return gone && now() - mtimeMs > STALE_TEMP_MS;
   }
 
+  /** The bundle id in a bundle's Info.plist; null when it has none we can read. */
+  async function bundleIdAt(path: string): Promise<string | null> {
+    const plistPath = join(path, "Contents/Info.plist");
+    const info = await lstat(plistPath);
+    if (!info.isFile() || info.size > MAX_INFO_PLIST_BYTES) return null;
+    const plist = await readFile(plistPath, "utf8");
+    return /<key>CFBundleIdentifier<\/key>\s*<string>([^<]*)<\/string>/.exec(plist)?.[1] ?? null;
+  }
+
   /** True only when the bundle at `path` carries this install's bundle id and recorded cdhash. */
   async function isThisInstall(path: string, record: InstalledAppRecord): Promise<boolean> {
     try {
-      const plistPath = join(path, "Contents/Info.plist");
-      const info = await lstat(plistPath);
-      if (!info.isFile() || info.size > MAX_INFO_PLIST_BYTES) return false;
-      const plist = await readFile(plistPath, "utf8");
-      const bundleId = /<key>CFBundleIdentifier<\/key>\s*<string>([^<]*)<\/string>/.exec(plist)?.[1];
-      if (bundleId !== shimBundleIdentifier(record.installId)) return false;
+      if (await bundleIdAt(path) !== shimBundleIdentifier(record.installId)) return false;
       const { stdout, stderr } = await options.codesign(CODESIGN, ["-dvvv", path], { signal: AbortSignal.timeout(SIGN_TIMEOUT_MS) });
       return parseCdHashes(`${stdout}\n${stderr}`).some((hash) => record.cdHashes.includes(hash));
     } catch (error: unknown) {
@@ -290,15 +294,20 @@ export function createMacInstaller(options: MacInstallerOptions) {
       }
     },
 
-    /** Start-up: forgets installs whose bundle the owner moved or deleted. Returns their ids. */
+    /**
+     * Start-up: forgets installs whose bundle the owner moved or deleted,
+     * including one whose path now holds another install's bundle (left in
+     * place). Returns their ids.
+     */
     async prune(): Promise<string[]> {
       const pruned: string[] = [];
       for (const record of await options.records.list()) {
         if (!record.bundlePath) continue;
         try {
           await lstat(record.bundlePath);
-          continue;
+          if (await bundleIdAt(record.bundlePath) === shimBundleIdentifier(record.installId)) continue;
         } catch (error: unknown) {
+          // ENOENT: the bundle, or its Info.plist, is gone. Anything else: keep the record.
           if (errorCode(error) !== "ENOENT") {
             logFailure("could not check an installed bundle", error);
             continue;

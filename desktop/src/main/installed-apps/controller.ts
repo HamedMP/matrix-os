@@ -109,12 +109,17 @@ export function createInstalledAppWindowController<W extends InstalledAppWindowL
       logFailure("could not read window state", error);
     }
     if (disposed) return "unavailable";
-    // A plain window opened meanwhile (deep link) is replaced by the shim's.
+    // A plain window opened meanwhile (deep link) is replaced by the shim's,
+    // which takes over its live bounds: the saved ones predate any move since.
     const previous = live(installId);
-    if (previous && context.appShim !== undefined) retire(installId, previous);
+    let bounds: WindowBounds = saved ?? DEFAULT_BOUNDS;
+    if (previous && context.appShim !== undefined) {
+      bounds = previous.getBounds();
+      retire(installId, previous);
+    }
     let win: W;
     try {
-      win = options.create(record, options.fitBounds(saved ?? DEFAULT_BOUNDS), context);
+      win = options.create(record, options.fitBounds(bounds), context);
     } catch (error: unknown) {
       logFailure("could not create app window", error);
       return "unavailable";

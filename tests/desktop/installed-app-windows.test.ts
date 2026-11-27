@@ -257,6 +257,20 @@ describe("installed app window controller", () => {
       expect(saveBounds).toHaveBeenCalledTimes(1);
     });
 
+    it("gives the shim's window the plain window's live bounds, not the older saved ones", async () => {
+      const item = record();
+      const { controller, windows, created } = setup({
+        records: [item],
+        loadBounds: async () => ({ x: 0, y: 0, width: 500, height: 400 }),
+      });
+      await controller.openOrFocus(item.installId);
+      windows[0]!.moveTo(300, 200);
+      windows[0]!.bounds = { ...windows[0]!.bounds, width: 1100, height: 700 };
+      windows[0]!.emit("resize");
+      expect(await controller.openOrFocus(item.installId, { appShim: shim })).toBe("opened");
+      expect(created[1]!.bounds).toMatchObject({ x: 300, y: 200, width: 1100, height: 700, minWidth: 480 });
+    });
+
     it("focuses a shim's window for a plain open instead of taking it out of the shim", async () => {
       const item = record();
       const { controller, created, windows } = setup({ records: [item] });

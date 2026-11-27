@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { lstat, mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, symlink, utimes, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, stat, symlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createMacInstaller } from "@desktop/main/installed-apps/mac-installer";
@@ -280,6 +280,17 @@ describe("macOS installed-app installer", () => {
 
   it("sweeps nothing when the Matrix Apps folder does not exist", async () => {
     await expect(installer().sweep()).resolves.toBeUndefined();
+  });
+
+  it("prunes a record whose path now holds another install's bundle, keeping that bundle", async () => {
+    const moved = await installer().install(app());
+    await rename(moved.bundlePath!, join(root, "Moved Notes.app"));
+    const current = await installer().install(app());
+    expect(current.bundlePath).toBe(moved.bundlePath);
+    expect(await installer().prune()).toEqual([moved.installId]);
+    expect((await records.list()).map((record) => record.installId)).toEqual([current.installId]);
+    expect(forgetWindowState).toHaveBeenCalledWith(moved.installId);
+    expect((await stat(join(current.bundlePath!, "Contents"))).isDirectory()).toBe(true);
   });
 
   it("prunes records whose bundle was moved or deleted", async () => {

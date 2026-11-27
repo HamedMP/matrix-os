@@ -59,9 +59,11 @@ type Verdict = { record: InstalledAppRecord } | { reason: string };
 /** The trust check: which install a shim is, or why it is refused. */
 export function verifyAppShim(shim: AppShimLike, records: readonly InstalledAppRecord[]): Verdict {
   const path = normalizeBundlePath(shim.bundlePath);
-  const record = records.find((candidate) => candidate.bundlePath && normalizeBundlePath(candidate.bundlePath) === path);
-  if (!record) return { reason: "unknown bundle" };
-  if (shim.bundleId !== shimBundleIdentifier(record.installId)) return { reason: "bundle identifier mismatch" };
+  const atPath = records.filter((candidate) => candidate.bundlePath && normalizeBundlePath(candidate.bundlePath) === path);
+  if (atPath.length === 0) return { reason: "unknown bundle" };
+  // A moved bundle can leave a stale record at a path a newer install now uses: match both.
+  const record = atPath.find((candidate) => shim.bundleId === shimBundleIdentifier(candidate.installId));
+  if (!record) return { reason: "bundle identifier mismatch" };
   for (const cdHash of record.cdHashes) {
     try {
       if (shim.satisfiesCodeRequirement(shimCodeRequirement(cdHash))) return { record };
