@@ -1,3 +1,5 @@
+import { isOutlookService } from "./outlook/oauth.js";
+import { OutlookError } from "./outlook/http.js";
 import type { OutlookGraph } from "./outlook/graph.js";
 import { selectedOutlookCall } from "./outlook/selected-call.js";
 import { Hono, type Context } from "hono";
@@ -38,6 +40,7 @@ export function createIntegrationReadCallRoutes(options: {
   db: PlatformDb;
   pipedream: PipedreamConnectClient;
   outlookGraph?: OutlookGraph;
+  outlookLegacyRetired?: boolean;
   resolveUserId: (c: Context) => Promise<string | null>;
   presetBroker?: {
     listConnections(userId: string): Promise<Array<{ id: string; service: string; account_label: string; status: string }>>;
@@ -108,6 +111,7 @@ export function createIntegrationReadCallRoutes(options: {
         const { data } = await native;
         return integrationActionSuccess(c, { db: options.db, connectionId: selected.connection.id, service, action, data });
       }
+      if (options.outlookLegacyRetired && isOutlookService(service)) throw new OutlookError("consent_required");
       const user = await options.db.getUserById(uid);
       if (!user?.pipedream_external_id) return c.json({ error: "Integration unavailable" }, 503);
       if (binding) {

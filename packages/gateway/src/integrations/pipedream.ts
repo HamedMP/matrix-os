@@ -360,3 +360,14 @@ export async function createPipedreamClient(
     },
   };
 }
+
+/** Direct integrations can boot without a Pipedream project. */
+export function createUnavailablePipedreamClient(): PipedreamConnectClient {
+  const unavailable = () => { throw new Error("Integration service unavailable"); };
+  return {
+    createConnectToken: unavailable, getOAuthUrl: unavailable, callAction: unavailable,
+    runAction: unavailable, proxyGet: unavailable, proxyPost: unavailable,
+    proxyPut: unavailable, proxyPatch: unavailable, proxyDelete: unavailable, revokeAccount: unavailable,
+    discoverActions: async () => [], listAccounts: async () => [], getAppInfo: async () => null,
+  };
+}

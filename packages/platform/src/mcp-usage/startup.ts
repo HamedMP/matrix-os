@@ -13,7 +13,7 @@ export interface GatewayCoreToolsModule {
 
 /** The gateway Connect Apps adapter (spec 2691); Pipedream stays platform-owned and is passed in. */
 export interface GatewayCoreConnectedAppsModule {
-  createCoreConnectedApps(options: { db: unknown; pipedream: unknown }): unknown;
+  createCoreConnectedApps(options: { db: unknown; pipedream: unknown; outlookGraph?: unknown; outlookLegacyRetired?: boolean }): unknown;
 }
 
 interface CoreServiceSlugs { serviceSlugs(userId: string): Promise<Map<string, string>> }
@@ -27,8 +27,8 @@ export async function createPlatformCoreMcp(options: {
   orgPolicy?: unknown;
   /** Rollup/retention run on one worker class only; every instance writes rows. */
   maintenance: boolean;
-  /** Settings -> Connect Apps in Core; absent when the platform has no Pipedream configuration. */
-  connectedApps?: { module: GatewayCoreConnectedAppsModule; db: unknown; pipedream: unknown };
+  /** Settings -> Connect Apps in Core. */
+  connectedApps?: { module: GatewayCoreConnectedAppsModule; db: unknown; pipedream: unknown; outlookGraph?: unknown; outlookLegacyRetired?: boolean };
 }): Promise<{ core: unknown; serviceSlugs(userId: string): Promise<Map<string, string>>; shutdown(): Promise<void> }> {
   await bootstrapMcpUsageDatabase(options.db);
   const repository = createMcpUsageRepository(options.db);
@@ -36,7 +36,8 @@ export async function createPlatformCoreMcp(options: {
   writer.start();
   const maintenance = options.maintenance ? startMcpUsageMaintenance({ repository }) : undefined;
   const apps = options.connectedApps?.module.createCoreConnectedApps({
-    db: options.connectedApps.db, pipedream: options.connectedApps.pipedream });
+    db: options.connectedApps.db, pipedream: options.connectedApps.pipedream,
+    outlookGraph: options.connectedApps.outlookGraph, outlookLegacyRetired: options.connectedApps.outlookLegacyRetired });
   const core = new options.coreModule.CoreToolService({ broker: options.broker, approvals: options.approvals, usage: writer,
     ...(options.orgPolicy ? { orgPolicy: options.orgPolicy } : {}), ...(apps ? { apps } : {}) });
   let closing: Promise<void> | undefined;

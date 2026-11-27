@@ -1,3 +1,8 @@
+import { createOutlookBrowserRoutes } from "./outlook/browser-routes.js";
+import type { OutlookRuntime } from "./outlook/runtime.js";
+import { isOutlookService } from "./outlook/oauth.js";
+import { isNativeOutlookConnection } from "./outlook/store.js";
+import { OutlookError } from "./outlook/http.js";
 import type { OutlookGraph } from "./outlook/graph.js";
 import { selectedOutlookCall } from "./outlook/selected-call.js";
 import { executeIntegrationAction } from "./action-execution.js";
@@ -35,6 +40,7 @@ const ConnectBodySchema = z.object({
   service: z.string().min(1),
   label: LabelField.optional(),
   redirectUri: z.literal(MOBILE_INTEGRATIONS_REDIRECT_URI).optional(),
+  connectionId: z.uuid().optional(),
 });
 
 const LabelPatchSchema = z.object({
@@ -135,6 +141,8 @@ export interface IntegrationRoutesOpts {
   pipedream: PipedreamConnectClient;
   webhookSecret: string;
   outlookGraph?: OutlookGraph;
+  outlook?: OutlookRuntime;
+  pipedreamAvailable?: boolean;
   resolveUserId: (c: Context) => Promise<string | null>;
   authorizeJevLabelCall?: (c: Context) => Promise<boolean>;
   broadcast?: IntegrationBroadcast;
@@ -242,10 +250,11 @@ function createPendingLabelQueue() {
 }
 
 export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
-  const { db, pipedream, webhookSecret, resolveUserId, broadcast, mcpPresetBroker } = opts;
+  const { db, pipedream, webhookSecret, resolveUserId, broadcast, mcpPresetBroker, outlook } = opts;
   const emit = broadcast ?? (() => {});
   const app = new Hono();
-  app.route("/", createIntegrationReadCallRoutes({ db, pipedream, resolveUserId, presetBroker: mcpPresetBroker, outlookGraph: opts.outlookGraph }));
+  if (outlook) app.route("/", createOutlookBrowserRoutes({ lifecycle: outlook.lifecycle, resolveUserId }));
+  app.route("/", createIntegrationReadCallRoutes({ db, pipedream, resolveUserId, presetBroker: mcpPresetBroker, outlookGraph: opts.outlookGraph, outlookLegacyRetired: outlook?.legacyRetired }));
   app.route("/", createJevLabelCallRoutes({ db, pipedream, resolveUserId, authorizeInternal: opts.authorizeJevLabelCall }));
 
   const { enqueuePendingLabel, consumePendingLabel } = createPendingLabelQueue();
@@ -312,6 +321,7 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
         services.filter(
           (service) => service.connectorKind === "pipedream"
             && service.pipedreamApp
+            && !(outlook && isOutlookService(service.id))
             && service.logoUrl.startsWith("https://pipedream.com/"),
         ).map(async (s) => {
           const info = await pipedream.getAppInfo(s.pipedreamApp!);
@@ -360,7 +370,7 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
       authoritative,
       readOnly,
       presetBroker: mcpPresetBroker,
-      logoUrl: (service) => logoCache.get(service.id) || service.logoUrl,
+      logoUrl: (service) => outlook && isOutlookService(service.id) ? "" : logoCache.get(service.id) || service.logoUrl,
     });
     return c.json(services);
   }
@@ -421,23 +431,23 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
     const uid = await requireUser(c);
     if (!uid) return c.json({ error: "Unauthorized" }, 401);
 
-    const externalId = await getOrCreateExternalId(uid);
-
     try {
-      const pdAccounts = await pipedream.listAccounts(externalId);
+      const externalId = opts.pipedreamAvailable === false ? null : await getOrCreateExternalId(uid);
+      const pdAccounts = externalId ? await pipedream.listAccounts(externalId) : [];
+      const accountOwnerId = externalId ?? uid;
       const existing = await db.listConnectedServices(uid);
       const existingPdIds = new Set(existing.map((s) => s.pipedream_account_id));
 
       const newAccounts = pdAccounts.flatMap(acc => {
         const service = getServiceByPipedreamApp(acc.app);
-        return !existingPdIds.has(acc.id) && service ? [{ ...acc, serviceId: service.id }] : [];
+        return !existingPdIds.has(acc.id) && service && !(outlook && isOutlookService(service.id)) ? [{ ...acc, serviceId: service.id }] : [];
       });
 
       // Resolve emails for new accounts missing them
       const resolvedEmails = await Promise.all(
         newAccounts.map(async (acc) => {
           if (acc.email) return acc.email;
-          return resolveAccountEmail(pipedream, externalId, acc.id, acc.serviceId);
+          return resolveAccountEmail(pipedream, accountOwnerId, acc.id, acc.serviceId);
         }),
       );
 
@@ -451,7 +461,7 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
       // upsert is idempotent (DB is safe), but the WS noise was real.
       const upserted = await Promise.all(
         newAccounts.map(async (acc, i) => {
-          const pendingKey = `${externalId}:${acc.app}`;
+          const pendingKey = `${accountOwnerId}:${acc.app}`;
           const explicitLabel = consumePendingLabel(pendingKey);
           const label = explicitLabel ?? acc.serviceId;
           const row = await db.connectService({
@@ -517,12 +527,20 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
       return c.json({ error: "Invalid request body", details: parsed.error.issues }, 400);
     }
 
-    const { service, label, redirectUri } = parsed.data;
+    const { service, label, redirectUri, connectionId } = parsed.data;
     const def = getService(service);
     if (!def) {
       return c.json({ error: `Unknown service: ${service}` }, 400);
     }
 
+    if (outlook && isOutlookService(service)) {
+      try {
+        return c.json({ url: await outlook.lifecycle.start({ userId: uid, service, label, redirectUri, connectionId }), service });
+      } catch (error: unknown) {
+        return integrationActionFailure(c, error, service, "connect");
+      }
+    }
+    if (connectionId) return c.json({ error: "Service connection unavailable" }, 400);
     if (def.connectorKind === "mcp_preset" || def.connectorKind === "managed_oauth") {
       if (!mcpPresetBroker) return c.json({ error: "Service connection unavailable" }, 503);
       try {
@@ -563,6 +581,7 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
   // -----------------------------------------------------------------------
 
   registerConnectedIntegrationWebhook(app, { db, pipedream, webhookSecret, emit,
+    ignoreService: outlook ? isOutlookService : undefined,
     verifiedConnectedWebhook: opts.verifiedConnectedWebhook, consumePendingLabel, applyExplicitReconnectLabel,
     resolveAccountEmail: (externalUserId,accountId,service) => resolveAccountEmail(pipedream,externalUserId,accountId,service),
   });
@@ -662,14 +681,14 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
     // row, because the same label may now belong to a different account.
     if (connectionId && connection?.id !== connectionId) return c.json({ error: "Action not permitted" }, 403);
 
-    if (!connection) {
+    if (!connection && !(outlook && isOutlookService(service)) && opts.pipedreamAvailable !== false) {
       try {
         const extId = await getOrCreateExternalId(uid);
         const pdAccounts = await pipedream.listAccounts(extId);
         const existingPdIds = new Set(connections.map((s) => s.pipedream_account_id));
         const newAccounts = pdAccounts.flatMap(acc => {
           const matchedService = getServiceByPipedreamApp(acc.app);
-          return !existingPdIds.has(acc.id) && matchedService ? [{ ...acc, serviceId: matchedService.id }] : [];
+          return !existingPdIds.has(acc.id) && matchedService && !(outlook && isOutlookService(matchedService.id)) ? [{ ...acc, serviceId: matchedService.id }] : [];
         });
         if (newAccounts.length > 0) {
           await Promise.all(
@@ -730,6 +749,9 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
     }
 
     try {
+      if (outlook?.legacyRetired && isOutlookService(service) && !isNativeOutlookConnection(connection)) {
+        throw new OutlookError("consent_required");
+      }
       const native = selectedOutlookCall({ outlook: opts.outlookGraph, userId: uid, connection, action, params,
         signal: actionDef.risk === "read" ? c.req.raw.signal : undefined });
       const { data, summary } = await (native ?? executeIntegrationAction({
@@ -801,6 +823,14 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
       return c.json({ error: "Not found" }, 404);
     }
 
+    if (isNativeOutlookConnection(result)) {
+      try {
+        if (!outlook || !await outlook.store.disconnect(uid, id)) throw new OutlookError("unavailable");
+        emit({ type: "integration:disconnected", service: result.service, id });
+        return c.json({ ok: true });
+      } catch (error: unknown) { return integrationActionFailure(c, error, result.service, "disconnect"); }
+    }
+
     try {
       await pipedream.revokeAccount(result.pipedream_account_id);
     } catch (err: unknown) {
@@ -865,7 +895,7 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
   // POST /:id/refresh -- force token refresh
   // -----------------------------------------------------------------------
 
-  app.post("/:id/refresh", async (c) => {
+  app.post("/:id/refresh", bodyLimit({ maxSize: 1024 }), async (c) => {
     const uid = await requireUser(c);
     if (!uid) return c.json({ error: "Unauthorized" }, 401);
 
@@ -875,6 +905,17 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
     if (result === null) return c.json({ error: "Not found" }, 404);
     if (result === "forbidden") return c.json({ error: "Forbidden" }, 403);
     if (result.status === "revoked") return c.json({ error: "Not found" }, 404);
+
+    if (isOutlookService(result.service) && isNativeOutlookConnection(result)) {
+      try {
+        if (!outlook) throw new OutlookError("unavailable");
+        await outlook.lifecycle.accessToken(uid, result.service, id, { forceRefresh: true });
+        return c.json({ id, status: "active", service: result.service });
+      } catch (error: unknown) { return integrationActionFailure(c, error, result.service, "refresh"); }
+    }
+    if (outlook?.legacyRetired && isOutlookService(result.service)) {
+      return integrationActionFailure(c, new OutlookError("consent_required"), result.service, "refresh");
+    }
 
     // Pipedream handles token refresh automatically.
     // We update status to active in case it was marked expired.
