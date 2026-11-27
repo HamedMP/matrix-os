@@ -20,7 +20,7 @@ function json(value: unknown, status = 429): Response {
 
 function setup(upstream: () => Response | Promise<Response>, model = SONNET) {
   const control = {
-    check: vi.fn(async () => ({ identity: IDENTITY })),
+    check: vi.fn(async () => ({ identity: IDENTITY, upstreamSelectionVersion: 1 as const })),
     authorize: vi.fn(async (input: { requestId: string; modelId: string; maxCostMicrousd: number }) => ({
       identity: IDENTITY, reservation: { reservationId: "reservation_1", requestId: input.requestId,
         modelId: input.modelId, reservedMicrousd: 0, billingMode: "usage", billingPolicy: "postpaid", maxCostMicrousd: input.maxCostMicrousd },
@@ -63,6 +63,12 @@ describe("funded generation rejection settlement", () => {
       expect(response.headers.get("x-matrix-funded-reason")).toBeNull();
       await vi.waitFor(() => expect(control.finalize).toHaveBeenCalledWith({
         reservationId: "reservation_1", tokenId: IDENTITY.tokenId, mode: "exact", actualCostMicrousd: 0, customerCharge: "waived",
+        upstreamProvenance: {
+          upstream: "cloudflare_anthropic",
+          routeId: "cloudflare-anthropic",
+          resolvedModel: "claude-sonnet-5",
+          pricingVersion: expect.any(String),
+        },
       }, expect.any(AbortSignal)));
       expect(fetchMock).toHaveBeenCalledTimes(1);
       expect(control.release).not.toHaveBeenCalled();

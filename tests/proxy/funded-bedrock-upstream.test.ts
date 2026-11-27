@@ -151,6 +151,12 @@ describe("AWS Bedrock funded upstream", () => {
     expect(() => resolveBedrockRouteConfig({
       MATRIX_FUNDED_BEDROCK_ROUTE: JSON.stringify({ ...value, canonicalModelId: "provider//model" }),
     })).toThrow(/configuration/i);
+    expect(() => resolveBedrockRouteConfig({
+      MATRIX_FUNDED_BEDROCK_ROUTE: JSON.stringify({ ...value, maxOutputTokens: 4_096 }),
+    })).toThrow(/configuration/i);
+    expect(() => resolveBedrockRouteConfig({
+      MATRIX_FUNDED_BEDROCK_ROUTE: JSON.stringify({ ...value, maxInputTokens: 32_000 }),
+    })).toThrow(/configuration/i);
     expect(route().pricing.validThrough).toBe("2026-10-20T23:59:59.999Z");
   });
 

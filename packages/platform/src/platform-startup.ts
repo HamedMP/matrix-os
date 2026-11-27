@@ -117,6 +117,11 @@ import {
 import { loadAiCreditCheckoutConfig } from './ai-credit-checkout.js';
 import { createFundedModelProbeService, loadFundedModelProbeLimits, type FundedModelProbeService } from './ai-funded-model-probes.js';
 import {
+  createAiFundedUpstreamPreferenceRepository,
+  loadAiFundedUpstreamPreferenceConfig,
+  type AiFundedUpstreamPreferenceRepository,
+} from './ai-funded-upstream-preference.js';
+import {
   createR2CapabilityGate,
   createStorageGatedHetznerClient,
   type R2CapabilityGate,
@@ -421,6 +426,7 @@ async function startPlatformServerWithCleanup(
   const freeTierConfig = loadConfiguredFreeTier(process.env);
   let fundedAiRepository: AiFundedPolicyRepository | undefined;
   let fundedModelProbes: FundedModelProbeService | undefined;
+  let fundedUpstreamPreferences: AiFundedUpstreamPreferenceRepository | undefined;
   let pricingJob: ReturnType<typeof startFundedPricingReviewJob> | undefined;
   const pricingJobConfig = fundedPricingReviewRuntimeConfig(process.env, fundedAiConfig.enabled, backgroundWorkersEnabled);
   if (fundedAiConfig.enabled) {
@@ -432,6 +438,7 @@ async function startPlatformServerWithCleanup(
       });
       registerCustomMcpStartupCleanup(async () => { await pricingJob?.shutdown(); });
     }
+    const upstreamPreferenceConfig = loadAiFundedUpstreamPreferenceConfig(process.env);
     fundedAiRepository = createAiFundedPolicyRepository({
       db,
       credentialHashSecret: fundedAiConfig.credentialHashSecret,
@@ -440,6 +447,7 @@ async function startPlatformServerWithCleanup(
       policyFreshnessMs: fundedAiConfig.policyFreshnessMs,
       freeFunding: freeTierConfig?.dailyFundedSpendMicrousd === undefined
         ? {} : { dailyFundedSpendMicrousd: freeTierConfig.dailyFundedSpendMicrousd },
+      verifyUpstream: input => fundedUpstreamPreferences?.verifyUpstream(input) ?? Promise.resolve(false),
     });
     const probeLimits = loadFundedModelProbeLimits(process.env);
     fundedModelProbes = createFundedModelProbeService({
@@ -447,6 +455,9 @@ async function startPlatformServerWithCleanup(
       credentials: fundedAiRepository,
       relayBaseUrl: process.env.MATRIX_FUNDED_AI_RELAY_URL,
       relayControlToken: fundedAiConfig.relayControlToken,
+      ...(upstreamPreferenceConfig.enabled
+        ? { bedrockModelIds: upstreamPreferenceConfig.bedrockModelIds }
+        : {}),
       ...probeLimits,
       cloudflarePreviewEnabled: cloudflareBinding !== undefined,
       ...(pricingRegistryEnabled ? { readPricingReview: async (modelId: string, signal: AbortSignal) => {
@@ -456,6 +467,21 @@ async function startPlatformServerWithCleanup(
         return review;
       } } : {}),
     });
+    if (upstreamPreferenceConfig.enabled) {
+      fundedUpstreamPreferences = createAiFundedUpstreamPreferenceRepository({
+        db,
+        config: upstreamPreferenceConfig,
+        selectionSecret: process.env.AI_FUNDED_UPSTREAM_SELECTION_SECRET ?? "",
+        readCachedBedrock: modelId => {
+          const deadlineAtMs = Date.now() + 1_500;
+          return fundedModelProbes!.readCached!(modelId, {
+            upstream: "aws_bedrock",
+            signal: AbortSignal.timeout(1_500),
+            deadlineAtMs,
+          });
+        },
+      });
+    }
     internalFundedAiRuntimeRoutes = createAiFundedRuntimeRoutes({
       db,
       platformSecret: fundedAiConfig.platformSecret,
@@ -466,12 +492,14 @@ async function startPlatformServerWithCleanup(
       routeProbes: fundedModelProbes,
       cloudflareBinding,
       isolatedChat: parseIsolatedChatEnvelope(process.env.MATRIX_ISOLATED_CHAT_ENVELOPE),
+      upstreamPreferences: fundedUpstreamPreferences,
     });
     internalFundedAiRelayRoutes = createAiFundedRelayRoutes({
       relayControlToken: fundedAiConfig.relayControlToken,
       repository: fundedAiRepository,
       listPricingReviews: pricingStore.list,
       ...(pricingRegistryEnabled ? { invalidatePricingRoute: fundedModelProbes.invalidateAfterUpstreamFailure } : {}),
+      upstreamPreferences: fundedUpstreamPreferences,
     });
     internalFundedAiOperatorRoutes = createAiFundedOperatorRoutes({
       db,

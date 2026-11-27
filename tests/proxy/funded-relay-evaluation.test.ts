@@ -157,8 +157,10 @@ describe("funded Jev evaluation relay", () => {
         const action = url.slice(`${PLATFORM_URL}/internal/ai/funded/`.length);
         events.push(action);
         if (action === "check") {
-          expect(body).toEqual({ credential: CREDENTIAL, modelId: JEV_MODEL_ID });
-          return json({ contractVersion: 1, authorized: true, identity: identity(), policy: policy() });
+          expect(body).toEqual({ credential: CREDENTIAL, modelId: JEV_MODEL_ID,
+            upstreamSelectionVersion: 1 });
+          return json({ contractVersion: 1, authorized: true, identity: identity(), policy: policy(),
+            upstreamSelectionVersion: 1 });
         }
         if (action === "authorize") {
           expect(body).toEqual({

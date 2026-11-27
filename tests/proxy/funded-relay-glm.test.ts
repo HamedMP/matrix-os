@@ -41,7 +41,7 @@ function tracker() {
 }
 function platform() {
   return {
-    check: vi.fn(async () => ({ identity: IDENTITY })),
+    check: vi.fn(async () => ({ identity: IDENTITY, upstreamSelectionVersion: 1 as const })),
     authorize: vi.fn(async (input: { requestId: string; modelId: string; maxCostMicrousd: number }) => ({
       identity: IDENTITY, reservation: { reservationId: "reservation_1", requestId: input.requestId,
         modelId: input.modelId, reservedMicrousd: 0, billingMode: "usage", billingPolicy: "postpaid", maxCostMicrousd: input.maxCostMicrousd },
@@ -108,7 +108,12 @@ describe("Cloudflare GLM usage relay", () => {
     expect(JSON.parse(String(init?.body))).toMatchObject({ reasoning_effort: "low", stream_options: { include_usage: true } });
     expect(init?.signal).toBeInstanceOf(AbortSignal); expect(init?.redirect).toBe("error");
     expect(control.finalize).toHaveBeenCalledWith({ reservationId: "reservation_1", tokenId: IDENTITY.tokenId,
-      mode: "exact", actualCostMicrousd: 24 }, expect.any(AbortSignal));
+      mode: "exact", actualCostMicrousd: 24,
+      upstreamProvenance: {
+        upstream: "cloudflare_workers_ai", routeId: "cloudflare-workers-ai", resolvedModel: MODEL,
+        pricingVersion: "cloudflare-2026-09-10-glm-flash",
+      },
+    }, expect.any(AbortSignal));
   });
   it.each([
     { model: "@cf/unreviewed/model" }, { max_tokens: 128_001 }, { user: "caller-authority" },

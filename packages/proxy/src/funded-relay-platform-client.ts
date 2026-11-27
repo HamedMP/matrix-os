@@ -8,13 +8,17 @@ import {
   FundedAiReleaseResponseSchema,
   FundedAiSafeErrorSchema,
   FundedAiStartResponseSchema,
+  FUNDED_AI_UPSTREAM_SELECTION_VERSION,
   type FundedAiAuthorizationResponse,
   type FundedAiPriorityReason,
   type FundedAiFinalizationRequest,
   type FundedAiFinalizationResponse,
   type FundedAiPolicyCheckResponse,
   type FundedAiReleaseResponse,
+  type FundedAiSafeError,
   type FundedAiStartResponse,
+  type FundedAiResolvedUpstream,
+  type FundedAiUpstreamSelection,
 } from "@matrix-os/contracts";
 import type { z } from "zod/v4";
 import {
@@ -31,7 +35,8 @@ export interface FundedBusyRetry {
 export class FundedControlPlaneError extends Error {
   constructor(readonly status: number, readonly priorityReason?: FundedAiPriorityReason,
     readonly fundingReason?: "insufficient_credit" | "budget_exceeded", readonly identityDenied = false,
-    readonly busy?: FundedBusyRetry) {
+    readonly busy?: FundedBusyRetry,
+    readonly safeCode?: FundedAiSafeError["error"]["code"]) {
     super("Funded AI control-plane request failed");
     this.name = "FundedControlPlaneError";
   }
@@ -83,6 +88,8 @@ function controlErrorFrom(status: number, text: string, retryAfter: string | nul
       return retryAfterSeconds === undefined ? new FundedControlPlaneError(status)
         : new FundedControlPlaneError(status, undefined, undefined, false, { retryAfterSeconds, retryAt: detail.retryAt });
     }
+    case "invalid_request":
+      return new FundedControlPlaneError(status, undefined, undefined, false, undefined, detail.code);
     default:
       return new FundedControlPlaneError(status);
   }
@@ -127,6 +134,8 @@ export interface FundedPlatformClient {
     billingMode?: "usage";
     billingPolicy?: "postpaid";
     jevPricingVersion?: string;
+    upstream?: FundedAiResolvedUpstream;
+    upstreamSelection?: FundedAiUpstreamSelection;
   }, signal: AbortSignal): Promise<FundedAiAuthorizationResponse>;
   start(input: { reservationId: string; tokenId: string; executionId?: string }, signal: AbortSignal): Promise<FundedAiStartResponse>;
   release(input: {
@@ -192,7 +201,18 @@ export function createFundedPlatformClient(options: Pick<
         throw new FundedControlPlaneError(response.status);
       }
     },
-    check: (input, signal) => call("check", input, FundedAiPolicyCheckResponseSchema, signal),
+    check: async (input, signal) => {
+      try {
+        return await call("check", { ...input, upstreamSelectionVersion: FUNDED_AI_UPSTREAM_SELECTION_VERSION },
+          FundedAiPolicyCheckResponseSchema, signal);
+      } catch (error) {
+        if (!(error instanceof FundedControlPlaneError)
+          || error.status !== 400 || error.safeCode !== "invalid_request") throw error;
+        // A strict pre-capability platform rejects the extra field before any
+        // policy mutation. Retry its legacy read-only shape and keep Bedrock disabled.
+        return call("check", input, FundedAiPolicyCheckResponseSchema, signal);
+      }
+    },
     authorize: (input, signal) => call("authorize", input, FundedAiAuthorizationResponseSchema, signal),
     start: (input, signal) => call("start", input, FundedAiStartResponseSchema, signal),
     release: (input, signal) => call("release", input, FundedAiReleaseResponseSchema, signal),

@@ -7,7 +7,7 @@ import {
   SHARED_FUNDED_HEALTH_TTL_MS, type SharedProbeAttempt,
 } from "./ai-funded-shared-probe-cache.js";
 import { sql } from "kysely";
-import { FUNDED_AI_READINESS_TIMEOUTS, IsoTimestampSchema, JEV_MODEL_ID } from "@matrix-os/contracts";
+import { FUNDED_AI_READINESS_TIMEOUTS, IsoTimestampSchema, JEV_MODEL_ID, ProviderModelReferenceSchema } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 import type { PlatformDB } from "./db.js";
 import { JevProbeRuntimeSchema, probeOwnerFundedJev, probeWithSignal, cancelProbeBody, type JevProbeRuntime, type JevProbeCredentials } from "./ai-funded-jev-probe.js";
@@ -25,7 +25,13 @@ const pendingBudgetOperations = new Set<Promise<boolean>>();
 const ReadyEvidenceSchema = z.object({ ready: z.literal(true), priceValidThrough: IsoTimestampSchema }).strict();
 
 export interface FundedModelProbeResult { ready: boolean; checkedAt: string; staleAfter: string; priceValidThrough?: string }
-export interface FundedModelProbeCall { receiptId?: string; signal?: AbortSignal; deadlineAtMs?: number; runtime?: JevProbeRuntime }
+export interface FundedModelProbeCall {
+  receiptId?: string;
+  signal?: AbortSignal;
+  deadlineAtMs?: number;
+  runtime?: JevProbeRuntime;
+  upstream?: "aws_bedrock";
+}
 export interface FundedModelProbeService {
   readCached?(modelId: string, call?: FundedModelProbeCall): Promise<FundedModelProbeResult>;
   probe(modelId: string, call?: FundedModelProbeCall): Promise<FundedModelProbeResult>;
@@ -165,7 +171,13 @@ export function createFundedModelProbeService(input: {
   cloudflarePreviewEnabled?: boolean;
   credentials?: JevProbeCredentials;
   readPricingReview?: (modelId: string, signal: AbortSignal) => Promise<{ version: string; validThrough: string } | null>;
+  bedrockModelIds?: readonly string[];
 }): FundedModelProbeService {
+  const parsedBedrockModels = z.array(ProviderModelReferenceSchema).max(8).safeParse(input.bedrockModelIds ?? []);
+  if (!parsedBedrockModels.success || new Set(parsedBedrockModels.data).size !== parsedBedrockModels.data.length) {
+    throw new Error("Funded AI model probe configuration is invalid");
+  }
+  const bedrockModels = new Set(parsedBedrockModels.data);
   const now = input.now ?? (() => new Date());
   const ordinaryModels = new Set<string>(input.cloudflarePreviewEnabled
     ? FUNDED_CLOUDFLARE_PREVIEW_COHORT_MODEL_IDS : FUNDED_PROBE_MODELS);
@@ -199,16 +211,17 @@ export function createFundedModelProbeService(input: {
     const checked = now().getTime();
     return { ready: false, checkedAt: new Date(checked).toISOString(), staleAfter: new Date(checked + NEGATIVE_TTL_MS).toISOString() };
   };
-  async function readProbeIdentity(modelId: string, signal: AbortSignal) {
-    const review = readPricingReview
+  async function readProbeIdentity(modelId: string, signal: AbortSignal, upstream?: FundedModelProbeCall["upstream"]) {
+    const review = !upstream && readPricingReview
       ? await probeWithSignal(() => readPricingReview(modelId, signal), signal)
       : undefined;
     const expiry = review ? Date.parse(review.validThrough) : Number.POSITIVE_INFINITY;
-    if (reviewed && (!review?.version || !Number.isFinite(expiry) || expiry <= now().getTime())) return null;
+    if (!upstream && reviewed && (!review?.version || !Number.isFinite(expiry) || expiry <= now().getTime())) return null;
     return {
       expiry,
       version: review?.version,
-      key: fundedProbeCacheKey({ modelId, relayOrigin: base!.origin, controlToken: input.relayControlToken!,
+      key: fundedProbeCacheKey({ modelId: upstream ? `${upstream}:${modelId}` : modelId,
+        relayOrigin: base!.origin, controlToken: input.relayControlToken!,
         dailyLimit: input.dailyLimit!, minuteLimit: input.minuteLimit!, review: review ?? undefined }),
     };
   }
@@ -235,7 +248,9 @@ export function createFundedModelProbeService(input: {
         if (/^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(call.receiptId ?? "")) {
           console.info(JSON.stringify({ event: "funded_readiness_join", receiptId: call.receiptId!.toLowerCase(),
             ...(entry.probeId ? { probeId: entry.probeId } : {}),
-            modelId: ordinaryModels.has(model) ? model : JEV_MODEL_ID, ready: result.ready }));
+            modelId: model.startsWith("aws_bedrock:") ? model.slice("aws_bedrock:".length)
+              : ordinaryModels.has(model) ? model : JEV_MODEL_ID,
+            ready: result.ready }));
         }
         if (entry.waiters.size === 0 && inFlight.get(model) === entry) {
           inFlight.delete(model);
@@ -267,12 +282,16 @@ export function createFundedModelProbeService(input: {
       }
     },
     async readCached(modelId, call = {}) {
-      if (!enabled || !ordinaryModels.has(modelId)) return unavailable();
+      const requestedBedrock = call.upstream === "aws_bedrock";
+      const bedrock = requestedBedrock && bedrockModels.has(modelId);
+      if (!enabled || (requestedBedrock
+        ? !bedrock
+        : !ordinaryModels.has(modelId))) return unavailable();
       const deadline = Math.min(call.deadlineAtMs ?? Date.now() + 1500, Date.now() + 1500);
       if (deadline <= Date.now() || call.signal?.aborted) return unavailable();
       const signal = AbortSignal.any([...(call.signal ? [call.signal] : []), AbortSignal.timeout(deadline - Date.now())]);
       try {
-        const identity = await readProbeIdentity(modelId, signal);
+        const identity = await readProbeIdentity(modelId, signal, call.upstream);
         return identity ? await shared.readCached(identity.key, signal, unavailable) : unavailable();
       } catch (error: unknown) {
         console.warn("[funded-ai] Cached pricing review unavailable:", error instanceof Error ? error.name : typeof error);
@@ -281,11 +300,14 @@ export function createFundedModelProbeService(input: {
     },
     async probe(modelId, call = {}) {
       const runtime = modelId === JEV_MODEL_ID ? JevProbeRuntimeSchema.safeParse(call.runtime).data : undefined;
+      const requestedBedrock = call.upstream === "aws_bedrock";
+      const bedrock = requestedBedrock && bedrockModels.has(modelId);
       if (!enabled || (modelId === JEV_MODEL_ID ? !runtime || !input.credentials
-        : !ordinaryModels.has(modelId))) return unavailable();
+        : requestedBedrock ? !bedrock : !ordinaryModels.has(modelId))) return unavailable();
       if (call.signal?.aborted || (call.deadlineAtMs !== undefined && call.deadlineAtMs <= Date.now())) return unavailable();
       const model = runtime ? JSON.stringify([JEV_MODEL_ID, runtime.identity.ownerId, runtime.identity.machineId,
-        runtime.identity.runtimeSlot, runtime.globalRevision, runtime.runtimeRevision]) : modelId;
+        runtime.identity.runtimeSlot, runtime.globalRevision, runtime.runtimeRevision])
+        : bedrock ? `aws_bedrock:${modelId}` : modelId;
       const windowMs = runtime ? FUNDED_AI_READINESS_TIMEOUTS.jevRouteMs : FUNDED_AI_READINESS_TIMEOUTS.platformRouteMs;
       const cached = runtime ? cache.get(model) : undefined;
       if (cached && Date.parse(cached.staleAfter) > now().getTime()) return cached;
@@ -297,7 +319,7 @@ export function createFundedModelProbeService(input: {
       };
       inFlight.set(model, entry);
       entry.promise = (async (): Promise<FundedModelProbeResult> => {
-        const identity = runtime ? undefined : await readProbeIdentity(modelId, entry.controller.signal);
+        const identity = runtime ? undefined : await readProbeIdentity(modelId, entry.controller.signal, call.upstream);
         if (identity === null) return unavailable();
         const reviewedExpiry = identity?.expiry ?? Number.POSITIVE_INFINITY;
         const performProbe = async (attempt?: SharedProbeAttempt): Promise<FundedModelProbeResult> => {
@@ -324,20 +346,23 @@ export function createFundedModelProbeService(input: {
               if (reviewedExpiry <= now().getTime()) return unavailable();
               attempt?.recordDispatch();
               entry.probeId = probeId;
-              const url = new URL(`/ready?model=${encodeURIComponent(model)}`, base!);
-              console.info(JSON.stringify({ event: "funded_readiness_dispatch", probeId, modelId: model }));
+              const url = new URL(`/ready?model=${encodeURIComponent(modelId)}${call.upstream ? `&upstream=${call.upstream}` : ""}`, base!);
+              console.info(JSON.stringify({ event: "funded_readiness_dispatch", probeId, modelId,
+                ...(call.upstream ? { upstream: call.upstream } : {}) }));
               const response = await (input.fetchFn ?? fetch)(url.toString(), {
                 headers: { authorization: `Bearer ${input.relayControlToken}`, "x-matrix-readiness-probe-id": probeId! },
                 redirect: "error", signal,
               });
               priceValidThrough = await readPriceValidThrough(response, signal);
-              console.info(JSON.stringify({ event: "funded_readiness_receipt", probeId, modelId: model,
+              console.info(JSON.stringify({ event: "funded_readiness_receipt", probeId, modelId,
+                ...(call.upstream ? { upstream: call.upstream } : {}),
                 relayStatus: response.status, pricedReady: priceValidThrough !== undefined }));
             }
           } catch (error) {
             const errorName = error instanceof Error && ["TimeoutError", "AbortError", "SyntaxError"].includes(error.name) ? error.name : "UnknownError";
             console.warn("[funded-ai] Model probe unavailable:", errorName);
-            if (probeId) console.info(JSON.stringify({ event: "funded_readiness_receipt", probeId, modelId: model,
+            if (probeId) console.info(JSON.stringify({ event: "funded_readiness_receipt", probeId, modelId,
+              ...(call.upstream ? { upstream: call.upstream } : {}),
               outcome: errorName === "TimeoutError" ? "timeout" : errorName === "AbortError" ? "aborted" : "unavailable" }));
           }
           const checked = now().getTime();

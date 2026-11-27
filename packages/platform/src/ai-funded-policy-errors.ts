@@ -8,6 +8,7 @@ export type AiFundedPolicyErrorCode =
   | "idempotency_conflict"
   | "insufficient_credit"
   | "model_not_allowed"
+  | "not_found"
   | "over_settlement"
   | "rate_limited"
   | "reservation_expired"

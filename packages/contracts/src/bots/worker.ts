@@ -7,6 +7,12 @@ import { BotIdSchema } from "#bots/ids";
 import { BotRecipeRefSchema } from "#bots/bot";
 import { BotBlockedReasonSchema } from "#bots/tasks";
 
+/** Output ceiling used by ordinary Matrix Pi turns across managed routes. */
+export const MATRIX_PI_DEFAULT_MAX_OUTPUT_TOKENS = 8_192;
+/** Bedrock's worker budget leaves room for byte-based translation and provider framing. */
+export const MATRIX_PI_BEDROCK_CONTEXT_WINDOW = 32_768;
+export const MATRIX_PI_BEDROCK_MIN_INPUT_TOKENS = 200_000;
+
 /** Model route resolved by the gateway from Provider V3; the worker never chooses one. */
 export const BotModelRouteSchema = z.object({
   api: z.enum(["anthropic-messages", "openai-responses", "openai-completions"]),

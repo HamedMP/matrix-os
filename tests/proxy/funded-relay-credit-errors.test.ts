@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { describe, expect, it, vi } from "vitest";
-import { createFundedPlatformClient, FundedControlPlaneError } from "../../packages/proxy/src/funded-relay-platform-client.js";
+import { createFundedPlatformClient } from "../../packages/proxy/src/funded-relay-platform-client.js";
 import { createFundedRelay, resolveFundedRelayConfig } from "../../packages/proxy/src/funded-relay.js";
 
 const config = () => resolveFundedRelayConfig({
@@ -52,6 +52,7 @@ describe("funded control-plane credit failures", () => {
     const fetchImpl = vi.fn<typeof fetch>(async () => Response.json({ error: { code: "rate_limited", message: "Try again later", reason: "slot_busy" } }, { status: 429 }));
     const client = createFundedPlatformClient({ ...config(), fetch: fetchImpl });
     await expect(client.check({ credential: "token", modelId: "@cf/zai-org/glm-5.3-flash" }, new AbortController().signal))
-      .rejects.toEqual(new FundedControlPlaneError(429, "slot_busy"));
+      .rejects.toMatchObject({ name: "FundedControlPlaneError", status: 429, priorityReason: "slot_busy",
+        fundingReason: undefined, identityDenied: false });
   });
 });

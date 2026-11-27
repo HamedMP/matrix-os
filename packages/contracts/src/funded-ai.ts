@@ -83,6 +83,61 @@ export function matchesFundedCloudflarePreviewBinding(
 
 export const FUNDED_AI_AUDIENCE = "matrix-funded-relay" as const;
 export const FUNDED_AI_SCOPE = "ai:invoke" as const;
+export const FUNDED_AI_UPSTREAM_SELECTION_VERSION = 1 as const;
+export const FundedAiUpstreamPreferenceValueSchema = z.enum(["cloudflare", "aws_bedrock"]);
+export const FundedAiResolvedUpstreamSchema = z.enum([
+  "cloudflare_anthropic",
+  "cloudflare_workers_ai",
+  "aws_bedrock",
+]);
+
+export const FundedAiUpstreamSelectionSchema = z.object({
+  upstream: FundedAiUpstreamPreferenceValueSchema,
+  preferenceRevision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  checkedAt: IsoTimestampSchema,
+  staleAfter: IsoTimestampSchema,
+  proof: z.string().regex(/^[a-f0-9]{64}$/),
+}).strict().superRefine((value, ctx) => {
+  const checked = Date.parse(value.checkedAt);
+  const stale = Date.parse(value.staleAfter);
+  if (stale <= checked || stale - checked > 30_000) {
+    ctx.addIssue({ code: "custom", path: ["staleAfter"], message: "Upstream selection freshness is invalid" });
+  }
+});
+
+export const FundedAiUpstreamPreferenceSchema = z.object({
+  selectedUpstream: FundedAiUpstreamPreferenceValueSchema,
+  revision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  updatedAt: IsoTimestampSchema.nullable(),
+  validThrough: IsoTimestampSchema,
+}).strict();
+
+export const FundedAiUpstreamPreferenceViewSchema = FundedAiUpstreamPreferenceSchema.extend({
+  effectiveUpstream: FundedAiUpstreamPreferenceValueSchema,
+  /** Exact platform-qualified models currently dispatching through Bedrock. Absent from legacy responses. */
+  effectiveBedrockModelIds: z.array(ProviderModelReferenceSchema).max(8)
+    .refine((models) => new Set(models).size === models.length, "Model IDs must be unique")
+    .optional(),
+}).strict().superRefine((value, ctx) => {
+  const modelIds = value.effectiveBedrockModelIds ?? [];
+  if (value.effectiveUpstream === "cloudflare" && modelIds.length > 0) {
+    ctx.addIssue({ code: "custom", path: ["effectiveBedrockModelIds"], message: "Cloudflare cannot expose effective Bedrock models" });
+  }
+  if (value.effectiveUpstream === "aws_bedrock" && value.effectiveBedrockModelIds !== undefined && modelIds.length === 0) {
+    ctx.addIssue({ code: "custom", path: ["effectiveBedrockModelIds"], message: "Effective Bedrock routing requires a model" });
+  }
+});
+
+export const FundedAiUpstreamPreferenceUpdateRequestSchema = z.object({
+  idempotencyKey: canonicalReferenceId(128),
+  expectedRevision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER - 1),
+  selectedUpstream: FundedAiUpstreamPreferenceValueSchema,
+}).strict();
+
+export const FundedAiUpstreamPreferenceResponseSchema = z.object({
+  contractVersion: z.literal(1),
+  preference: FundedAiUpstreamPreferenceViewSchema,
+}).strict();
 
 // Generic relay readiness includes scale-from-zero startup and the relay's
 // bounded 25s generation. Keep 2s for relay transport/startup, then leave time
@@ -276,6 +331,8 @@ export const FundedAiAuthorizationRequestSchema = z.object({
   jevPricingVersion: z.literal(JEV_PRICING_VERSION).optional(),
   /** Gateway-supplied turn identity for interactive priority ordering; never authority. */
   claimKey: FundedAiClaimKeySchema.optional(),
+  upstream: FundedAiResolvedUpstreamSchema.optional(),
+  upstreamSelection: FundedAiUpstreamSelectionSchema.optional(),
 }).strict().superRefine((value, ctx) => {
   if (value.billingPolicy === "postpaid" && value.billingMode !== "usage") {
     ctx.addIssue({ code: "custom", path: ["billingPolicy"], message: "Postpaid policy requires usage billing" });
@@ -284,11 +341,19 @@ export const FundedAiAuthorizationRequestSchema = z.object({
     && (value.modelId !== JEV_MODEL_ID || value.billingMode !== "usage")) {
     ctx.addIssue({ code: "custom", path: ["jevPricingVersion"], message: "Jev pricing requires Jev usage authorization" });
   }
+  if (value.upstream === "aws_bedrock" && value.upstreamSelection?.upstream !== "aws_bedrock") {
+    ctx.addIssue({ code: "custom", path: ["upstreamSelection"], message: "Bedrock authorization requires its platform selection" });
+  }
+  if (value.upstream !== "aws_bedrock" && value.upstreamSelection?.upstream === "aws_bedrock") {
+    ctx.addIssue({ code: "custom", path: ["upstream"], message: "Bedrock selection cannot authorize another upstream" });
+  }
 });
 
 export const FundedAiPolicyCheckRequestSchema = z.object({
   credential: OpaqueCredentialSchema,
   modelId: ProviderModelReferenceSchema,
+  /** Opt-in keeps older strict platforms compatible with newer relays. */
+  upstreamSelectionVersion: z.literal(FUNDED_AI_UPSTREAM_SELECTION_VERSION).optional(),
 }).strict();
 
 export const FundedAiPolicyCheckResponseSchema = z.object({
@@ -303,7 +368,15 @@ export const FundedAiPolicyCheckResponseSchema = z.object({
     expiresAt: IsoTimestampSchema,
   }).strict(),
   policy: FundedAiEffectivePolicySchema,
-}).strict();
+  /** Present only when the request advertised support for this projection. */
+  upstreamSelectionVersion: z.literal(FUNDED_AI_UPSTREAM_SELECTION_VERSION).optional(),
+  upstreamSelection: FundedAiUpstreamSelectionSchema.optional(),
+}).strict().superRefine((value, ctx) => {
+  if (value.upstreamSelection && value.upstreamSelectionVersion !== FUNDED_AI_UPSTREAM_SELECTION_VERSION) {
+    ctx.addIssue({ code: "custom", path: ["upstreamSelectionVersion"],
+      message: "Upstream selection requires negotiated support" });
+  }
+});
 
 export const FundedAiFundingSummarySchema = z.object({
   /** Platform-authoritative capability; local runtime JSON cannot enable purchases. */
@@ -378,6 +451,7 @@ export const FundedAiChatAvailabilitySchema = z.object({
 /** Negotiated separately: the legacy v1 response remains strict and unchanged. */
 export const FundedAiRuntimeChatFundingSummaryResponseSchema = FundedAiRuntimeFundingSummaryResponseSchema.safeExtend({
   chatAvailability: FundedAiChatAvailabilitySchema,
+  upstreamPreference: FundedAiUpstreamPreferenceViewSchema.optional(),
 }).superRefine((value, ctx) => {
   if (value.chatAvailability.asOf !== value.funding.asOf) {
     ctx.addIssue({ code: "custom", path: ["chatAvailability", "asOf"], message: "Chat and funding observations must match" });
@@ -387,7 +461,14 @@ export const FundedAiRuntimeChatFundingSummaryResponseSchema = FundedAiRuntimeFu
     ctx.addIssue({ code: "custom", path: ["chatAvailability"], message: "Chat availability must respect aggregate financial protection" });
   }
 });
-export const FundedAiRuntimeFundingSummaryRequestSchema = z.object({ includeChatAvailability: z.literal(true).optional() }).strict();
+export const FundedAiRuntimeFundingSummaryRequestSchema = z.object({
+  includeChatAvailability: z.literal(true).optional(),
+  includeUpstreamPreference: z.literal(true).optional(),
+}).strict().superRefine((value, ctx) => {
+  if (value.includeUpstreamPreference && !value.includeChatAvailability) {
+    ctx.addIssue({ code: "custom", path: ["includeChatAvailability"], message: "Preference projection requires the current settings contract" });
+  }
+});
 export type FundedAiChatAvailability = z.infer<typeof FundedAiChatAvailabilitySchema>;
 
 /** Separate from the v1 funding summary so older strict clients keep working. */
@@ -397,6 +478,9 @@ export const FUNDED_AI_READINESS_CATALOG = {
   header: "x-matrix-funded-readiness-catalog-version",
   version: "2",
   maxModels: 11,
+  bedrockHeader: "x-matrix-funded-bedrock-catalog-version",
+  bedrockVersion: "1",
+  maxBedrockModels: 8,
 } as const;
 export const FUNDED_AI_LEGACY_READINESS_MODEL_IDS = [
   ...LEGACY_MANAGED_WORKERS_AI_MODEL_IDS,
@@ -408,7 +492,8 @@ export const FundedAiRouteReadinessReceiptSchema = z.object({
   runtimeRevision: RevisionSchema,
   checkedAt: IsoTimestampSchema,
   staleAfter: IsoTimestampSchema,
-  readyModelIds: z.array(ProviderModelReferenceSchema).max(FUNDED_AI_READINESS_CATALOG.maxModels)
+  readyModelIds: z.array(ProviderModelReferenceSchema)
+    .max(FUNDED_AI_READINESS_CATALOG.maxModels + FUNDED_AI_READINESS_CATALOG.maxBedrockModels)
     .refine((models) => new Set(models).size === models.length, "Model IDs must be unique"),
 }).strict().superRefine((value, ctx) => {
   const checked = Date.parse(value.checkedAt);
@@ -419,6 +504,11 @@ export const FundedAiRouteReadinessReceiptSchema = z.object({
 });
 
 export type FundedAiRouteReadinessReceipt = z.infer<typeof FundedAiRouteReadinessReceiptSchema>;
+export type FundedAiUpstreamPreferenceValue = z.infer<typeof FundedAiUpstreamPreferenceValueSchema>;
+export type FundedAiResolvedUpstream = z.infer<typeof FundedAiResolvedUpstreamSchema>;
+export type FundedAiUpstreamSelection = z.infer<typeof FundedAiUpstreamSelectionSchema>;
+export type FundedAiUpstreamPreference = z.infer<typeof FundedAiUpstreamPreferenceSchema>;
+export type FundedAiUpstreamPreferenceView = z.infer<typeof FundedAiUpstreamPreferenceViewSchema>;
 
 export const FundedAiAuthorizationResponseSchema = z.object({
   contractVersion: z.literal(1),
@@ -445,6 +535,7 @@ export const FundedAiAuthorizationResponseSchema = z.object({
     periodStart: IsoTimestampSchema,
     expiresAt: IsoTimestampSchema,
     status: z.literal("reserved"),
+    upstream: FundedAiResolvedUpstreamSchema.optional(),
   }).strict(),
 }).strict().superRefine((value, ctx) => {
   const reservation = value.reservation;
