@@ -6,9 +6,16 @@ export const MAIN_WINDOW_ACTIONS_READY_TIMEOUT_MS = 15_000;
 // Bridge rate limits already cap these actions; past this, the oldest waiter fails first.
 const MAX_WAITERS = 8;
 
+/** The session an action belongs to; the renderer refuses events from any other. */
+export interface MainWindowActionAuthority {
+  runtimeSlot: string;
+  authGeneration: number;
+}
+
 export function createMainWindowActionGate(options: {
   hasMainWindow(): boolean;
-  isSignedIn(): boolean;
+  /** The signed-in session, or null when signed out. */
+  authority(): MainWindowActionAuthority | null;
   /** The app's single-flight create-or-focus path for the main window. */
   reopenMainWindow(): Promise<void>;
   /** Brings the main window forward (reopening it if needed) so the owner can sign in. */
@@ -54,16 +61,21 @@ export function createMainWindowActionGate(options: {
 
   return {
     /**
-     * Resolves when the main renderer can take an action; rejects with the
-     * caller's generic message when signed out, on reopen failure or timeout.
+     * Resolves with the session captured before any wait once the main renderer
+     * can take the action; rejects with the caller's generic message when signed
+     * out, on reopen failure or timeout, or when the session or requesting app
+     * changed meanwhile. Callers deliver with the returned authority only.
      */
-    async ensure(failureMessage: string): Promise<void> {
-      if (!options.isSignedIn()) {
+    async ensure(failureMessage: string, isSenderCurrent: () => boolean): Promise<MainWindowActionAuthority> {
+      const captured = options.authority();
+      if (!captured) {
         // The renderer only reports ready after sign-in: never wait for it while signed out.
         options.showMainWindow();
         throw new Error(failureMessage);
       }
-      if (options.hasMainWindow() && !awaitingRenderer) return;
+      const authority = { runtimeSlot: captured.runtimeSlot, authGeneration: captured.authGeneration };
+      if (!isSenderCurrent()) throw new Error(failureMessage);
+      if (options.hasMainWindow() && !awaitingRenderer) return authority;
       if (!options.hasMainWindow() || reopening) {
         try {
           await reopen();
@@ -76,6 +88,15 @@ export function createMainWindowActionGate(options: {
         console.warn("[installed-apps] main window was not ready for an app action");
         throw new Error(failureMessage);
       }
+      // A computer switch, sign-out/in or a closed or navigated app during the wait
+      // voids the request: never deliver it under another session's authority.
+      const now = options.authority();
+      if (!now || now.runtimeSlot !== authority.runtimeSlot || now.authGeneration !== authority.authGeneration
+        || !isSenderCurrent()) {
+        console.warn("[installed-apps] app action dropped: its session or app changed while Matrix reopened");
+        throw new Error(failureMessage);
+      }
+      return authority;
     },
 
     /** The main renderer has its app, Chat and task listeners attached and is signed in. */

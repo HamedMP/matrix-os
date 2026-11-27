@@ -115,7 +115,7 @@ describe("Electron Desktop gallery", () => {
     expect(prompt).toContain('"connectionId":"connection-personal"');
     expect(prompt).toContain('"expectedEmail":"personal@example.com"');
     bridge.generate({ id: 72, url: `${origin}/apps/folio/` }, prompt);
-    expect(generate).toHaveBeenCalledWith("folio", prompt);
+    expect(generate).toHaveBeenCalledWith("folio", prompt, expect.any(Function));
   });
 });
 

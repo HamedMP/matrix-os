@@ -1343,7 +1343,7 @@ describe("registerIpcHandlers", () => {
     const terminal = trustedWindow("file:///renderer/index.html?window=terminal");
     const authorizeSender = createSenderPolicy({ mainWindow: () => main, terminalWindow: () => terminal,
       mainUrl: main.webContents.getURL(), terminalUrl: terminal.webContents.getURL() });
-    const gate = createMainWindowActionGate({ hasMainWindow: () => true, isSignedIn: () => true,
+    const gate = createMainWindowActionGate({ hasMainWindow: () => true, authority: () => ({ runtimeSlot: "primary", authGeneration: 1 }),
       reopenMainWindow: async () => undefined, showMainWindow: vi.fn() });
     const harness = makeHarness({ authorizeSender, nativeActionsReady: gate.rendererReady });
     const from = (win: typeof main, frame: unknown = win.webContents.mainFrame) => ({ sender: win.webContents, senderFrame: frame });

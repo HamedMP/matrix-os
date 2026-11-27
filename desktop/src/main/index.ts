@@ -531,38 +531,36 @@ if (!gotLock) {
       // Installed app windows can outlive the main window; reopen it before delivering their actions.
       const mainWindowActions = createMainWindowActionGate({
         hasMainWindow: () => Boolean(mainWindow && !mainWindow.isDestroyed()),
-        isSignedIn: () => auth.getStatus().signedIn,
+        authority: () => {
+          const status = auth.getStatus();
+          return status.signedIn ? { runtimeSlot: status.runtimeSlot, authGeneration: status.authGeneration } : null;
+        },
         reopenMainWindow: () => reopenMainWindow?.() ?? Promise.reject(new Error("main window unavailable")),
         showMainWindow: () => restoreMainWindowForDeepLink?.(),
       });
       disposeMainWindowActions = mainWindowActions.dispose;
+      // Each action is delivered under the session captured before any wait for the main window.
       const nativeAppBridge = new NativeAppBridge({
         getSenderLifecycle: (senderId) => webContents.fromId(senderId) ?? undefined,
         resolveApp: createNativeAppOpenResolver({ getGatewayOrigin: () => auth.getGatewayOrigin(), getToken: () => auth.getToken() }),
-        openApp: async (app) => {
-          await mainWindowActions.ensure("App launch is unavailable");
-          const status = auth.getStatus();
-          if (!status.signedIn || !mainWindow || mainWindow.isDestroyed()) throw new Error("App launch is unavailable");
-          sendEvent("app:open", { ...app, runtimeSlot: status.runtimeSlot, authGeneration: status.authGeneration });
+        openApp: async (app, isCurrent) => {
+          const authority = await mainWindowActions.ensure("App launch is unavailable", isCurrent);
+          if (!mainWindow || mainWindow.isDestroyed()) throw new Error("App launch is unavailable");
+          sendEvent("app:open", { ...app, ...authority });
         },
-        openChat: async (request, signal) => {
-          await mainWindowActions.ensure("Chat navigation is unavailable");
-          const status = auth.getStatus();
-          if (!status.signedIn || !mainWindow || mainWindow.isDestroyed() || !nativeAppChatNavigation) {
+        openChat: async (request, signal, isCurrent) => {
+          const authority = await mainWindowActions.ensure("Chat navigation is unavailable", isCurrent);
+          if (!mainWindow || mainWindow.isDestroyed() || !nativeAppChatNavigation) {
             throw new Error("Chat navigation is unavailable");
           }
           focusMainWindow();
-          await nativeAppChatNavigation.request(request, {
-            runtimeSlot: status.runtimeSlot,
-            authGeneration: status.authGeneration,
-          }, signal);
+          await nativeAppChatNavigation.request(request, authority, signal);
         },
         authGeneration: () => auth.getStatus().authGeneration,
-        generate: async (app, context) => {
-          await mainWindowActions.ensure("App task is unavailable");
-          const status = auth.getStatus();
-          if (!status.signedIn || !mainWindow || mainWindow.isDestroyed()) throw new Error("App task is unavailable");
-          sendEvent("app:generate", { app, context, runtimeSlot: status.runtimeSlot, authGeneration: status.authGeneration });
+        generate: async (app, context, isCurrent) => {
+          const authority = await mainWindowActions.ensure("App task is unavailable", isCurrent);
+          if (!mainWindow || mainWindow.isDestroyed()) throw new Error("App task is unavailable");
+          sendEvent("app:generate", { app, context, ...authority });
         },
         capabilityRequest: createNativeAppCapabilityRequester({
           getGatewayOrigin: () => auth.getGatewayOrigin(),
