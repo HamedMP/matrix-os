@@ -316,7 +316,7 @@ it.each([0, 1])("retains the preferred source and budget draft while replacement
   expect(choice).toBeEnabled();
   const gateway = screen.getByRole("region", { name: "Matrix AI" });
   expect(within(gateway).getByText("GLM")).toBeVisible();
-  const summary = within(gateway).getByText("Advanced Matrix AI settings");
+  const summary = within(gateway).getByText("Workspace controls");
   fireEvent.click(summary);
   const advanced = summary.closest("details")!;
   expect(advanced).toHaveAttribute("open");
@@ -359,7 +359,7 @@ it("does not temporarily prefer an unchanged expired source when a reserved sibl
   const gateway = screen.getByRole("region", { name: "Matrix AI" });
   expect(within(gateway).getByText("Credit reserved")).toBeVisible();
   expect(within(gateway).queryByText("GLM")).not.toBeInTheDocument();
-  const summary = within(gateway).getByText("Advanced Matrix AI settings");
+  const summary = within(gateway).getByText("Workspace controls");
   fireEvent.click(summary);
   const advanced = summary.closest("details")!;
   const budget = screen.getByLabelText("Monthly budget in USD");
@@ -394,7 +394,7 @@ it.each(["removed", "saved_binding"] as const)("does not retain the previous unb
   fireEvent.click(screen.getByRole("button", { name: /^Pi/ }));
   const oldGateway = screen.getByRole("region", { name: "Matrix AI" });
   expect(within(oldGateway).getByText("GLM")).toBeVisible();
-  fireEvent.click(within(oldGateway).getByText("Advanced Matrix AI settings"));
+  fireEvent.click(within(oldGateway).getByText("Workspace controls"));
   fireEvent.change(screen.getByLabelText("Monthly budget in USD"), { target: { value: "2.5" } });
   await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
   const next = structuredClone(snapshot);

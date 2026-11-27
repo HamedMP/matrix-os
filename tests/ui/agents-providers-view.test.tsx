@@ -527,7 +527,7 @@ describe("AgentsProvidersView", () => {
     const { rerender, props } = setup({ snapshot: next, selectedHarnessId: harness.id });
     let gateway = screen.getByRole("region", { name: "Matrix AI" });
     expect(within(gateway).getByText("Ready")).toBeVisible();
-    expect(within(gateway).getByText("Selected for Pi")).not.toBeVisible();
+    expect(within(gateway).getByText("Selected for Pi")).toBeVisible();
 
     const unauthorized = structuredClone(next);
     unauthorized.gatewayPolicy!.allowedModelIds = ["anthropic/claude-opus-5"];
@@ -535,7 +535,7 @@ describe("AgentsProvidersView", () => {
     gateway = screen.getByRole("region", { name: "Matrix AI" });
     expect(within(gateway).queryByText("Ready")).not.toBeInTheDocument();
     expect(within(gateway).queryByText("Selected for Pi")).not.toBeInTheDocument();
-    expect(within(gateway).getByRole("button", { name: "Check again", hidden: true })).not.toBeVisible();
+    expect(within(gateway).getByRole("button", { name: "Check again" })).toBeVisible();
   });
 
   it("keeps Matrix AI upstream providers private in an agent route", () => {
@@ -828,7 +828,7 @@ describe("AgentsProvidersView", () => {
     usage.budget.remainingBudgetMicrousd = 250_000;
     const { rerender } = setup({ snapshot: current });
     expect(screen.getByText("$0.25")).toBeVisible();
-    expect(screen.getByText("$0.20 used of $1.00")).not.toBeVisible();
+    expect(screen.getByText("$0.20 used of $1.00")).toBeVisible();
 
     const stale = structuredClone(current);
     stale.accessSources[0]!.usage = { ...stale.accessSources[0]!.usage, state: "stale" } as typeof stale.accessSources[0]["usage"];
@@ -1115,7 +1115,6 @@ describe("AgentsProvidersView", () => {
     expect(screen.queryByRole("button", { name: "Save budget" })).not.toBeInTheDocument();
     expect(screen.queryByRole("checkbox", { name: "Allow Claude Sonnet 5" })).not.toBeInTheDocument();
     const gateway = screen.getByRole("region", { name: "Matrix AI" });
-    fireEvent.click(within(gateway).getByText("Advanced Matrix AI settings"));
     expect(within(gateway).getByText("Managed by your workspace")).toBeVisible();
     expect(within(gateway).getByText("$0.75")).toBeVisible();
     expect(within(gateway).getByText("Claude Opus 5")).toBeVisible();

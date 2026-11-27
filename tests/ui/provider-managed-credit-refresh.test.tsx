@@ -93,7 +93,7 @@ it("retains a real view's budget draft/disclosure and fresh display through comm
     return state.snapshot ? <AgentsProvidersView workflowClient={workflow} snapshot={state.snapshot} selectedHarnessId={state.selectedHarnessId} busy={state.busy} onSelectHarness={state.onSelectHarness} onRefresh={() => void state.refresh()} onMutate={state.mutate} /> : null;
   }
   render(<Settings />); await act(async () => {});
-  fireEvent.click(screen.getByText("Advanced Matrix AI settings"));
+  fireEvent.click(screen.getByText("Workspace controls"));
   const input = screen.getByRole("textbox", { name: "Monthly budget in USD" });
   fireEvent.change(input, { target: { value: "17" } });
   const row = screen.getByRole("button", { name: /^Claude Code/ }); fireEvent.click(row);
