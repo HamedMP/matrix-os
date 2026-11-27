@@ -82,4 +82,35 @@ describe("integration marketplace", () => {
     fireEvent.change(screen.getByRole("searchbox", { name: "Search integrations" }), { target: { value: "missing" } });
     expect(screen.getByText("No integrations found")).toBeTruthy();
   });
+  it("shows one PostHog entry with OAuth first and the existing API-key connection under advanced options", () => {
+    const posthog = [
+      { id: "posthog", name: "PostHog (API key)", category: "analytics" },
+      { id: "posthog_oauth", name: "PostHog", category: "analytics" },
+    ];
+    const onConnect = vi.fn();
+    render(<IntegrationMarketplace services={posthog} connectedIds={["posthog"]} onConnect={onConnect} />);
+    fireEvent.click(screen.getByRole("button", { name: "Connected (1)" }));
+    expect(screen.queryByText("PostHog (API key)")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Connect PostHog", exact: true }));
+    expect(onConnect).toHaveBeenLastCalledWith("posthog_oauth");
+    fireEvent.click(screen.getByRole("button", { name: "Advanced options for PostHog" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add another PostHog (API key) account" }));
+    expect(onConnect).toHaveBeenLastCalledWith("posthog");
+    fireEvent.click(screen.getByRole("checkbox", { name: "Sign in without API keys" }));
+    expect(screen.queryByRole("button", { name: "Advanced options for PostHog" })).toBeNull();
+  });
+
+  it.each(["API key", "PostHog (API key)"])("finds the grouped PostHog entry when searching for %s", query => {
+    render(<IntegrationMarketplace services={[
+      { id: "posthog", name: "PostHog (API key)", category: "analytics" },
+      { id: "posthog_oauth", name: "PostHog", category: "analytics" },
+    ]} connectedIds={[]} onConnect={vi.fn()} />);
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search integrations" }), { target: { value: query } });
+    expect(screen.getByRole("button", { name: "Connect PostHog", exact: true })).toBeTruthy();
+    expect(screen.queryByText("PostHog (API key)")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Advanced options for PostHog" }));
+    expect(screen.getByRole("button", { name: "Connect PostHog (API key)", exact: true })).toBeTruthy();
+    fireEvent.click(screen.getByRole("checkbox", { name: "Sign in without API keys" }));
+    expect(screen.queryByRole("button", { name: "Connect PostHog", exact: true })).toBeNull();
+  });
 });

@@ -1,3 +1,5 @@
+import { PREVIEW_INTEGRATIONS_UNAVAILABLE } from "@matrix-os/contracts/integration-marketplace";
+
 export interface ConnectedService {
   id: string;
   service: string;
@@ -15,7 +17,7 @@ export class IntegrationsUnavailableError extends Error {
 }
 
 export const INTEGRATIONS_UNAVAILABLE_NOTICE = "Some app connections are unavailable. You can still connect MCP servers and review external approvals below.";
-export const PREVIEW_INTEGRATIONS_UNAVAILABLE_NOTICE = "App connections are unavailable on this preview computer. You can still connect MCP servers and review external approvals below.";
+export const PREVIEW_INTEGRATIONS_UNAVAILABLE_NOTICE = `${PREVIEW_INTEGRATIONS_UNAVAILABLE} You can still connect MCP servers and review external approvals below.`;
 
 export function hasNewConnectionForService(
   previousIds: Set<string>,

@@ -3,6 +3,7 @@
 // enforced by the parsers). All user-facing error strings go through the
 // shared display boundary — upstream provider/platform text never renders.
 import { create } from "zustand";
+import { PREVIEW_INTEGRATIONS_UNAVAILABLE_CODE } from "@matrix-os/contracts/integration-marketplace";
 import { AppError, categoryMessage } from "../../../../shared/app-error";
 import type { ApiClient } from "../../lib/api";
 import { toUserMessage } from "../../lib/errors";
@@ -23,7 +24,7 @@ const AVAILABLE_PATH = `${BASE_PATH}/available`;
 const SYNC_PATH = `${BASE_PATH}/sync`;
 const CONNECT_PATH = `${BASE_PATH}/connect`;
 
-export type IntegrationsStatus = "idle" | "loading" | "ready" | "unavailable" | "error";
+export type IntegrationsStatus = "idle" | "loading" | "ready" | "unavailable" | "previewUnavailable" | "error";
 
 interface IntegrationsState {
   available: AvailableIntegration[];
@@ -66,6 +67,10 @@ function logWarn(scope: string, err: unknown): void {
   console.warn(`[integrations] ${scope}:`, category);
 }
 
+function isPreviewUnavailable(error: unknown): boolean {
+  return error instanceof AppError && error.httpStatus === 403 && error.detail === PREVIEW_INTEGRATIONS_UNAVAILABLE_CODE;
+}
+
 // Ordering guard for the catalog load only. Identity ("is this still the same
 // account/computer?") is the SHARED runtime generation -- a per-store counter
 // cannot express it, because a request that starts after an account change is
@@ -101,19 +106,21 @@ export const useIntegrations = create<IntegrationsState>()((set) => ({
       api.get<unknown>(AVAILABLE_PATH),
       api.get<unknown>(BASE_PATH),
     ]);
+    if (superseded()) return;
+    if ([availableRes, connectionsRes].some(result => result.status === "rejected" && isPreviewUnavailable(result.reason))) {
+      set({ status: "previewUnavailable", available: [], connections: [], connectionsSource: null, errorMessage: null });
+      return;
+    }
     if (availableRes.status === "rejected" || connectionsRes.status === "rejected") {
       const err = availableRes.status === "rejected" ? availableRes.reason : (connectionsRes as PromiseRejectedResult).reason;
       if (err instanceof AppError && err.category === "notFound") {
-        if (superseded()) return;
         set({ status: "unavailable", available: [], connections: [], connectionsSource: null, errorMessage: null });
         return;
       }
       logWarn("refresh failed", err);
-      if (superseded()) return;
       set({ status: "error", errorMessage: toUserMessage(err) });
       return;
     }
-    if (superseded()) return;
     set({
       status: "ready",
       available: parseAvailableIntegrations(availableRes.value),
@@ -180,6 +187,10 @@ export const useIntegrations = create<IntegrationsState>()((set) => ({
     } catch (err: unknown) {
       logWarn("connect failed", err);
       if (!isCurrentRuntimeGeneration(runtimeGeneration)) return null;
+      if (isPreviewUnavailable(err)) {
+        set({ status: "previewUnavailable", available: [], connections: [], connectionsSource: null, errorMessage: null });
+        return null;
+      }
       if (err instanceof AppError && err.category === "notFound") {
         set({ status: "unavailable", available: [], connections: [], connectionsSource: null, errorMessage: null });
         return null;

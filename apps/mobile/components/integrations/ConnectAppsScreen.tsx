@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   AppState,
@@ -11,7 +11,7 @@ import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import ArrowRight01Icon from "@hugeicons/core-free-icons/ArrowRight01Icon";
 import { useFocusEffect, useRouter } from "expo-router";
 
-import { buildIntegrationSections, integrationDescription, integrationAuthType } from "@matrix-os/contracts/integration-marketplace";
+import { buildIntegrationSections, groupPostHogMarketplaceEntries, integrationDescription, integrationAuthType, POSTHOG_OAUTH_SERVICE_ID } from "@matrix-os/contracts/integration-marketplace";
 import GithubIcon from "@hugeicons/core-free-icons/GithubIcon";
 import { SettingsRow } from "@/components/settings/SettingsSurface";
 import { IntegrationLogo } from "@/components/integrations/IntegrationLogo";
@@ -39,6 +39,7 @@ export function ConnectAppsScreen({ openedFrom }: ConnectAppsScreenProps) {
   const [oauthOnly, setOauthOnly] = useState(false);
   const [expandedSections, setExpandedSections] = useState<string[]>([]);
   const [connectedOnly, setConnectedOnly] = useState(false);
+  const [showPostHogApiKey, setShowPostHogApiKey] = useState(false);
   const router = useRouter();
   const { theme } = useUnistyles();
   const {
@@ -60,7 +61,13 @@ export function ConnectAppsScreen({ openedFrom }: ConnectAppsScreenProps) {
   const connectInFlight = useRef(false);
   syncConnectionsRef.current = syncConnections;
   const servicesById = new Map(available.map((service) => [service.id, service]));
-  const catalogSections = buildIntegrationSections(available, { query, oauthOnly, connectedOnly, connectedIds: connected.map(c => c.service) });
+  const connectedIds = connected.map(connection => connection.service);
+  const connectedServices = new Set(connectedIds);
+  const catalog = groupPostHogMarketplaceEntries(available, connectedIds);
+  const catalogSections = buildIntegrationSections(catalog.services, {
+    query, oauthOnly, connectedOnly, connectedIds: oauthOnly ? connectedIds : catalog.connectedIds,
+    postHogApiKey: catalog.postHogApiKey,
+  });
   const connectedLabel = isPending
     ? "Loading connected accounts…"
     : `${connected.length} connected ${connected.length === 1 ? "account" : "accounts"}`;
@@ -138,6 +145,21 @@ export function ConnectAppsScreen({ openedFrom }: ConnectAppsScreenProps) {
     };
   }, [connectingServiceId]);
 
+  function renderService(service: IntegrationService) {
+    const auth = integrationAuthType(service);
+    const authLabel = auth === "keys" ? "API key required" : auth === "oauth" ? "Sign in securely" : "Connect your account";
+    const connecting = startingServiceId === service.id || connectingServiceId === service.id;
+    return (
+      <ListRow title={service.name} detail={`${integrationDescription(service)} · ${authLabel}`}
+        leading={<IntegrationLogo service={service} />}
+        action={<View style={styles.filter}>
+          {connecting ? <ActivityIndicator color={theme.v2.appColors.muted} size="small" testID={`integration-connect-spinner-${service.id}`} />
+            : <Text style={styles.statusText}>{connectedServices.has(service.id) ? "Add account" : "Connect"}</Text>}
+        </View>}
+        accessibilityLabel={`Connect ${service.name} integration`} onPress={startingServiceId || connectingServiceId ? undefined : () => void connectIntegration(service)} />
+    );
+  }
+
   return (
     <Page
       title={openedFrom === "apps" ? "Connect Apps" : undefined}
@@ -208,16 +230,23 @@ export function ConnectAppsScreen({ openedFrom }: ConnectAppsScreenProps) {
               </View>
               <Spacer size="md" />
               <ListRowStack>
-                {(query.trim() || connectedOnly || oauthOnly || expandedSections.includes(section.title) ? section.services : section.services.slice(0, 4)).map(service => (
-                  <ListRow key={service.id} title={service.name}
-                    detail={`${integrationDescription(service)} · ${integrationAuthType(service) === "keys" ? "API key required" : integrationAuthType(service) === "oauth" ? "Sign in securely" : "Connect your account"}`}
-                    leading={<IntegrationLogo service={service} />}
-                    action={<View style={styles.filter}>
-                      {startingServiceId === service.id || connectingServiceId === service.id ? <ActivityIndicator color={theme.v2.appColors.muted} size="small" testID={`integration-connect-spinner-${service.id}`} />
-                        : <Text style={styles.statusText}>{connected.some(c => c.service === service.id) ? "Add account" : "Connect"}</Text>}
-                    </View>}
-                    accessibilityLabel={`Connect ${service.name} integration`} onPress={startingServiceId || connectingServiceId ? undefined : () => void connectIntegration(service)} />
-                ))}
+                {(query.trim() || connectedOnly || oauthOnly || expandedSections.includes(section.title) ? section.services : section.services.slice(0, 4)).map(service => {
+                  const apiKey = service.id === POSTHOG_OAUTH_SERVICE_ID && !oauthOnly ? catalog.postHogApiKey : undefined;
+                  if (!apiKey) return <Fragment key={service.id}>{renderService(service)}</Fragment>;
+                  return (
+                    <View key={service.id}>
+                      {renderService(service)}
+                      <View style={styles.advancedOptions}>
+                        <Pressable accessibilityRole="button" accessibilityLabel="Advanced options for PostHog"
+                          accessibilityState={{ expanded: showPostHogApiKey }} onPress={() => setShowPostHogApiKey(open => !open)}
+                          style={[styles.filter, styles.advancedButton]}>
+                          <Text style={styles.statusText}>{connectedServices.has(apiKey.id) ? "Advanced options · API key connected" : "Advanced options"}</Text>
+                        </Pressable>
+                        {showPostHogApiKey ? renderService(apiKey) : null}
+                      </View>
+                    </View>
+                  );
+                })}
               </ListRowStack>
             </View>
           ))}
@@ -238,6 +267,8 @@ function titleCase(value: string): string {
 
 const styles = StyleSheet.create((theme) => ({
   filter: { borderRadius: 999, paddingHorizontal: 12, paddingVertical: 8, backgroundColor: theme.v2.appColors.surface },
+  advancedOptions: { marginLeft: 16, gap: 8 },
+  advancedButton: { alignSelf: "flex-start" },
   installedCard: {
     borderWidth: 1,
     borderColor: theme.v2.appColors.line,

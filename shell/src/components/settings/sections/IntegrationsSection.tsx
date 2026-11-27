@@ -12,7 +12,7 @@ import {
   type ConnectedService,
 } from "./integrations-helpers";
 import { GITHUB_DEVELOPER_SERVICE_ID, IntegrationMarketplace, withGithubDeveloperCatalogEntry } from "@matrix-os/ui";
-import type { IntegrationCatalogItem } from "@matrix-os/contracts/integration-marketplace";
+import { PREVIEW_INTEGRATIONS_UNAVAILABLE_CODE, type IntegrationCatalogItem } from "@matrix-os/contracts/integration-marketplace";
 import { ConnectedIntegrationAccounts } from "./ConnectedIntegrationAccounts";
 import { GithubDeveloperIntegration } from "./GithubDeveloperIntegration";
 import { CustomMcpServersPanel } from "./CustomMcpServersPanel";
@@ -53,7 +53,7 @@ export function IntegrationsSection({ active = true, onOpenGithubDisconnectTermi
         if (!response.ok) {
           const body = response.status === 503 || response.status === 403 ? await response.json() : null;
           if (response.status === 503 && body?.error === "integrations_unavailable") throw new IntegrationsUnavailableError();
-          if (response.status === 403 && body?.code === "preview_integrations_unavailable") throw new IntegrationsUnavailableError("preview");
+          if (response.status === 403 && body?.code === PREVIEW_INTEGRATIONS_UNAVAILABLE_CODE) throw new IntegrationsUnavailableError("preview");
           throw new Error("Integrations unavailable");
         }
         return response.json();
@@ -194,7 +194,7 @@ export function IntegrationsSection({ active = true, onOpenGithubDisconnectTermi
   }, [loadData]);
 
   const handleConnect = async (serviceId: string, label?: string) => {
-    if (connecting || connectInFlight.current) return;
+    if (appsUnavailable === "preview" || connecting || connectInFlight.current) return;
     connectInFlight.current = true;
     let popup: Window | null = null;
     setConnecting(serviceId);
@@ -211,7 +211,15 @@ export function IntegrationsSection({ active = true, onOpenGithubDisconnectTermi
         signal: AbortSignal.timeout(10_000),
       });
       if (!res.ok) {
-        setError("Could not start connection. Try again.");
+        const body = res.status === 403 ? await res.json().catch((err: unknown) => {
+          console.warn("[integrations] Invalid connect refusal", err instanceof Error ? err.name : "UnknownError");
+          return null;
+        }) : null;
+        if (body?.code === PREVIEW_INTEGRATIONS_UNAVAILABLE_CODE) {
+          setAppsUnavailable("preview");
+        } else {
+          setError("Could not start connection. Try again.");
+        }
         setConnecting(null);
         popup?.close();
         connectInFlight.current = false;
@@ -444,7 +452,7 @@ export function IntegrationsSection({ active = true, onOpenGithubDisconnectTermi
               ) : null}
 
               {!loading ? <ConnectedIntegrationAccounts {...{ connected, available, renamingId, renameDraft, savingRename, checkingStatus, confirmDisconnect, disconnecting, setRenameDraft, setRenamingId, setConfirmDisconnect, handleRename, handleCheckStatus, handleDisconnect }} /> : null}
-              <IntegrationMarketplace services={services} connectedIds={connectedIds} connectingId={connecting}
+              <IntegrationMarketplace services={services} connectedIds={connectedIds} connectingId={connecting} connectDisabled={appsUnavailable === "preview"}
                 rowPresentation={service => service.id === GITHUB_DEVELOPER_SERVICE_ID ? developer : undefined}
                 onConnect={id => { if (id !== GITHUB_DEVELOPER_SERVICE_ID) void handleConnect(id); }} />
               {!loading ? <CustomMcpServersPanel connectedApps={connected} appNames={Object.fromEntries(available.map(service => [service.id, service.name]))} /> : null}

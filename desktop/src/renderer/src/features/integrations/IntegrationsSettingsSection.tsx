@@ -247,7 +247,7 @@ export function IntegrationsSettingsSection({ pollIntervals, active = true }: In
     const catalogReady = status === "ready";
     let catalogState: ReactNode;
     if (status === "idle" || status === "loading") catalogState = <LoadingSkeleton />;
-    else if (status === "unavailable") catalogState = <UnavailableState />;
+    else if (status === "unavailable" || status === "previewUnavailable") catalogState = <UnavailableState preview={status === "previewUnavailable"} />;
     else if (status === "error") catalogState = <ErrorState message={errorMessage ?? GENERIC_ERROR} onRetry={refresh} />;
     else if (catalogServices.length === 0) catalogState = <EmptyCatalogState />;
 

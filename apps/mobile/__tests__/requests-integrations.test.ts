@@ -129,6 +129,21 @@ describe("integration requests", () => {
     );
   });
 
+  it.each([
+    ["posthog_oauth", "https://oauth.posthog.com/oauth/authorize/?state=example", true],
+    ["posthog_oauth", "https://oauth.posthog.com.example.net/oauth/authorize/", false],
+    ["posthog_oauth", "https://oauth.posthog.com/another-path", false],
+    ["github", "https://oauth.posthog.com/oauth/authorize/", false],
+  ])("checks the managed consent target for %s at %s", async (service, url, accepted) => {
+    jest.spyOn(global, "fetch").mockResolvedValue({
+      ok: true,
+      json: jest.fn().mockResolvedValue({ url, service }),
+    } as unknown as Response);
+    const request = createIntegrationConnectUrl("clerk-token", "https://app.matrix-os.com/vm/solar-vale", service);
+    if (accepted) await expect(request).resolves.toBe(url);
+    else await expect(request).rejects.toThrow("Could not start connection. Try again.");
+  });
+
   it("syncs Pipedream accounts after the app returns", async () => {
     const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue({
       ok: true,

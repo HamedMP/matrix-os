@@ -78,6 +78,26 @@ describe("Connect Apps in Settings", () => {
     expect(screen.getByLabelText("Connect GitHub integration")).toBeTruthy();
   });
 
+  it("keeps the API-key method under the PostHog entry", async () => {
+    const startConnection = jest.fn().mockResolvedValue("https://pipedream.com/connect");
+    jest.spyOn(Linking, "openURL").mockResolvedValue(undefined);
+    mockUseComputerIntegrations.mockReturnValue({
+      ...mockUseComputerIntegrations(),
+      startConnection,
+      available: [
+        { id: "posthog", name: "PostHog (API key)", category: "analytics", icon: "chart" },
+        { id: "posthog_oauth", name: "PostHog", category: "analytics", icon: "chart" },
+      ],
+    });
+    render(<ConnectAppsSettingsScreen />);
+    fireEvent.changeText(screen.getByPlaceholderText("Search apps"), "API key");
+    expect(screen.getByLabelText("Connect PostHog integration")).toBeTruthy();
+    expect(screen.queryByLabelText("Connect PostHog (API key) integration")).toBeNull();
+    fireEvent.press(screen.getByLabelText("Advanced options for PostHog"));
+    fireEvent.press(screen.getByLabelText("Connect PostHog (API key) integration"));
+    await waitFor(() => expect(startConnection).toHaveBeenCalledWith("posthog"));
+  });
+
   it.each([
     ["Settings", ConnectAppsSettingsScreen, "/settings-detail/connect-apps"],
     ["the Apps tab", AppsConnectAppsScreen, MOBILE_INTEGRATIONS_REDIRECT_URI],
