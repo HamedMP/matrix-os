@@ -25,6 +25,7 @@ import type {
   TableCell,
   TableRow,
 } from "../../api/docx-model.js";
+import { OfficeError } from "../../errors.js";
 
 export interface FlatParagraph {
   type: "paragraph";
@@ -104,7 +105,10 @@ function emptyParagraphGoes(next: DocxBlock | undefined, previous: DocxBlock | u
   return next.type === "table";
 }
 
-/** Nesting bound for tables in table cells; deeper content is left out. */
+/**
+ * Nesting bound for tables in table cells. A deeper table fails the export
+ * with `limit_exceeded` rather than leaving its text out.
+ */
 const MAX_TABLE_DEPTH = 32;
 
 /** True when content carrying a revision of this kind is not shown in the view. */
@@ -115,6 +119,9 @@ export function goneInView(kind: RevisionKind | undefined, view: DocxTextView): 
 }
 
 function flattenTable(table: TableBlock, view: DocxTextView, filter: RunFilter, depth: number): FlatTable {
+  if (depth >= MAX_TABLE_DEPTH) {
+    throw new OfficeError("limit_exceeded", "tables are nested too deeply to export", { details: { limit: MAX_TABLE_DEPTH } });
+  }
   // The rows the view keeps, each with the cells it keeps: columns and spans are counted among those.
   const kept: Array<{ row: TableRow; cells: readonly TableCell[] }> = [];
   table.rows.forEach((row, rowIndex) => {
@@ -142,7 +149,7 @@ function flattenTable(table: TableBlock, view: DocxTextView, filter: RunFilter, 
           rowSpan++;
         }
       }
-      const flat: FlatCell = { cell, rowSpan, blocks: depth >= MAX_TABLE_DEPTH ? [] : flattenWith(cell.blocks, view, filter, depth + 1) };
+      const flat: FlatCell = { cell, rowSpan, blocks: flattenWith(cell.blocks, view, filter, depth + 1) };
       cells.push(flat);
       slots.push({ cell, flat });
     }

@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import type { DocxTextView } from "../../../../packages/office/src/api/docx.js";
-import { createDocx, createDocxFromMarkdown, toMarkdown, toPlainText } from "../../../../packages/office/src/docx/index.js";
-import { buildDocument, p, r } from "../model/build.js";
+import { createDocx, createDocxFromMarkdown, toHtml, toMarkdown, toPlainText } from "../../../../packages/office/src/docx/index.js";
+import { isOfficeError } from "../../../../packages/office/src/errors.js";
+import { buildDocument, cell, p, r, row, tbl } from "../model/build.js";
 import { DOCX_FIXTURES, expectedText, openFixture } from "../model/helpers.js";
 
 const VIEWS: readonly DocxTextView[] = ["markup", "final", "original"];
@@ -99,6 +100,33 @@ describe("toMarkdown", () => {
       // Footnote definitions are re-imported as paragraphs; compare the body part only.
       const body = reimported.getPlainText().split(/\n\[\^/)[0] as string;
       expect(words(body.replace(/\[\^\w+\]/g, ""))).toBe(words(toPlainText(doc, { numberingLabels: false })));
+    }
+  });
+});
+
+describe("tables nested past the export depth limit", () => {
+  const nested = (levels: number, text: string): string => {
+    let content = p(r(text));
+    for (let level = 0; level < levels; level++) content = tbl(row(cell(content)));
+    return p(r("Before.")) + content + p(r("After."));
+  };
+
+  // Markdown pipe tables cannot nest, so only plain text and HTML show the innermost cell.
+  it("exports every cell of tables nested up to the limit", () => {
+    const doc = buildDocument({ body: nested(32, "deepest words") });
+    expect(toPlainText(doc)).toContain("deepest words");
+    expect(toHtml(doc)).toContain("deepest words");
+  });
+
+  it("refuses to export tables nested deeper instead of leaving their text out", () => {
+    const doc = buildDocument({ body: nested(40, "deepest words") });
+    for (const exportText of [() => toPlainText(doc), () => toMarkdown(doc), () => toHtml(doc)]) {
+      try {
+        exportText();
+        throw new Error("expected limit_exceeded");
+      } catch (error) {
+        expect(isOfficeError(error) && error.code === "limit_exceeded").toBe(true);
+      }
     }
   });
 });
