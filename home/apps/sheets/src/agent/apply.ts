@@ -21,6 +21,7 @@ import {
   parseAgentEdits,
   toSheetEdits,
 } from "./engine";
+import { coveredIn } from "../grid/merge-guard";
 import { SheetsAgentError } from "./ai";
 import { ASSISTANT_AUTHOR, MAX_PROPOSED_CELLS } from "./limits";
 import { oneLine } from "./untrusted";
@@ -52,7 +53,7 @@ export interface EditScope {
 
 export type ValidationResult =
   | { ok: true; edits: ResolvedSheetEdit[]; summary: string }
-  | { ok: false; reason: "unreadable" | "empty" | "rejected" | "too_many" | "out_of_scope"; messages: string[] };
+  | { ok: false; reason: "unreadable" | "empty" | "rejected" | "too_many" | "out_of_scope" | "merged"; messages: string[] };
 
 const REJECTED_WORDS: Record<string, string> = {
   not_found: "names a sheet that does not exist",
@@ -102,7 +103,44 @@ export function validateReply(workbook: Workbook, reply: string, scope: EditScop
     const indexes = [...outside].sort((a, b) => a - b).slice(0, 10).map((index) => index + 1);
     return { ok: false, reason: "out_of_scope", messages: [`Change${indexes.length === 1 ? "" : "s"} ${indexes.join(", ")} would write outside the cells this action may change.`] };
   }
+  const hidden = underMerges(workbook, plan.edits);
+  if (hidden.length > 0) {
+    const indexes = hidden.slice(0, 10).map((index) => index + 1);
+    return { ok: false, reason: "merged", messages: [`Change${indexes.length === 1 ? "" : "s"} ${indexes.join(", ")} would write into ${indexes.length === 1 ? "a cell" : "cells"} hidden by a merged cell.`] };
+  }
   return { ok: true, edits: plan.edits, summary };
+}
+
+/**
+ * Indexes (sorted) of the edits that put a value or formula where a merged
+ * cell hides it: stored, but never shown. Clearing such a cell is allowed.
+ */
+function underMerges(workbook: Workbook, edits: readonly ResolvedSheetEdit[]): number[] {
+  const bySheet = new Map<SheetId, ResolvedSheetEdit[]>();
+  for (const edit of edits) {
+    if (edit.formula === null && edit.value === null) continue;
+    let list = bySheet.get(edit.sheet);
+    if (list === undefined) bySheet.set(edit.sheet, (list = []));
+    list.push(edit);
+  }
+  const found = new Set<number>();
+  for (const [sheet, list] of bySheet) {
+    const merges = workbook.getSheet(sheet).mergedRanges;
+    if (merges.length === 0) continue;
+    let top = Infinity;
+    let left = Infinity;
+    let bottom = -1;
+    let right = -1;
+    for (const edit of list) {
+      top = Math.min(top, edit.row);
+      left = Math.min(left, edit.col);
+      bottom = Math.max(bottom, edit.row);
+      right = Math.max(right, edit.col);
+    }
+    const covered = coveredIn(merges, { start: { row: top, col: left }, end: { row: bottom, col: right } });
+    for (const edit of list) if (covered(edit.row, edit.col)) found.add(edit.editIndex);
+  }
+  return [...found].sort((a, b) => a - b);
 }
 
 /** Writes one resolved edit. */

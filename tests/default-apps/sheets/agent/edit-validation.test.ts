@@ -88,6 +88,22 @@ describe("validateReply", () => {
     expect(validateReply(session.workbook, reply, { editable: null })).toMatchObject({ ok: false, reason: "out_of_scope" });
     expect(validateReply(session.workbook, envelope([{ op: "setCell", sheet: "Summary", cell: "D9", value: "x" }]), { editable: null }).ok).toBe(true);
   });
+
+  // Outcome: the assistant cannot put a value where a merged cell hides it.
+  // Fault: the proposal is accepted, the value is stored under the merge and the owner never sees it.
+  it("rejects values written under a merged cell, but allows its top-left cell and clearing", async () => {
+    const { session, sheets } = await openModel();
+    session.mutate((workbook) => workbook.mergeCells(sheets.summary, { start: { row: 8, col: 3 }, end: { row: 8, col: 4 } }));
+    const hidden = validateReply(session.workbook, envelope([
+      { op: "setCell", sheet: "Summary", cell: "D9", value: "shown" },
+      { op: "setCell", sheet: "Summary", cell: "E9", value: "lost" },
+    ]));
+    expect(hidden).toMatchObject({ ok: false, reason: "merged" });
+    if (!hidden.ok) expect(hidden.messages[0]).toBe("Change 2 would write into a cell hidden by a merged cell.");
+    expect(validateReply(session.workbook, envelope([{ op: "setRange", sheet: "Summary", start: "D9", values: [[1, "=D9*2"]] }]))).toMatchObject({ ok: false, reason: "merged" });
+    expect(validateReply(session.workbook, envelope([{ op: "setCell", sheet: "Summary", cell: "D9", value: "shown" }])).ok).toBe(true);
+    expect(validateReply(session.workbook, envelope([{ op: "setCell", sheet: "Summary", cell: "D9", value: "shown" }, { op: "clearRange", sheet: "Summary", range: "D9:E9" }])).ok).toBe(true);
+  });
 });
 
 describe("editing by instruction", () => {
