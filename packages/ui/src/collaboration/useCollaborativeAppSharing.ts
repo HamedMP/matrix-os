@@ -71,6 +71,11 @@ export function useCollaborativeAppSharing(input: {
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const requestGeneration = useRef(0);
   const shareGeneration = useRef(0);
+  // Rebuild reads wait for an owner write so they cannot invalidate its result.
+  const pendingWrite = useRef<number | null>(null);
+  const rereadAfterWrite = useRef(false);
+  const shareScope = useRef(0);
+  const handledBuildEpoch = useRef<number | null>(null);
   const appId = AppIdSchema.safeParse(input.appId);
   const path = appId.success
     ? `/api/collaboration/apps/${encodeURIComponent(appId.data)}/readiness`
@@ -178,8 +183,31 @@ export function useCollaborativeAppSharing(input: {
 
   useEffect(() => {
     if (input.manageShare) void refreshShare();
-    return () => { shareGeneration.current += 1; };
+    return () => {
+      shareGeneration.current += 1;
+      shareScope.current += 1;
+      pendingWrite.current = null;
+      rereadAfterWrite.current = false;
+      handledBuildEpoch.current = null;
+    };
   }, [input.manageShare, refreshShare]);
+
+  useEffect(() => {
+    const previous = handledBuildEpoch.current;
+    handledBuildEpoch.current = buildEpoch;
+    if (previous === null || previous === buildEpoch || !input.manageShare) return;
+    if (pendingWrite.current !== null) rereadAfterWrite.current = true;
+    else void refreshShare();
+  }, [buildEpoch, input.manageShare, refreshShare]);
+
+  const settleWrite = useCallback((generation: number, scope: number, confirmed: boolean) => {
+    if (shareScope.current !== scope || pendingWrite.current !== generation) return;
+    pendingWrite.current = null;
+    const reread = rereadAfterWrite.current;
+    rereadAfterWrite.current = false;
+    // Failed stops perform their own read and retain their safe error.
+    if (reread && confirmed) void refreshShare();
+  }, [refreshShare]);
 
   const recheck = useCallback(async (rawInput: {
     organizationId: string;
@@ -239,6 +267,9 @@ export function useCollaborativeAppSharing(input: {
     shouldContinue?: () => boolean;
   } = {}): Promise<CollaborativeAppShare | null> => {
     const generation = ++shareGeneration.current;
+    const scope = shareScope.current;
+    let confirmed = false;
+    pendingWrite.current = generation;
     setActionState("sharing");
     setActionMessage(null);
     try {
@@ -268,6 +299,7 @@ export function useCollaborativeAppSharing(input: {
       // just created (its own revisions; the hook's snapshot is still stale here).
       if (options.shouldContinue && !options.shouldContinue() && !preflight.existingShare) {
         const revoked = await revokeShare(next);
+        confirmed = revoked !== null;
         if (shareGeneration.current === generation) {
           setShare(revoked ?? next);
           setShareKnown(revoked !== null);
@@ -280,6 +312,7 @@ export function useCollaborativeAppSharing(input: {
       setShare(next);
       setShareKnown(true);
       setActionState("idle");
+      confirmed = true;
       return next;
     } catch (error: unknown) {
       console.warn("[collaborative-app-share] create failed", error instanceof Error ? error.name : "UnknownError");
@@ -288,11 +321,16 @@ export function useCollaborativeAppSharing(input: {
         setActionMessage(SAFE_SHARE_UNAVAILABLE);
       }
       return null;
+    } finally {
+      settleWrite(generation, scope, confirmed);
     }
-  }, [currentReadiness, input.api, path, revokeShare]);
+  }, [currentReadiness, input.api, path, revokeShare, settleWrite]);
 
   const stopShare = useCallback(async (clientRequestId?: string): Promise<CollaborativeAppShare | null> => {
     const generation = ++shareGeneration.current;
+    const scope = shareScope.current;
+    let confirmed = false;
+    pendingWrite.current = generation;
     setActionState("stopping");
     setActionMessage(null);
     try {
@@ -309,6 +347,7 @@ export function useCollaborativeAppSharing(input: {
       setShare(next);
       setShareKnown(true);
       setActionState("idle");
+      confirmed = true;
       return next;
     } catch (error: unknown) {
       console.warn("[collaborative-app-share] stop failed", error instanceof Error ? error.name : "UnknownError");
@@ -318,8 +357,10 @@ export function useCollaborativeAppSharing(input: {
       setActionState("failed");
       setActionMessage("Sharing could not be stopped. Refresh and try again.");
       return null;
+    } finally {
+      settleWrite(generation, scope, confirmed);
     }
-  }, [input.api, path, refreshShare, share]);
+  }, [input.api, path, refreshShare, settleWrite, share]);
 
   return {
     readiness: currentReadiness,
