@@ -1,6 +1,6 @@
 import { z } from "zod/v4";
 
-import { buildGatewayRequestUrl, fetchAuthenticatedResponse } from "./http";
+import { buildGatewayRequestUrl, fetchAuthenticatedResponse, type RequestToken } from "./http";
 
 interface ResponseSchema<T> {
   parse(value: unknown): T;
@@ -8,7 +8,7 @@ interface ResponseSchema<T> {
 
 interface AnswerRequest<T> {
   url: string;
-  token: string;
+  token: RequestToken;
   schema: ResponseSchema<T>;
   errorMessage: string;
   /** Statuses with which the server refuses the request for a reason the caller tells apart. */

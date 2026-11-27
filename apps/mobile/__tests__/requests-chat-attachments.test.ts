@@ -45,7 +45,8 @@ describe("chat attachment requests", () => {
   describe("upload", () => {
     it.each([true, false])("keeps Matrix bytes protected while an upload settles (success=%s), then releases them", async (success) => {
       let finish!: (value: unknown) => void;
-      mockPutDeviceFile.mockReturnValueOnce(new Promise((resolve) => { finish = resolve; }));
+      const nativeUpload = new Promise((resolve) => { finish = resolve; });
+      mockPutDeviceFile.mockReturnValueOnce(nativeUpload);
       const matrix = { ...attachment, matrixSource: { gatewayUrl, userId: "user_a", path: "Receipt.jpg" } };
       const upload = uploadChatAttachment(token, gatewayUrl, matrix);
       expect(isMatrixAttachmentRetained(matrix.uri)).toBe(true);
@@ -71,6 +72,40 @@ describe("chat attachment requests", () => {
       // The upload cannot outlast its time limit.
       expect(upload.signal).toBeInstanceOf(AbortSignal);
       expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("waits for an explicit pre-proxy wake response and then uploads the attachment", async () => {
+      jest.useFakeTimers();
+      const random = jest.spyOn(Math, "random").mockReturnValue(0);
+      try {
+        mockPutDeviceFile
+          .mockResolvedValueOnce({ ...stored({ runtimeState: "waking" }, 503), retryAfter: "2" })
+          .mockResolvedValueOnce(stored({ ok: true, path, size: attachment.sizeBytes }));
+        const getToken = jest.fn().mockResolvedValueOnce("near-expiry").mockResolvedValueOnce("renewed");
+        const upload = uploadChatAttachment(getToken, gatewayUrl, attachment).catch((error: unknown) => error);
+
+        await jest.advanceTimersByTimeAsync(1_999);
+        expect(mockPutDeviceFile).toHaveBeenCalledTimes(1);
+        await jest.advanceTimersByTimeAsync(1);
+
+        expect(await upload).toEqual({ path, created: true });
+        expect(mockPutDeviceFile).toHaveBeenCalledTimes(2);
+        expect(mockPutDeviceFile.mock.calls[1]![0].url).toBe(blobUrl);
+        expect(mockPutDeviceFile.mock.calls.map(([init]) => init.headers.Authorization)).toEqual([
+          "Bearer near-expiry", "Bearer renewed",
+        ]);
+        expect(mockPutDeviceFile.mock.calls[1]![0].signal).not.toBe(mockPutDeviceFile.mock.calls[0]![0].signal);
+        expect(fetchMock).not.toHaveBeenCalled();
+      } finally {
+        random.mockRestore();
+        jest.useRealTimers();
+      }
+    });
+
+    it("does not repeat an upload after an ambiguous 503", async () => {
+      mockPutDeviceFile.mockResolvedValue(stored({ code: "runtime_unavailable" }, 503));
+      await expect(uploadChatAttachment(token, gatewayUrl, attachment)).rejects.toThrow("Could not upload the attachment");
+      expect(mockPutDeviceFile).toHaveBeenCalledTimes(1);
     });
 
     it("finds an attachment that an earlier try already uploaded, and says it did not put it there", async () => {

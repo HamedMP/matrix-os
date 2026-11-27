@@ -98,7 +98,8 @@ describe("useCanonicalChatPages", () => {
     expect(result.current.isLoadingMore).toBe(false);
     expect(result.current.computer).toMatchObject({ handle: "alice" });
     expect(mockFetchChats).toHaveBeenCalledTimes(1);
-    expect(mockFetchChats).toHaveBeenCalledWith("session-token", gatewayUrl);
+    expect(mockFetchChats).toHaveBeenCalledWith(expect.any(Function), gatewayUrl);
+    await expect(mockFetchChats.mock.calls[0]![0]()).resolves.toBe("session-token");
   });
 
   it("offers nothing more when the first page is the whole list", async () => {
@@ -481,7 +482,7 @@ describe("useProjectChats", () => {
     expect(result.current.isPending).toBe(true);
     await waitFor(() => expect(idsOf(result.current.chats)).toEqual(["a", "b"]));
     expect(result.current.hasMore).toBe(true);
-    expect(mockFetchProjectChats).toHaveBeenCalledWith("session-token", gatewayUrl, "proj_site", { cursor: undefined });
+    expect(mockFetchProjectChats).toHaveBeenCalledWith(expect.any(Function), gatewayUrl, "proj_site", { cursor: undefined });
   });
 
   it("appends further pages and stops when there are none left", async () => {
@@ -612,7 +613,7 @@ describe("useChatSearch", () => {
     await waitFor(() => expect(idsOf(result.current.results)).toEqual(["hit_lisbon"]));
     expect(result.current.isSearching).toBe(false);
     expect(mockSearchChats).toHaveBeenCalledTimes(1);
-    expect(mockSearchChats).toHaveBeenCalledWith("session-token", gatewayUrl, "lisbon", {});
+    expect(mockSearchChats).toHaveBeenCalledWith(expect.any(Function), gatewayUrl, "lisbon", {});
   });
 
   it("follows the query as it changes and shows only the current query's results", async () => {
@@ -660,7 +661,7 @@ describe("useChatSearch", () => {
     rerender({ query: "lisbon", projectId: "proj_site" });
 
     await waitFor(() => expect(mockSearchChats).toHaveBeenCalledTimes(2));
-    expect(mockSearchChats).toHaveBeenLastCalledWith("session-token", gatewayUrl, "lisbon", { projectId: "proj_site" });
+    expect(mockSearchChats).toHaveBeenLastCalledWith(expect.any(Function), gatewayUrl, "lisbon", { projectId: "proj_site" });
   });
 
   it("reports a failed search without results", async () => {

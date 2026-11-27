@@ -14,7 +14,7 @@ import {
   uploadChatAttachment,
 } from "@/lib/requests";
 import { HOSTED_GATEWAY_URL } from "@/lib/storage";
-import { AuthenticatedRequestError } from "@/lib/requests/http";
+import { AuthenticatedRequestError, type RequestToken } from "@/lib/requests/http";
 import { recoverNewChatAdmission } from "./new-chat-admission-recovery";
 
 interface SendChatMessageInput {
@@ -58,7 +58,7 @@ const NO_ATTACHMENTS: readonly ComposerAttachment[] = [];
  * there are removed again: no message names them.
  */
 async function uploadAttachments(
-  token: string,
+  token: RequestToken,
   gatewayUrl: string,
   attachments: readonly ComposerAttachment[],
 ): Promise<string[]> {
@@ -75,7 +75,7 @@ async function uploadAttachments(
 }
 
 /** Best effort: an upload left behind is cleared by the computer in time. */
-async function removeUploads(token: string, gatewayUrl: string, paths: readonly string[]): Promise<void> {
+async function removeUploads(token: RequestToken, gatewayUrl: string, paths: readonly string[]): Promise<void> {
   const removals = await Promise.allSettled(paths.map((path) => removeChatAttachment(token, gatewayUrl, path)));
   if (removals.some((removal) => removal.status === "rejected")) {
     console.warn("[chat] an unused attachment upload could not be removed");
@@ -117,18 +117,14 @@ export function useSendChatMessage() {
       if (attachmentParts.some((part) => part === null)) throw new Error("Attachment cannot be sent.");
       // Uploaded before the chat is created, so a failed upload leaves no
       // empty chat behind.
-      const newUploads = await uploadAttachments(token, gatewayUrl, attachments);
-      // A session token lasts a minute and an upload can take most of one, so
-      // what follows an upload asks for the token again.
-      const sendToken = attachments.length > 0 ? await getToken() : token;
-      if (!sendToken) throw new Error("Not signed in.");
+      const newUploads = await uploadAttachments(getToken, gatewayUrl, attachments);
 
       let targetChatId = chatId;
       let revision = baseRevision;
       if (!targetChatId) {
         let record;
         try {
-          record = await createChat(sendToken, gatewayUrl, {
+          record = await createChat(getToken, gatewayUrl, {
             clientRequestId: chatRequestId,
             title: text ? canonicalChatTitle(text) : attachmentsTitle(attachments),
             currentSelection: selection,
@@ -137,7 +133,7 @@ export function useSendChatMessage() {
         } catch (error: unknown) {
           // This send has asked for no turn yet, and no earlier one named
           // what it has just put on the computer.
-          await removeUploads(sendToken, gatewayUrl, newUploads);
+          await removeUploads(getToken, gatewayUrl, newUploads);
           throw error;
         }
         targetChatId = record.chat.id;
@@ -156,7 +152,7 @@ export function useSendChatMessage() {
       // the turn it admitted names them. Sending again finds them in place.
       let admission: CanonicalChatTurnAdmissionResponse;
       try {
-        admission = await admitChatTurn(sendToken, gatewayUrl, targetChatId, {
+        admission = await admitChatTurn(getToken, gatewayUrl, targetChatId, {
           clientRequestId: turnRequestId,
           baseRevision: revision,
           parts: [

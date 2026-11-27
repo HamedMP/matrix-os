@@ -131,7 +131,8 @@ describe("project route options", () => {
       fireEvent.press(save());
 
       await waitFor(() => expect(save().props.accessibilityState).toMatchObject({ busy: true }));
-      expect(requests.renameProject).toHaveBeenCalledWith(TOKEN, GATEWAY_URL, "portfolio", "Case studies");
+      expect(requests.renameProject).toHaveBeenCalledWith(expect.any(Function), GATEWAY_URL, "portfolio", "Case studies");
+      await expect(requests.renameProject.mock.calls[0]![0]()).resolves.toBe(TOKEN);
       expect(sheet.isPresented).toBe(true);
       expect(headerName("Portfolio")).toBeTruthy();
 
@@ -217,7 +218,8 @@ describe("project route options", () => {
 
       await waitFor(() => expect(menuRow("Archive project").props.accessibilityState).toMatchObject({ disabled: true }));
       expect(menuRow("Rename").props.accessibilityState).toMatchObject({ disabled: true });
-      expect(requests.archiveProject).toHaveBeenCalledWith(TOKEN, GATEWAY_URL, "portfolio");
+      expect(requests.archiveProject).toHaveBeenCalledWith(expect.any(Function), GATEWAY_URL, "portfolio");
+      await expect(requests.archiveProject.mock.calls[0]![0]()).resolves.toBe(TOKEN);
       // Nothing leaves the screen before the server confirms.
       expect(sheet.isPresented).toBe(true);
       expect(router.back).not.toHaveBeenCalled();

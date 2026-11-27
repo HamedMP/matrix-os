@@ -128,7 +128,11 @@ export function useMarkChatRead(detail: CanonicalChatDetailResponse | null, chat
         if (!gateway) return;
         // A failed lookup, stale-version refusal or request failure waits for
         // a newer snapshot or another visit, never a retry loop.
-        const record = await updateChatReadState(gateway.token, gateway.gatewayUrl, chatId, latest);
+        const getToken = async () => {
+          const token = await (gateway.getToken?.() ?? gateway.token);
+          return isCurrent() ? token : null;
+        };
+        const record = await updateChatReadState(getToken, gateway.gatewayUrl, chatId, latest);
         if (!isCurrent()) return;
         queryClient.setQueryData<CanonicalChatDetailResponse>(
           mobileQueryKeys.canonicalChatDetail(userId, computerKey, chatId),

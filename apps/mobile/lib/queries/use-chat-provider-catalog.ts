@@ -22,9 +22,8 @@ export function useChatProviderCatalog() {
     queryKey: mobileQueryKeys.chatProviderCatalog(userId ?? "signed-out", computerKey),
     enabled: authEnabled && Boolean(computer),
     queryFn: async () => {
-      const token = await getToken();
-      if (!token || !computer) throw new Error("Models unavailable.");
-      return fetchChatProviderCatalog(token, `${HOSTED_GATEWAY_URL}${computer.gatewayPath}`);
+      if (!computer) throw new Error("Models unavailable.");
+      return fetchChatProviderCatalog(getToken, `${HOSTED_GATEWAY_URL}${computer.gatewayPath}`);
     },
     staleTime: 60_000,
   });

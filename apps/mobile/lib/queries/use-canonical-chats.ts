@@ -33,9 +33,8 @@ function useFirstChatPage<T>(select: (response: CanonicalChatListResponse) => T)
     queryKey: chatsQueryKey,
     enabled: authEnabled && Boolean(computer),
     queryFn: async () => {
-      const token = await getToken();
-      if (!token || !computer) throw new Error("Chats unavailable.");
-      return fetchChats(token, `${HOSTED_GATEWAY_URL}${computer.gatewayPath}`);
+      if (!computer) throw new Error("Chats unavailable.");
+      return fetchChats(getToken, `${HOSTED_GATEWAY_URL}${computer.gatewayPath}`);
     },
     select,
   });
@@ -107,9 +106,8 @@ export function useCanonicalChatPages() {
       const firstReadAt = queryClient.getQueryState(chatsQueryKey)?.dataUpdatedAt ?? 0;
       const cursor = pageParam ?? after;
       if (!cursor) return { items: [], after, firstReadAt };
-      const token = await getToken();
-      if (!token || !computer) throw new Error("Chats unavailable.");
-      const page = await fetchChats(token, `${HOSTED_GATEWAY_URL}${computer.gatewayPath}`, { cursor });
+      if (!computer) throw new Error("Chats unavailable.");
+      const page = await fetchChats(getToken, `${HOSTED_GATEWAY_URL}${computer.gatewayPath}`, { cursor });
       return { items: page.items, nextCursor: page.nextCursor, after, firstReadAt };
     },
     // An empty page that still has a cursor is not the end of the list.

@@ -1,9 +1,10 @@
+import { classifyRuntimeWakeText, retryWithRuntimeWake } from "@matrix-os/contracts/runtime-lifecycle";
 import { z } from "zod/v4";
 
 import { chatAttachmentUploadPath, type ComposerAttachment } from "@/lib/chat-attachments";
 import { putDeviceFile } from "@/lib/device-file-upload";
 import { gatewayRequestUrl } from "@/lib/requests/answers";
-import { createRequestTimeout, fetchAuthenticatedJson } from "@/lib/requests/http";
+import { createRequestTimeout, fetchAuthenticatedJson, resolveRequestToken, trackRuntimeWake, type RequestToken } from "@/lib/requests/http";
 import { retainMatrixAttachmentUris } from "@/lib/matrix-attachment-retention";
 
 const ATTACHMENT_UPLOAD_ERROR = "Could not upload the attachment. Try again.";
@@ -47,28 +48,39 @@ export interface ChatAttachmentUpload {
  * its first upload left it, and the message names the same file.
  */
 export async function uploadChatAttachment(
-  clerkToken: string,
+  clerkToken: RequestToken,
   computerGatewayUrl: string,
   attachment: ComposerAttachment,
 ): Promise<ChatAttachmentUpload> {
   const path = chatAttachmentUploadPath(attachment);
-  const url = path && clerkToken.trim()
+  const url = path
     ? gatewayRequestUrl(computerGatewayUrl, "/api/files/blob", { path })
     : null;
   if (!path || !url) throw new Error(ATTACHMENT_UPLOAD_ERROR);
 
-  const timeout = createRequestTimeout(UPLOAD_TIMEOUT_MS);
   // Set once the computer has stored something at the place in this request.
   let stored = false;
   let releaseCache: (() => void) | undefined;
   try {
     if (attachment.matrixSource) releaseCache = retainMatrixAttachmentUris([attachment.uri]);
-    const result = await putDeviceFile({
-      uri: attachment.uri,
-      url,
-      headers: { Authorization: `Bearer ${clerkToken}`, "Content-Type": attachment.mimeType },
-      signal: timeout.signal,
-    });
+    const result = await trackRuntimeWake((onWaiting) => retryWithRuntimeWake(
+      async () => {
+        const bearer = await resolveRequestToken(clerkToken, ATTACHMENT_UPLOAD_ERROR);
+        const timeout = createRequestTimeout(UPLOAD_TIMEOUT_MS);
+        try {
+          return await putDeviceFile({
+            uri: attachment.uri,
+            url,
+            headers: { Authorization: `Bearer ${bearer}`, "Content-Type": attachment.mimeType },
+            signal: timeout.signal,
+          });
+        } finally {
+          timeout.cancel();
+        }
+      },
+      ({ status, retryAfter, body }) => classifyRuntimeWakeText(status, retryAfter, body),
+      { method: "PUT", onWaiting },
+    ));
     if (result.body.length > MAX_UPLOAD_RESPONSE_LENGTH) throw new Error("Upload answer too long");
     if (result.status === 409) {
       // The place is named after this attachment alone, and the computer puts
@@ -96,13 +108,12 @@ export async function uploadChatAttachment(
     throw new Error(ATTACHMENT_UPLOAD_ERROR);
   } finally {
     releaseCache?.();
-    timeout.cancel();
   }
 }
 
 /** Removes an upload that no message will name. The computer removes only from its chat upload folder. */
 export async function removeChatAttachment(
-  clerkToken: string,
+  clerkToken: RequestToken,
   computerGatewayUrl: string,
   path: string,
 ): Promise<void> {

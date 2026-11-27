@@ -93,7 +93,7 @@ describe("useRetryChatTurn", () => {
       await expect(result.current.retry.mutateAsync(input)).resolves.toEqual(admitted);
     });
 
-    expect(mockRetryChatTurn).toHaveBeenCalledWith("session-token", gatewayUrl, "chat_one", "cturn_one", {
+    expect(mockRetryChatTurn).toHaveBeenCalledWith(expect.any(Function), gatewayUrl, "chat_one", "cturn_one", {
       clientRequestId: "req_retry1",
       baseRevision: 4,
     });
