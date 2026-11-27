@@ -1,13 +1,11 @@
 <!--
 Sync Impact Report
-- Version change: 2.4.0 → 2.5.0
+- Version change: 2.5.0 → 2.6.0
 - Modified principles:
-  - I. Data Belongs to Its Owner: added explicit revocable delegation without ownership transfer.
-  - VII. Multi-Tenancy: clarified creator-hosted live app sharing for every current org member.
-  - VIII. Defense in Depth: scoped org-admin control to org-owned apps and preserved live-share audit.
+  - I. Data Belongs to Its Owner: added the organization work data scope (org AI usage counters).
 - Added sections: none.
 - Removed sections: none.
-- Templates reviewed:
+- Templates reviewed (no ownership-scope wording found; unchanged):
   - ✅ .specify/templates/plan-template.md
   - ✅ .specify/templates/spec-template.md
   - ✅ .specify/templates/tasks-template.md
@@ -28,6 +26,7 @@ Every piece of data has a clear owner -- never the platform. Owners can inspect,
 **Ownership scopes**:
 - **Personal**: belongs to the individual user. It is private by default and fully portable. The owner MAY explicitly delegate revocable use of a specific owner-controlled app and its data to an organization without transferring ownership, copying the data into organization storage, or creating a second app permission system.
 - **Org**: belongs to the organization. Admins control access, members use it. Survives employee departure.
+- **Organization work data**: AI agent usage counters for the organization's work, collected while an org admin has reporting turned on and matched on the member's device by the org's published rule, belong to the organization. Members are notified, content is never collected, and usage outside the rule stays personal.
 - **Shared**: co-owned by collaborators (e.g., a shared project board). All collaborators have access. Ownership transfers are explicit.
 - **Published**: creator retains IP, installers own their instance data (e.g., app store apps).
 
@@ -215,9 +214,11 @@ This principle exists because PR review discipline plus an automated quality flo
 
 This constitution supersedes all other development practices for Matrix OS. Amendments require updating this file with rationale. If a principle conflicts with implementation reality (e.g., SDK limitation), document the deviation in SDK-VERIFICATION.md and propose the simplest workaround.
 
-**Version**: 2.5.0 | **Ratified**: 2026-02-11 | **Last Amended**: 2026-11-05
+**Version**: 2.6.0 | **Ratified**: 2026-02-11 | **Last Amended**: 2026-11-16
 
 ### Amendment Log
+
+- **2.6.0** (2026-11-16): Added the organization work data scope to Principle I (owner decision, ENG-500, `specs/2694-team-ai-usage/`). AI agent usage counters for the organization's work, collected while an org admin has reporting on and matched on the member's device by the org's published rule, are org data visible across the organization. Members are notified, prompts and content are never collected, and usage outside the rule remains personal and private.
 
 - **2.5.0** (2026-11-05): Added explicit owner-retained delegated access for creator-hosted live apps. Personal app data remains in the owner's PostgreSQL database and never becomes organization-owned or platform-owned. Any current organization member, including a guest, may share an app they own with the organization; every current member receives full app functionality through existing organization membership, with no per-app roles, grants, invitations, acceptance flow, or second permission system. Sharing never delegates owner credentials, connected providers, AI spending authority, export rights, or deletion rights.
 
