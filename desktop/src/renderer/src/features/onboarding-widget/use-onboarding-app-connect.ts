@@ -46,7 +46,7 @@ export function useOnboardingAppConnect(api: ApiClient | null, dispatch: (event:
       const url = await useIntegrations.getState().startConnect(serviceId, api);
       if (!isCurrent()) return;
       if (!url) { fail(); return; }
-      const matrixConsent = isMatrixOutlookConsentUrl(serviceId, url);
+      const matrixConsent = isMatrixOutlookConsentUrl(serviceId, url, api.baseUrl);
       await invoke("shell:open-external", { url });
       if (!isCurrent()) return;
       // Each attempt stops only its own poll: a newer attempt owns cancelPollRef by then.

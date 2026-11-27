@@ -53,6 +53,14 @@ Bound callback query and request bodies, token responses, Graph page size and re
 3. Keep eligible legacy connections available while owners reconnect. Use the same-account check for each in-place cutover. Watch for outstanding provider cleanup before moving to retirement.
 4. Set `MATRIX_OUTLOOK_LEGACY_RETIRED=true` after migration. New Outlook authorization, reads, writes and refresh then use Matrix grants. Previously linked legacy accounts can still be disconnected or reauthorized. Monitor auth failures and keep the migration journal until outstanding cleanup completes.
 
+## Isolated Preview
+
+Use the existing Preview Cloud Run service and the exact PR tag. Add the `preview-isolated` label and dispatch `preview-platform.yml` from the branch with the PR number, `require_existing_service=true`, and `outlook_preview=true`. The deployment keeps the shared Preview traffic unchanged.
+
+For that dispatch, set `OUTLOOK_PREVIEW_PR_NUMBER`, `OUTLOOK_PREVIEW_CLIENT_ID`, and `OUTLOOK_PREVIEW_CLERK_PUBLISHABLE_KEY` in the GitHub Preview environment. Supply pinned version 1 of `matrix-outlook-client-secret-preview`, `matrix-outlook-credential-key-preview`, and `matrix-outlook-clerk-secret-key-preview` through Secret Manager. Use the matching Clerk test instance and grant access to the Preview runtime service account. Register the exact tagged HTTPS origin with `/api/integrations/outlook/oauth/callback` as the Entra Web redirect URI.
+
+Run Electron from this branch with a separate dev profile and the tagged origin for both its gateway and Platform API. Connect it to an isolated test runtime paired to the same Preview authority. The Outlook opt-in mounts only the test OAuth app and leaves legacy retirement disabled. The initial fresh-account smoke can run with Pipedream absent. Use a dedicated legacy test connection and Preview Pipedream configuration for a live migration check.
+
 ## GitHub Stack Plan
 
 1. Specify the migration and implement the Entra OAuth transport and credential lifecycle.

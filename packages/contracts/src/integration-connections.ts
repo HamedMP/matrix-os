@@ -145,12 +145,16 @@ export function parseConnectUrl(value: unknown): string | null {
   return new URL(url).protocol === "https:" ? url : null;
 }
 
-export function isMatrixOutlookConsentUrl(service: string, rawUrl: string): boolean {
+const ISOLATED_PREVIEW_ORIGIN = /^https:\/\/pr-[1-9][0-9]{0,8}---matrix-platform-preview-[a-z0-9-]+\.a\.run\.app$/;
+
+export function isMatrixOutlookConsentUrl(service: string, rawUrl: string, matrixUrl?: string): boolean {
   if (service !== "microsoft_outlook" && service !== "microsoft_outlook_calendar") return false;
   try {
     const url = new URL(rawUrl);
     const states = url.searchParams.getAll("state");
-    return url.origin === "https://app.matrix-os.com" && url.pathname === "/api/integrations/outlook/oauth/authorize"
+    const configuredOrigin = matrixUrl ? new URL(matrixUrl).origin : "";
+    const trustedOrigin = ISOLATED_PREVIEW_ORIGIN.test(configuredOrigin) ? configuredOrigin : "https://app.matrix-os.com";
+    return url.origin === trustedOrigin && url.pathname === "/api/integrations/outlook/oauth/authorize"
       && !url.username && !url.password && !url.hash && states.length === 1 && /^[A-Za-z0-9_-]{43}$/.test(states[0] ?? "");
   } catch (error: unknown) {
     if (error instanceof TypeError) return false;

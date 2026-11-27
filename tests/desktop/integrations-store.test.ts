@@ -391,6 +391,17 @@ describe("useIntegrations store", () => {
     expect(api.post).toHaveBeenCalledWith("/api/integrations/connect", { service: "gmail" });
   });
 
+  it("opens a reconnect from the exact configured preview platform", async () => {
+    const baseUrl = "https://pr-3801---matrix-platform-preview-example-ey.a.run.app";
+    const id = CONNECTIONS[0].id;
+    const service = "microsoft_outlook";
+    const authorize = "/api/integrations/outlook/oauth/authorize?state=" + "a".repeat(43);
+    const api = { ...makeApi({ post: async () => ({ url: baseUrl + authorize, service }) }), baseUrl };
+    await expect(useIntegrations.getState().startConnect(service, api, id)).resolves.toBe(baseUrl + authorize);
+    const wrong = { ...makeApi({ post: async () => ({ url: baseUrl.replace("3801", "3800") + authorize, service }) }), baseUrl };
+    await expect(useIntegrations.getState().startConnect(service, wrong, id)).resolves.toBeNull();
+  });
+
   it("startConnect() drops a consent URL minted for a superseded runtime", async () => {
     let release!: () => void;
     const api = makeApi({
