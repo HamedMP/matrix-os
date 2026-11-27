@@ -855,6 +855,7 @@ export interface PlatformDatabase {
   billing_google_purchases: GooglePurchaseTable;
   billing_google_checkout_attribution: GoogleCheckoutAttributionTable;
   preview_drive_grants: PreviewDriveGrantsTable;
+  managed_terminal_grant_claims: ManagedTerminalGrantClaimsTable;
   public_sites: import('./sites/types.js').SitesTable;
   public_site_versions: import('./sites/types.js').SiteVersionsTable;
   public_site_aliases: import('./sites/types.js').SiteAliasesTable;
@@ -943,6 +944,15 @@ export interface PreviewDriveGrantsTable {
   max_results: number | null;
   expires_at: string;
   consumed_at: string | null;
+}
+
+interface ManagedTerminalGrantClaimsTable {
+  turn_hash: string;
+  run_hash: string;
+  nonce_hash: string | null;
+  selection_hash: string | null;
+  expires_at: string;
+  revoked_at: string | null;
 }
 
 export interface PlatformDB {

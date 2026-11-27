@@ -1,3 +1,5 @@
+import { MANAGED_TERMINAL_OWNER_GRANT_HEADER } from '@matrix-os/contracts/managed-terminal-control';
+
 const HOP_BY_HOP_RESPONSE_HEADERS = new Set([
   'connection',
   'keep-alive',
@@ -23,6 +25,7 @@ export function sanitizeProxyResponseHeaders(headers: Headers): Headers {
   for (const header of DECODED_FETCH_RESPONSE_HEADERS) {
     sanitized.delete(header);
   }
+  sanitized.delete(MANAGED_TERMINAL_OWNER_GRANT_HEADER);
   return sanitized;
 }
 

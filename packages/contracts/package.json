@@ -35,7 +35,9 @@
     "./routine-destination": "./src/routine-destination.ts",
     "./runtime-lifecycle": "./src/runtime-lifecycle.ts",
     "./keyboard-shortcuts": "./src/keyboard-shortcuts.ts",
-    "./herdr-terminals": "./src/herdr-terminals.ts"
+    "./herdr-terminals": "./src/herdr-terminals.ts",
+    "./managed-terminal-control": "./src/managed-terminal-control.ts",
+    "./managed-terminal-proof": "./src/managed-terminal-proof.ts"
   },
   "imports": {
     "#notifications": "./src/notifications.ts",

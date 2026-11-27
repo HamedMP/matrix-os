@@ -1,4 +1,5 @@
 import { ROUTINE_CLI_EXECUTION_PATH } from "@matrix-os/contracts/routine-cli";
+import { MANAGED_TERMINAL_TARGET_PATH } from "@matrix-os/contracts/managed-terminal-control";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { isDirectLoopbackCaller, isLocalTerminalAgentRoute } from "./terminal-agent/local-token.js";
 import type { Context, MiddlewareHandler } from "hono";
@@ -107,6 +108,7 @@ const ROUTE_SCOPED_BEARER_PATHS = [
 ];
 const ROUTE_SCOPED_SIGNATURE_PATHS = [
   "/api/internal/terminal-acceptance/run",
+  MANAGED_TERMINAL_TARGET_PATH,
 ];
 const COLLABORATION_HTTP_PREFIX = "/api/collaboration/";
 const COLLABORATION_OWNER_BEARER_PATH =
@@ -219,6 +221,14 @@ const siteDataSignatureRateLimiter = createRateLimiter({
 // Keep HMAC verification bounded independently at 64 requests per minute.
 const acceptanceSignatureRateLimiter = createRateLimiter({
   maxAttempts: 64,
+  windowMs: 60_000,
+  lockoutMs: 30_000,
+});
+
+// Discovery and screen polling arrive from the Platform. Isolate their
+// signature budget from other transports that share the proxy address.
+const managedTerminalSignatureRateLimiter = createRateLimiter({
+  maxAttempts: 120,
   windowMs: 60_000,
   lockoutMs: 30_000,
 });
@@ -363,7 +373,9 @@ export function authMiddleware(
 
     if (ROUTE_SCOPED_SIGNATURE_PATHS.some((p) => normalizedPath === p)) {
       const ip = getTrustedProxyClientIp(c);
-      if (!acceptanceSignatureRateLimiter.check(ip)) {
+      const limiter = normalizedPath === MANAGED_TERMINAL_TARGET_PATH
+        ? managedTerminalSignatureRateLimiter : acceptanceSignatureRateLimiter;
+      if (!limiter.check(ip)) {
         return tooManyRequests(c);
       }
       return nextWithReady(c, next);

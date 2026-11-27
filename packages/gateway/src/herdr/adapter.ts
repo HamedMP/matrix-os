@@ -17,6 +17,7 @@ import { createHerdrSessionHost, type HerdrLaunch, type HerdrSessionHostStatus }
 import type { TerminalAgentStatusEntry } from "@matrix-os/terminal-runtime";
 import { bindHerdrChatTerminal, herdrDirectoryIdentity, herdrProcessRevision, type ChatTerminalSelection } from "./chat-terminal.js";
 import { acceptRemoteAttachment, remoteTerminalRevision, type HerdrChatRemoteWorktree } from "./chat-remote.js";
+import type { ManagedTerminalRootResolver } from "./managed-terminal-worktree.js";
 import { createHerdrRefMap, herdrTerminalRef } from "./refs.js";
 
 const { Terminal: HeadlessTerminal } = headless;
@@ -206,7 +207,7 @@ export function createHerdrAdapter(options: {
     return { available: false, status, sessions: [] };
   }
 
-  async function load(chatSelection?: "gateway" | "desktop"): Promise<HerdrSessionList> {
+  async function load(chatSelection?: "gateway" | "desktop" | ManagedTerminalRootResolver): Promise<HerdrSessionList> {
     if (closed) return unavailable("unavailable");
     try {
       const { terminals, generation } = await host.listProcesses();
@@ -240,18 +241,22 @@ export function createHerdrAdapter(options: {
         if (sessions.length < HERDR_SESSION_LIST_MAX) {
           sessions.push(...await listEnrolledChatSessions(HERDR_SESSION_LIST_MAX - sessions.length));
         }
-      } else if (chatSelection === "gateway") {
+      } else if (chatSelection === "gateway" || typeof chatSelection === "function") {
         // A grant selects a specific checkout inode. Normal session polling never needs filesystem I/O.
         const directories = new Map<string, ReturnType<typeof herdrDirectoryIdentity>>();
+        async function authorizedDirectory(cwd: string) {
+          const root = typeof chatSelection === "function" ? await chatSelection(cwd) : cwd;
+          return root ? herdrDirectoryIdentity(root) : null;
+        }
         await Promise.all(listed.map(async (process, i) => {
           if (!process.identity) return;
           const cwd = process.identity.cwd;
-          const identity = directories.get(cwd) ?? herdrDirectoryIdentity(cwd);
+          const identity = directories.get(cwd) ?? authorizedDirectory(cwd);
           directories.set(cwd, identity);
           const directoryId = await identity;
           if (directoryId) sessions[i]!.revision = herdrProcessRevision(processSalt, generation, process, directoryId);
         }));
-        if (remoteWorktrees.length > 0 && sessions.length < HERDR_SESSION_LIST_MAX) {
+        if (chatSelection === "gateway" && remoteWorktrees.length > 0 && sessions.length < HERDR_SESSION_LIST_MAX) {
           try {
             sessions.push(...await listRemoteChatSessions(HERDR_SESSION_LIST_MAX - sessions.length));
           } catch (error: unknown) {
@@ -259,7 +264,10 @@ export function createHerdrAdapter(options: {
           }
         }
       }
-      return { available: true, status: "ready", sessions };
+      return {
+        available: true, status: "ready",
+        sessions: typeof chatSelection === "function" ? sessions.filter(session => session.revision) : sessions,
+      };
     } catch (error: unknown) {
       // A fixed kind, once per run of the same failure; the reason never reaches clients.
       const kind = listingFailureKind(error);
@@ -563,11 +571,30 @@ export function createHerdrAdapter(options: {
     }, id, ref, root, selection);
   }
 
+  function bindLocalChatTerminal(
+    id: string, ref: TerminalRef, executionRoot: string, selection: ChatTerminalSelection,
+    stream: HcAttachOptions, current = currentChatGeneration,
+  ) {
+    return bindHerdrChatTerminal({
+      salt: processSalt,
+      inspect: () => host.listProcesses(),
+      current,
+      workspace: async () => {
+        const source = await workspace();
+        if (!source || !selection.desktop) return source;
+        return { ...source, id: ref.workspaceId, tabs: source.tabs.map(tab => ({ ...tab, workspaceId: ref.workspaceId })) };
+      },
+      screen: (terminalId, lines) => render(terminalId, lines, stream),
+      writer: terminalId => attach(terminalId, sizes.get(terminalId) ?? DEFAULT_INPUT_SIZE, discardOutput, stream),
+    }, id, ref, executionRoot, selection);
+  }
+
   return {
     list,
     discoverTerminals,
     listForChatControl: () => load("gateway"),
     listForLinkedChatControl: () => load("desktop"),
+    listForManagedChatControl: (resolveRoot: ManagedTerminalRootResolver) => load(resolveRoot),
     refresh,
 
     /** Lists on start and every 30 s, so status and attention stay current without a viewer. */
@@ -591,18 +618,31 @@ export function createHerdrAdapter(options: {
         ? bindEnrolledChatTerminal(ref, localRef, executionRoot, selection)
         : bindRemoteChatTerminal(ref, executionRoot, selection);
       const stream = { selectionRevision: selection.desktop ? selection.revision : undefined };
-      return bindHerdrChatTerminal({
-        salt: processSalt,
-        inspect: () => host.listProcesses(),
-        current: currentChatGeneration,
-        workspace: async () => {
-          const source = await workspace();
-          if (!source || !selection.desktop) return source;
-          return { ...source, id: ref.workspaceId, tabs: source.tabs.map(tab => ({ ...tab, workspaceId: ref.workspaceId })) };
-        },
-        screen: (terminalId, lines) => render(terminalId, lines, stream),
-        writer: terminalId => attach(terminalId, sizes.get(terminalId) ?? DEFAULT_INPUT_SIZE, discardOutput, stream),
-      }, id, ref, executionRoot, selection);
+      return bindLocalChatTerminal(id, ref, executionRoot, selection, stream);
+    },
+
+    async bindManagedChatTerminal(
+      ref: TerminalRef, selection: Omit<ChatTerminalSelection, "desktop" | "worktreeId" | "validateRoot">,
+      resolveRoot: ManagedTerminalRootResolver,
+    ) {
+      const id = refs.resolve(ref);
+      if (!id || selection.signal.aborted) return null;
+      const initial = await host.listProcesses();
+      const selected = initial.terminals.filter(process => process.terminal.id === id);
+      const process = selected[0];
+      if (selected.length !== 1 || !process?.identity) return null;
+      const root = await resolveRoot(process.identity.cwd);
+      if (!root || selection.signal.aborted) return null;
+      let attachmentCurrent = true;
+      const matchesAttachment = acceptRemoteAttachment(process);
+      return bindLocalChatTerminal(
+        id, ref, root, { ...selection, validateRoot: async () => await resolveRoot(root) === root },
+        { acceptTerminal: (terminal: unknown) => {
+          attachmentCurrent &&= matchesAttachment(terminal);
+          return attachmentCurrent;
+        } },
+        generation => attachmentCurrent && generation === initial.generation && currentChatGeneration(generation),
+      );
     },
 
     /** Herdr's own status reports, in the terminal-agent status pipeline's shape. */

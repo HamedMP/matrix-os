@@ -82,6 +82,8 @@ export default defineConfig({
       "@matrix-os/contracts/local-chat-import": path.resolve(__dirname, "packages/contracts/src/local-chat-import/index.ts"),
       "@matrix-os/contracts/routine-destination": path.resolve(__dirname, "packages/contracts/src/routine-destination.ts"),
       "@matrix-os/contracts/herdr-terminals": path.resolve(__dirname, "packages/contracts/src/herdr-terminals.ts"),
+      "@matrix-os/contracts/managed-terminal-control": path.resolve(__dirname, "packages/contracts/src/managed-terminal-control.ts"),
+      "@matrix-os/contracts/managed-terminal-proof": path.resolve(__dirname, "packages/contracts/src/managed-terminal-proof.ts"),
       "@matrix-os/contracts/desktop-link": path.resolve(__dirname, "packages/contracts/src/desktop-link.ts"),
       "@matrix-os/contracts/runtime-lifecycle": path.resolve(__dirname, "packages/contracts/src/runtime-lifecycle.ts"),
       "@matrix-os/contracts/routine-cli": path.resolve(__dirname, "packages/contracts/src/routine-cli.ts"),

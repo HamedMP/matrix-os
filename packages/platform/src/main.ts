@@ -78,6 +78,7 @@ import {
 } from './stripe-billing.js';
 import type { CustomerVpsObjectStore } from './customer-vps-r2.js';
 import { registerSiteRoutesIfConfigured } from './sites/registration.js';
+import { createManagedTerminalControlRoutes } from './managed-terminal-control-routes.js';
 import { recordPlatformHttpRequest } from './metrics.js';
 import {
   createLaunchReadinessService,
@@ -711,6 +712,9 @@ export function createApp(deps: {
     maxSize: runtimeProxyBodyLimitBytes('POST', '/api/speech/transcriptions', PROXY_BODY_LIMIT),
   });
   const substrates = deps.substrateRegistry ?? createPlatformSubstrateRegistry(db, appEnv);
+  app.route('/', createManagedTerminalControlRoutes({
+    db, platformSecret, env: appEnv, privatePreviewEligibility, substrates, dispatcher: customerVpsProxyDispatcher,
+  }));
   app.use('*', (c, next) => (
     runtimeProxyBodyLimitBytes(c.req.method, c.req.path, PROXY_BODY_LIMIT) > PROXY_BODY_LIMIT
       ? speechUploadBodyLimit(c, next)

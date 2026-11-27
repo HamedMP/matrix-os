@@ -68,6 +68,7 @@ import { resolvePlatformIntegrationConfig } from './integration-config.js';
 import { createInternalCustomMcpApprovalRouteOptions } from './custom-mcp-approval-route-options.js';
 import { createPreviewDriveIntegration } from './preview-drive-integration.js';
 import { createPreviewDriveStore } from './preview-drive-store.js';
+import { createManagedTerminalGrantClaims } from './managed-terminal-grant-claims.js';
 import type { PreviewDriveIntegration } from './preview-drive-routes.js';
 import { createCustomMcpProjection } from './custom-mcp-projection.js';
 import { createPlatformCoreMcp, type GatewayCoreConnectedAppsModule, type GatewayCoreToolsModule } from './mcp-usage/startup.js';
@@ -595,7 +596,7 @@ async function startPlatformServerWithCleanup(
   let integrationRoutes: Hono | undefined;
   let internalIntegrationRoutes: Hono | undefined;
   let previewDriveIntegration: PreviewDriveIntegration | undefined;
-  let previewDriveSweepInterval: NodeJS.Timeout | undefined;
+  let ownerGrantSweepInterval: NodeJS.Timeout | undefined;
   let customMcpRoutes: Hono | undefined;
   let internalCustomMcpRoutes: Hono | undefined;
   let internalCustomMcpApprovalRoutes: Hono | undefined;
@@ -706,12 +707,16 @@ async function startPlatformServerWithCleanup(
   // Authorizations are durable across Cloud Run instances; recurring cleanup
   // keeps the control-plane table bounded even after a Preview disappears.
   const previewDriveStore = createPreviewDriveStore(db);
-  previewDriveSweepInterval = setInterval(() => {
+  const terminalGrants = createManagedTerminalGrantClaims(db);
+  ownerGrantSweepInterval = setInterval(() => {
     void previewDriveStore.sweep().catch(error => {
       console.warn('[preview-drive] Grant cleanup failed', error instanceof Error ? error.name : typeof error);
     });
+    void terminalGrants.sweep().catch(error => {
+      console.warn('[terminal-control] Grant cleanup failed', error instanceof Error ? error.name : typeof error);
+    });
   }, 5 * 60_000);
-  previewDriveSweepInterval.unref();
+  ownerGrantSweepInterval.unref();
 
   if (process.env.CUSTOM_MCP_ENABLED === 'true') {
     const oauthClientId = process.env.MCP_OAUTH_CLIENT_ID;
@@ -1305,7 +1310,7 @@ async function startPlatformServerWithCleanup(
     metalRuntime?.stop();
     if (goldenSnapshotInterval) clearInterval(goldenSnapshotInterval);
     if (customMcpSweepInterval) clearInterval(customMcpSweepInterval);
-    if (previewDriveSweepInterval) clearInterval(previewDriveSweepInterval);
+    if (ownerGrantSweepInterval) clearInterval(ownerGrantSweepInterval);
     const shutdownTimer = setTimeout(() => {
       console.error('[platform] Graceful shutdown timed out');
       process.exit(1);
