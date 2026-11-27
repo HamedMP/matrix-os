@@ -1126,7 +1126,7 @@ export async function createGateway(config: GatewayConfig) {
   });
 
   const configPath = join(homePath, "system/config.json");
-  const { channelManager, pushAdapter, closeChannels } = initializeGatewayChannels({
+  const { channelManager, pushAdapter, closeChannels, ready: channelsReady } = initializeGatewayChannels({
     homePath, configPath, dispatcher, conversations, codingAgentThreadStore,
     codingAgentNotificationPreferenceStore, finalizeWithSummary, logBestEffortFailure, channelStt: speechRuntime.channelStt,
     pushTokens: ownerDatabaseServices?.pushTokens ?? null, notificationServices: ownerDatabaseServices,
@@ -1135,7 +1135,7 @@ export async function createGateway(config: GatewayConfig) {
   // Cron service -- scheduled tasks from ~/system/cron.json
   const cronStore = createCronStore(join(homePath, "system", "cron.json"));
   const cronService: CronService = createCronService({
-    store: cronStore,
+    store: cronStore, catchUpAfter: channelsReady,
     onTrigger: createCronChannelTrigger({ channelManager, logBestEffortFailure }),
   });
   cronService.start();

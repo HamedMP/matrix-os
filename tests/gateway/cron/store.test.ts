@@ -94,4 +94,26 @@ describe("T120b: Cron store", () => {
     expect(store.list()).toHaveLength(1);
     expect(store.list()[0].name).toBe("v2");
   });
+
+  it("recordRun persists lastRunAt without dropping a job added while the write is in flight", async () => {
+    store.add(makeJob({ id: "j1" }));
+    const flushed = store.recordRun("j1", "2026-11-21T12:00:00.000Z");
+    store.add(makeJob({ id: "j2" }));
+    await flushed;
+    const loaded = createCronStore(join(homePath, "system", "cron.json")).load();
+    expect(loaded.map((j) => j.id)).toEqual(["j1", "j2"]);
+    expect(loaded[0].lastRunAt).toBe("2026-11-21T12:00:00.000Z");
+  });
+
+  it("forgets the run time of a removed job, in memory and on disk", async () => {
+    store.add(makeJob({ id: "gone" }));
+    store.add(makeJob({ id: "kept" }));
+    await store.recordRun("gone", "2026-11-21T12:00:00.000Z");
+    store.remove("gone");
+    await store.recordRun("kept", "2026-11-21T12:01:00.000Z");
+    store.add(makeJob({ id: "gone" }));
+    expect(store.load().find((j) => j.id === "gone")?.lastRunAt).toBeUndefined();
+    const state = JSON.parse(readFileSync(join(homePath, "system", "cron-state.json"), "utf-8"));
+    expect(Object.keys(state)).toEqual(["kept"]);
+  });
 });
