@@ -1,0 +1,18 @@
+[Unit]
+Description=Back up the Matrix OS shared messaging bridge host
+Documentation=file:///opt/matrix-bridge-host/README.md
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+Environment=MBH_STATE_DIR=/var/lib/matrix-bridge-host
+Environment=MBH_BACKUP_ROOT=/var/backups/matrix-bridge-host
+Environment=MBH_BACKUP_RETENTION_DAYS=7
+ExecStart=/opt/matrix-bridge-host/backup.sh
+UMask=0077
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=2h
+PrivateTmp=true
+NoNewPrivileges=true
