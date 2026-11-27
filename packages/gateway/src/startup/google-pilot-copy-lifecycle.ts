@@ -41,6 +41,11 @@ const copyChats = sql`
       WHERE c.kind='derived' AND left(c.entity_ref,4)='grc_' AND r.id=substring(c.entity_ref FROM 5)
     UNION ALL SELECT q.chat_id FROM chat_queued_turns q
       WHERE c.kind='derived' AND left(c.entity_ref,4)='gqc_' AND q.id=substring(c.entity_ref FROM 5)`;
+const copyBoundToChat = (chatId: string | RawBuilder<unknown>) =>
+    sql`EXISTS(SELECT 1 FROM (${copyChats}) binding WHERE binding.chat_id=${chatId})`;
+// An ambiguous binding cannot authorize Chat-scoped erasure.
+const copyBoundOnlyToChat = (chatId: string | RawBuilder<unknown>) =>
+    sql`(SELECT bool_and(binding.chat_id=${chatId}) FROM (${copyChats}) binding) IS TRUE`;
 /** Isolated exact-owner host only. Commands are server-authenticated by the transport composer,
  * not by this helper. No copied content enters its metadata receipt tables. */
 export async function createGooglePilotCopyLifecycle(options: {
@@ -81,7 +86,7 @@ export async function createGooglePilotCopyLifecycle(options: {
       WHERE m.owner_id=${ownerId} AND m.chat_id=${chatId} AND c.origins @> jsonb_build_array(jsonb_build_object('connectionId',o.origin_id))) LIMIT 1`.execute(tx));
     const remainingChatCopies = (ownerId: string, chatId: string) => boundedProvenanceTransaction(db, tx => sql`
         SELECT 1 FROM google_copy_registry c WHERE c.owner_id=${ownerId} AND c.state<>'deleted'
-        AND EXISTS(SELECT 1 FROM (${copyChats}) binding WHERE binding.chat_id=${chatId}) LIMIT 1`.execute(tx));
+        AND ${copyBoundToChat(chatId)} LIMIT 1`.execute(tx));
     function deletionAuthority(remainingCopies: typeof remainingContextCopies): GoogleContextDeletionAuthority {
         return { async withVerifiedContextDeletion(ownerId, chatId, work) {
             admitted();
@@ -221,6 +226,7 @@ export async function createGooglePilotCopyLifecycle(options: {
     const dueForProof = sql`(j.state='pending' AND j.next_attempt<=clock_timestamp())
         OR (j.state='leased' AND j.lease_until<=clock_timestamp())
         OR ((${recoverable}) AND j.next_attempt<=clock_timestamp())`;
+    const copyDue = sql`(c.state='active' OR (c.state='purging' AND (${dueForProof})))`;
     async function processCopies(scope: RawBuilder<unknown>, queueActive = false) {
         if (queueActive) {
             const rows = await boundedProvenanceTransaction(db, tx => sql<{ id: string }>`
@@ -326,8 +332,7 @@ export async function createGooglePilotCopyLifecycle(options: {
             const revision = await expiryContexts.beginExpiredChatPurge(options.ownerId, chatId);
             admitted();
             if (revision === null) return;
-            // An ambiguous binding cannot authorize Chat-scoped erasure.
-            await processCopies(sql`(SELECT bool_and(binding.chat_id=${chatId}) FROM (${copyChats}) binding) IS TRUE`, true);
+            await processCopies(copyBoundOnlyToChat(chatId), true);
             if (!(await remainingChatCopies(options.ownerId, chatId)).rows.length) {
                 admitted();
                 await expiryContexts.completeDeletion(options.ownerId, chatId, revision);
@@ -446,9 +451,20 @@ export async function createGooglePilotCopyLifecycle(options: {
                     console.warn('[google-data] Account copy cleanup unavailable', { errorClass: error instanceof Error ? 'Error' : 'UnknownError' });
                 }
             }
+            // First expiry must close the marker. After that, only ready work or an empty
+            // Chat needing finalization should take the global execution gate.
+            const markerChat = sql`m.chat_id`;
             const chats = await boundedProvenanceTransaction(db, tx => sql<{ chat_id: string }>`
                 SELECT m.chat_id FROM google_context_markers m WHERE m.owner_id=${options.ownerId} AND m.state<>'deleted'
-                AND ${googleContextRetentionExpired} ORDER BY (m.chat_id>${chatCursor}) DESC,m.chat_id LIMIT 10`.execute(tx));
+                AND ${googleContextRetentionExpired}
+                AND (m.state='active' OR NOT EXISTS (
+                    SELECT 1 FROM google_copy_registry c WHERE c.owner_id=m.owner_id AND c.state<>'deleted'
+                    AND ${copyBoundToChat(markerChat)}
+                ) OR EXISTS (
+                    SELECT 1 FROM google_copy_registry c LEFT JOIN google_copy_purge_jobs j ON j.copy_id=c.id AND j.owner_id=c.owner_id
+                    WHERE c.owner_id=m.owner_id AND ${copyDue} AND ${copyBoundOnlyToChat(markerChat)}
+                ))
+                ORDER BY (m.chat_id>${chatCursor}) DESC,m.chat_id LIMIT 10`.execute(tx));
             for (const { chat_id } of chats.rows) {
                 check();
                 chatCursor = chat_id;
@@ -465,7 +481,7 @@ export async function createGooglePilotCopyLifecycle(options: {
             const due = await boundedProvenanceTransaction(db, tx => sql`
                 SELECT 1 FROM google_copy_registry c LEFT JOIN google_copy_purge_jobs j ON j.copy_id=c.id AND j.owner_id=c.owner_id
                 WHERE c.owner_id=${options.ownerId} AND (${expiredCopies})
-                AND (c.state='active' OR (c.state='purging' AND (${dueForProof}))) LIMIT 1`.execute(tx));
+                AND ${copyDue} LIMIT 1`.execute(tx));
             check();
             if (due.rows.length) await withAdmission(() => processCopies(expiredCopies, true));
         } finally {

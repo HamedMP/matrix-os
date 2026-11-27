@@ -392,6 +392,32 @@ describe('durable exact-owner pilot copy cleanup', () => {
             consentId: source.consentId, profileId: source.profileId, profileRevision: source.profileRevision,
             purposeId: source.purposeId, expiresAt: source.expiresAt, retentionDeadline: source.expiresAt });
     });
+    it('keeps unrelated admissions open while an expired copy waits in retry backoff', async () => {
+        const f = await fixture(false);
+        await sql`UPDATE google_context_markers SET retention_deadline=now()-interval '1 second'`.execute(f.repository.kysely);
+        const attempts = vi.spyOn(f.fence, 'tryAcquire');
+        const swept = vi.spyOn(f.history.googleCopies!.provenance, 'cleanupDeleted');
+        lifecycle!.start();
+        try {
+            await vi.waitFor(async () => {
+                expect((await sql`SELECT 1 FROM google_copy_purge_jobs WHERE state='pending'`.execute(f.repository.kysely)).rows).toHaveLength(1);
+                expect(swept).toHaveBeenCalledTimes(1);
+                expect(f.fence.blocked).toBe(false);
+            });
+            await sql`UPDATE google_copy_purge_jobs SET next_attempt=now()+interval '1 minute'`.execute(f.repository.kysely);
+            attempts.mockClear();
+            await vi.waitFor(() => expect(swept).toHaveBeenCalledTimes(3), { timeout: 4500, interval: 50 });
+            expect(attempts).not.toHaveBeenCalled();
+            expect(f.stop).toHaveBeenCalledTimes(1);
+            await lifecycle!.onStopped({ version: 1, ownerId: owner.ownerId, chatId: 'chat_one', runId: 'run_one',
+                runtimeHandle: `runtime_${'a'.repeat(32)}`, executionGeneration: '1', stoppedAt: new Date().toISOString() });
+            await sql`UPDATE google_copy_purge_jobs SET next_attempt=now()`.execute(f.repository.kysely);
+            await vi.waitFor(async () => {
+                expect((await f.contexts.inspect(owner.ownerId, 'chat_one'))?.availability).toBe('deleted');
+            }, { timeout: 4500, interval: 50 });
+            expect(attempts).toHaveBeenCalled();
+        } finally { await lifecycle!.close(); }
+    }, 15000);
     it('continues to the next expired Chat after an actual stop-proof failure', async () => {
         const f = await fixture(false);
         const next = '123e4567-e89b-42d3-a456-426614174009';
