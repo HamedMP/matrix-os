@@ -71,15 +71,16 @@ export async function integrationActionSuccess(c: Context, input: {
   }
   // Authority refusal must propagate after best-effort usage accounting for
   // reads, where withholding the data is the point. A write or destructive
-  // action has already taken effect; reporting it as failed invites a retry
-  // that repeats the effect (e.g. a second email), so record and return it.
+  // action has already taken effect. A content-free receipt avoids repeating
+  // the effect while withholding the provider payload and summary.
   try {
     await input.beforeRelease?.();
   } catch (err: unknown) {
     if (input.risk !== "write" && input.risk !== "destructive") throw err;
     console.warn("[integrations] release refused after completed action", {
-      service, action, risk: input.risk, errorClass: err instanceof Error ? err.name : "UnknownError",
+      service, action, risk: input.risk, errorClass: err instanceof Error ? "Error" : "UnknownError",
     });
+    return c.json({ data: { status: "completed", resultWithheld: true }, service, action });
   }
   return c.json({ data, service, action, ...(summary ? { summary } : {}) });
 }

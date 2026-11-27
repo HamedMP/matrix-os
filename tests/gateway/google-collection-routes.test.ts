@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { GOOGLE_PROCESSING_HEADER } from '../../packages/gateway/src/google-data/runtime/envelope.js';
 import { GoogleCollectionRefusedError, type GoogleCollectionAdmission } from '../../packages/gateway/src/integrations/collection-hook.js';
 import { createIntegrationRoutes } from '../../packages/gateway/src/integrations/routes.js';
 import { createNativeGmailClient } from '../../packages/gateway/src/integrations/native-gmail/client.js';
@@ -141,10 +142,11 @@ describe('trusted Gmail collection route boundary', () => {
     const response = await f.post('/call', { action: 'get_message', params: { messageId: 'message1' } });
     expect(response.status).toBe(503); expect(f.release).toHaveBeenCalledTimes(1); expect(await response.text()).not.toContain('private-result');
   });
-  it.each([false, true])('reports a completed write as completed when release refuses afterwards, so it is not retried (native=%s)', async native => {
+  it.each([false, true])('returns a content-free receipt for a completed Gmail write when release refuses (native=%s)', async native => {
     const f = fixture({ native, revokedDuringUsage: true }); const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    const response = await f.post('/call', { action: 'send_email', params: writeParams });
-    expect(response.status).toBe(200); expect(await response.json()).toMatchObject({ data: { id: 'private-result' }, action: 'send_email' });
+    const response = await f.post('/call', { action: 'modify_message', params: { messageId: 'message1', removeLabelIds: ['UNREAD'] } });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ data: { status: 'completed', resultWithheld: true }, service: 'gmail', action: 'modify_message' });
     expect(f.events.filter(event => ['admit', 'provider', 'usage', 'release'].includes(event))).toEqual(['admit', 'provider', 'usage', 'release']);
     expect(f.release).toHaveBeenCalledTimes(1);
     expect(JSON.stringify(warn.mock.calls)).not.toMatch(/synthetic private|private-result/);
@@ -152,7 +154,7 @@ describe('trusted Gmail collection route boundary', () => {
   it('lets a bot client see the completed write instead of an unknown effect', async () => {
     const f = fixture({ revokedDuringUsage: true }); vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const client = createBotIntegrationClient(createLocalIntegrationTransport(f.app));
-    await expect(client.call(owner, { service: 'gmail', action: 'send_email', label: 'Work', connectionId: account, params: writeParams, read: false })).resolves.toBeDefined();
+    await expect(client.call(owner, { service: 'gmail', action: 'send_email', label: 'Work', connectionId: account, params: writeParams, read: false })).resolves.toEqual({ data: { status: 'completed', resultWithheld: true } });
     expect(f.legacy.proxyPost).toHaveBeenCalledTimes(1); expect(f.release).toHaveBeenCalledTimes(1);
   });
   it.each(['/call', '/read-call'])('preserves non-Gmail flows on $0', async path => {
@@ -185,6 +187,15 @@ describe('trusted Gmail collection route boundary', () => {
     expect(response.status).toBe(200); expect(await response.json()).toMatchObject({ data: { id: 'private-result' } });
     expect(f.admit).not.toHaveBeenCalled(); expect(f.beforeSend).not.toHaveBeenCalled(); expect(f.release).not.toHaveBeenCalled();
     expect(f.legacy[action === 'send_email' ? 'proxyPost' : 'proxyGet']).toHaveBeenCalledTimes(1);
+  });
+  it.each(['/call', '/read-call'])('requires the consent release check for a Pipedream Gmail processing request on %s', async path => {
+    const f = fixture({ pipedreamAccount: true, revokedDuringUsage: true });
+    const response = await f.post(path, { action: 'get_message', params: { messageId: 'message1' } },
+      { [GOOGLE_PROCESSING_HEADER]: 'synthetic-processing-claim' });
+    expect(f.beforeSend).toHaveBeenCalledOnce();
+    expect(f.release).toHaveBeenCalledOnce();
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({ error: 'Integration service unavailable' });
   });
   it('keeps a Pipedream Jev read outside native collection admission', async () => {
     const f = fixture({ pipedreamAccount: true, denied: true }); const binding = { service: 'gmail', connectionId: account, accountLabel: 'Work', expectedEmail: 'owner@example.invalid' };
