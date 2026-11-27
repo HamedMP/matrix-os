@@ -11,6 +11,7 @@ import type {
   CellNode,
   CellProvider,
   FormulaArray,
+  FormulaAst,
   FormulaError,
   FormulaScalar,
   FormulaValue,
@@ -34,6 +35,31 @@ export function boundsOfNode(node: CellNode | RangeNode, sheet: string): RangeBo
     endRow: node.end.row,
     endCol: node.end.col,
   };
+}
+
+/** How many defined names {@link writtenBounds} follows inside one another. */
+const MAX_WRITTEN_NAME_DEPTH = 8;
+
+/**
+ * The bounds a reference argument names, found without reading its cells:
+ * a cell or range on `sheet` (in parentheses or not), or a defined name for
+ * one. Null for anything else, a reference to another sheet included (it is
+ * evaluated, so a sheet that does not exist still gives its error).
+ *
+ * A function that uses only where a reference points (ROW, the start of
+ * OFFSET) takes the bounds from here, so the calculation does not count the
+ * cells as read and a formula may name its own cell.
+ */
+export function writtenBounds(node: FormulaAst, provider: CellProvider, sheet: string, depth = 0): RangeBounds | null {
+  let inner = node;
+  while (inner.type === "paren") inner = inner.inner;
+  if (inner.type === "cell" || inner.type === "range") {
+    return inner.sheet === null || sameSheet(inner.sheet, sheet) ? boundsOfNode(inner, sheet) : null;
+  }
+  if (inner.type !== "name" || depth >= MAX_WRITTEN_NAME_DEPTH) return null;
+  const resolution = provider.resolveName(inner.name, inner.sheet ?? sheet);
+  if (resolution === null || resolution.kind !== "formula") return null;
+  return writtenBounds(resolution.ast, provider, resolution.sheet, depth + 1);
 }
 
 /** True when the bounds lie on a sheet and are ordered. */

@@ -50,6 +50,15 @@ function fillsRange(node: CalcNode): boolean {
   return spill !== null && (spill.end.row > spill.start.row || spill.end.col > spill.start.col);
 }
 
+/** True when a formula that picks its cells at run time read its own cell on its last calculation. */
+function readsItself(node: CalcNode): boolean {
+  if (node.reads === null) return false;
+  for (const dep of node.reads) {
+    if (dep.sheet === node.sheet && node.row >= dep.r1 && node.row <= dep.r2 && node.col >= dep.c1 && node.col <= dep.c2) return true;
+  }
+  return false;
+}
+
 function touches(dep: Dep, changed: CellSets): boolean {
   const set = changed.get(dep.sheet);
   if (set === undefined || set.size === 0) return false;
@@ -84,6 +93,8 @@ export function addTo(sets: CellSets, sheet: SheetModel, key: number): void {
 export class Run {
   readonly changed: ChangedCell[] = [];
   readonly circular: SheetCellRef[] = [];
+  /** The nodes in {@link circular}, so a formula calculated again in the run is reported once. */
+  private readonly reported = new Set<CalcNode>();
   private evaluated = 0;
   /** Values stored so far. */
   private seq = 0;
@@ -188,7 +199,10 @@ export class Run {
   }
 
   private putCircular(node: CalcNode): void {
-    this.circular.push({ sheet: node.sheet.id, row: node.row, col: node.col });
+    if (!this.reported.has(node)) {
+      this.reported.add(node);
+      this.circular.push({ sheet: node.sheet.id, row: node.row, col: node.col });
+    }
     const value = errorValue("#REF!");
     this.put(node, value, value, true);
   }
@@ -242,6 +256,11 @@ export class Run {
       node.reads = log.reads;
       node.readsAll = log.overflow;
       log.reads = null;
+      // Reading its own cell is a circle even when the value it reads back does not change.
+      if (readsItself(node)) {
+        this.putCircular(node);
+        return true;
+      }
     }
     this.put(node, value, result, false);
     return true;

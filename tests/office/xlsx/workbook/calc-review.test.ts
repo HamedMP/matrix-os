@@ -197,6 +197,33 @@ describe("formulas that pick their cells at run time", () => {
     expect(["A1", "E1", "A3"].map((a) => valueAt(workbook, "S", a))).toEqual([7, 70, 77]);
   });
 
+  // Fault detected: the reference OFFSET starts from, and one ROW only asks the position of, counted as cells the
+  // formula reads, so a formula starting from its own cell looked circular and showed #REF!.
+  it("do not read the cell OFFSET starts from or the cell ROW asks the position of", () => {
+    const workbook = createXlsx({ sheetNames: ["S"] });
+    const sheet = workbook.listSheets()[0]!.id;
+    workbook.setCell(sheet, parseA1("B1"), 7);
+    workbook.setFormula(sheet, parseA1("A1"), "OFFSET(A1,0,1)");
+    workbook.setFormula(sheet, parseA1("A2"), "OFFSET($E$1,ROW(A2)-1,0)");
+    workbook.setCell(sheet, parseA1("E2"), 5);
+    workbook.setDefinedName({ name: "Start", refersTo: "S!$A$3", scope: null });
+    workbook.setFormula(sheet, parseA1("A3"), "OFFSET((Start),0,1)*2");
+    workbook.setCell(sheet, parseA1("B3"), 9);
+    // These read their own cell: they stay circular.
+    workbook.setFormula(sheet, parseA1("A5"), "OFFSET(A5,0,0)");
+    workbook.setFormula(sheet, parseA1("A6"), "OFFSET(B6,0,-1)+1");
+    const result = workbook.recalc();
+    expect(["A1", "A2", "A3"].map((a) => valueAt(workbook, "S", a))).toEqual([7, 5, 18]);
+    expect(result.circular.map((cell) => `${cell.row},${cell.col}`).sort()).toEqual(["4,0", "5,0"]);
+    expect([valueAt(workbook, "S", "A5"), valueAt(workbook, "S", "A6")]).toEqual([err("#REF!"), err("#REF!")]);
+    // The cell OFFSET lands on is still followed.
+    workbook.setCell(sheet, parseA1("B1"), 8);
+    workbook.setCell(sheet, parseA1("E2"), 6);
+    workbook.recalc();
+    expect(["A1", "A2"].map((a) => valueAt(workbook, "S", a))).toEqual([8, 6]);
+    expect(workbook.precedents(sheet, parseA1("A1"))).toEqual([]);
+  });
+
   it("reports a circle closed at run time instead of running on", () => {
     const workbook = createXlsx({ sheetNames: ["S"] });
     const sheet = workbook.listSheets()[0]!.id;

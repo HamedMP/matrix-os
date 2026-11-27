@@ -16,7 +16,7 @@ import type {
 } from "../../../../api/formula.js";
 import { isOfficeError } from "../../../../errors.js";
 import { ERR, asArray, broadcast, cellCount, isArray, isError, makeArray, toNumber, toScalar } from "../../coerce.js";
-import { boundsOfNode, readReference } from "../../eval/reference.js";
+import { boundsOfNode, readReference, writtenBounds } from "../../eval/reference.js";
 import { parseFormula } from "../../parser/parser.js";
 import { registerFunction, registerLazyFunction } from "../../registry.js";
 import { boolArg, intArg, textArg } from "../text/args.js";
@@ -83,11 +83,21 @@ function lazyInt(node: FormulaAst | undefined, context: FunctionContext, fallbac
   return intArg(toScalar(context.evaluate(node)), fallback);
 }
 
+/**
+ * The bounds a reference argument points at, or the error to return. A
+ * reference written in the formula is not read: only where it points counts.
+ */
+function referenceArg(node: FormulaAst, context: FunctionContext): RangeBounds | FormulaError {
+  const written = writtenBounds(node, context.provider, context.sheet);
+  if (written !== null) return written;
+  const value = context.evaluate(node);
+  if (isError(value)) return value;
+  return isArray(value) && value.ref !== null ? value.ref : ERR.VALUE;
+}
+
 function offset(args: readonly FormulaAst[], context: FunctionContext): FormulaValue {
-  const base = context.evaluate(args[0] as FormulaAst);
-  if (isError(base)) return base;
-  if (!isArray(base) || base.ref === null) return ERR.VALUE;
-  const ref = base.ref;
+  const ref = referenceArg(args[0] as FormulaAst, context);
+  if (isError(ref)) return ref;
   const rows = lazyInt(args[1], context, 0);
   if (isError(rows)) return rows;
   const cols = lazyInt(args[2], context, 0);
@@ -133,10 +143,8 @@ function indirect(args: readonly FormulaArg[], context: FunctionContext): Formul
 function position(vertical: boolean): (args: readonly FormulaAst[], context: FunctionContext) => FormulaValue {
   return (args, context) => {
     if (args.length === 0) return vertical ? context.row + 1 : context.col + 1;
-    const value = context.evaluate(args[0] as FormulaAst);
-    if (isError(value)) return value;
-    if (!isArray(value) || value.ref === null) return ERR.VALUE;
-    const ref = value.ref;
+    const ref = referenceArg(args[0] as FormulaAst, context);
+    if (isError(ref)) return ref;
     const first = vertical ? ref.startRow : ref.startCol;
     const last = vertical ? ref.endRow : ref.endCol;
     if (first === last) return first + 1;
@@ -146,9 +154,12 @@ function position(vertical: boolean): (args: readonly FormulaAst[], context: Fun
   };
 }
 
-function size(vertical: boolean): (args: readonly FormulaArg[]) => FormulaValue {
-  return (args) => {
-    const value = args[0] ?? null;
+function size(vertical: boolean): (args: readonly FormulaAst[], context: FunctionContext) => FormulaValue {
+  return (args, context) => {
+    const node = args[0] as FormulaAst;
+    const written = writtenBounds(node, context.provider, context.sheet);
+    if (written !== null) return vertical ? written.endRow - written.startRow + 1 : written.endCol - written.startCol + 1;
+    const value = context.evaluate(node);
     if (isError(value)) return value;
     if (!isArray(value)) return 1;
     const shape = shapeOf(value);
@@ -164,6 +175,6 @@ export function registerReferenceFunctions(registry: FunctionRegistry): void {
   registerFunction(registry, "INDIRECT", indirect, { minArgs: 1, maxArgs: 2, volatile: true, ranges: "none" });
   registerLazyFunction(registry, "ROW", position(true), { minArgs: 0, maxArgs: 1 });
   registerLazyFunction(registry, "COLUMN", position(false), { minArgs: 0, maxArgs: 1 });
-  registerFunction(registry, "ROWS", size(true), { minArgs: 1, maxArgs: 1 });
-  registerFunction(registry, "COLUMNS", size(false), { minArgs: 1, maxArgs: 1 });
+  registerLazyFunction(registry, "ROWS", size(true), { minArgs: 1, maxArgs: 1 });
+  registerLazyFunction(registry, "COLUMNS", size(false), { minArgs: 1, maxArgs: 1 });
 }

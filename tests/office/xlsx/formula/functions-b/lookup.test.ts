@@ -223,8 +223,8 @@ describe("lookup functions", () => {
   });
 
   it.each([
-    // The base A1 (1), the 5 cells OFFSET reads, and its 5-cell result.
-    ["OFFSET(A1,0,0,5)", 11],
+    // The 5 cells OFFSET reads and its 5-cell result; the base A1 is only where it starts, not read.
+    ["OFFSET(A1,0,0,5)", 10],
     // The 5 cells INDIRECT reads and its 5-cell result.
     ['INDIRECT("A1:A5")', 10],
   ] as const)("counts the cells %s reads itself against maxCells", (text, cells) => {

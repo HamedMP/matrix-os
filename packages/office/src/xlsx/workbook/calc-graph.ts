@@ -94,6 +94,11 @@ const DYNAMIC_FUNCTIONS: ReadonlySet<string> = new Set(["OFFSET", "INDIRECT"]);
  */
 const POSITION_FUNCTIONS: ReadonlySet<string> = new Set(["ROW", "COLUMN", "ROWS", "COLUMNS", "AREAS", "SHEET", "SHEETS", "ISREF"]);
 /**
+ * Functions whose first argument is used only for where it points: OFFSET
+ * starts from it and reads the cells it lands on, which are known at run time.
+ */
+const START_FUNCTIONS: ReadonlySet<string> = new Set(["OFFSET"]);
+/**
  * Functions that stretch or shrink their third argument (the sum range) to
  * the size of their first (the criteria range), so they read cells the third
  * argument does not name. See `resizedGrid` of the formula functions.
@@ -299,7 +304,7 @@ function isPlainReference(state: WorkbookState, node: FormulaAst, sheet: SheetMo
 /**
  * The rectangles whose values a formula reads, following defined names. A
  * reference handed straight to a function that only asks where it points
- * (`ROW(A1)`, `COLUMNS($C$1:C1)`) is left out.
+ * (`ROW(A1)`, `COLUMNS($C$1:C1)`, the start of `OFFSET(A1,0,1)`) is left out.
  */
 export function collectDeps(state: WorkbookState, ast: FormulaAst, sheet: SheetModel, depth: number, out: Dep[]): void {
   if (state.formula === null) return;
@@ -333,8 +338,11 @@ export function collectDeps(state: WorkbookState, ast: FormulaAst, sheet: SheetM
     children.length = 0;
     const resized = resizedRead(state, node, sheet);
     if (resized !== null && resized !== "unknown") out.push(resized);
-    if (node.type === "call" && POSITION_FUNCTIONS.has(node.name)) {
-      for (const arg of node.args) if (!isPlainReference(state, arg, sheet, depth)) children.push(arg);
+    if (node.type === "call" && (POSITION_FUNCTIONS.has(node.name) || START_FUNCTIONS.has(node.name))) {
+      const all = POSITION_FUNCTIONS.has(node.name);
+      node.args.forEach((arg, i) => {
+        if (!((all || i === 0) && isPlainReference(state, arg, sheet, depth))) children.push(arg);
+      });
     } else {
       pushChildren(node, children);
     }
