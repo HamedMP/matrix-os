@@ -1,5 +1,4 @@
 import {
-  CanonicalChatDetailResponseSchema,
   CanonicalChatTurnAdmissionResponseSchema,
   canonicalChatTurnRequestIdentity,
   type CanonicalChatTurnAdmissionResponse,
@@ -15,12 +14,13 @@ export type CanonicalChatClientAdmission = CanonicalChatTurnAdmissionResponse & 
 /** A lost acknowledgement is not proof of rejection. Ask the authenticated
  * admission lookup to attest to the saved original request hash, before Agent
  * or Bot execution overrides. Never repeat a potentially admitted write here.
+ * Return its proven receipt immediately; normal background Chat reads hydrate
+ * the transcript independently of submission acknowledgement.
  */
 export async function recoverCanonicalChatAdmission(
   chatId: string,
   request: CanonicalCreateChatTurnRequest,
   readAdmission: (requestHash: string) => Promise<unknown>,
-  readDetail?: () => Promise<unknown>,
 ): Promise<CanonicalChatClientAdmission | null> {
   let admission: CanonicalChatTurnAdmissionResponse;
   try {
@@ -34,17 +34,6 @@ export async function recoverCanonicalChatAdmission(
   } catch (error: unknown) {
     console.warn("[canonical-chat] admission readback unavailable:", error instanceof Error ? error.name : "UnknownError");
     return null;
-  }
-  if (readDetail) {
-    try {
-      const detail = CanonicalChatDetailResponseSchema.parse(await readDetail());
-      if (detail.record.chat.id === chatId && detail.record.chat.revision >= admission.record.chat.revision
-        && detail.turns.some(turn => turn.id === admission.turn.id)
-        && detail.messages.some(message => message.id === admission.message.id)
-        && detail.runs.some(run => run.id === admission.run.id)) return { ...admission, recoveredDetail: detail };
-    } catch (error: unknown) {
-      console.warn("[canonical-chat] recovered detail unavailable:", error instanceof Error ? error.name : "UnknownError");
-    }
   }
   return admission;
 }
