@@ -9,6 +9,7 @@
  * and are not repeated here.
  */
 import { executeIntegrationAction } from "../action-execution.js";
+import { isNativeGmailAccount } from "../native-gmail/request.js";
 import { validateActionParams } from "../parameter-validation.js";
 import type { PipedreamConnectClient } from "../pipedream.js";
 import { getService } from "../registry.js";
@@ -98,8 +99,9 @@ export function connectedAppInputSchema(action: ServiceAction): Record<string, u
 }
 
 /** Only Pipedream-backed registry services; presets reach Core through the broker. */
-function pipedreamService(serviceId: string): ServiceDefinition | undefined {
-  const def = getService(serviceId);
+function pipedreamService(connection: { service: string; pipedream_account_id: string }): ServiceDefinition | undefined {
+  if (isNativeGmailAccount(connection.pipedream_account_id)) return undefined;
+  const def = getService(connection.service);
   return def && def.connectorKind === "pipedream" && def.pipedreamApp ? def : undefined;
 }
 
@@ -132,7 +134,7 @@ export function createCoreConnectedApps(options: {
       const rows = await options.db.listConnectedServices(userId);
       const apps: CoreConnectedApp[] = [];
       for (const row of rows) {
-        const def = row.status === "active" && row.user_id === userId ? pipedreamService(row.service) : undefined;
+        const def = row.status === "active" && row.user_id === userId ? pipedreamService(row) : undefined;
         if (!def) continue;
         if (apps.length >= CORE_MAX_CONNECTED_APPS) {
           console.warn("[core-mcp] connected app inventory above cap; extra connections omitted");
@@ -152,7 +154,7 @@ export function createCoreConnectedApps(options: {
       // Re-resolved at dispatch: a disconnected or reassigned row is never called.
       const connection = (await options.db.listConnectedServices(input.userId)).find(row =>
         row.id === input.connectionId && row.user_id === input.userId && row.status === "active");
-      const def = connection ? pipedreamService(connection.service) : undefined;
+      const def = connection ? pipedreamService(connection) : undefined;
       const actionDef = def && Object.hasOwn(def.actions, input.action) ? def.actions[input.action] : undefined;
       if (!connection || !def || !actionDef) throw new CoreConnectedAppError("forbidden");
       if (!validateActionParams(actionDef, input.arguments).valid) throw new CoreConnectedAppError("invalid");

@@ -33,6 +33,7 @@ async function signUpRedirect(redirectUrl?: string | string[]): Promise<Redirect
 }
 
 const satellite = "https://ai-insights.app/share?__clerk_synced=false#report=abc";
+const gmailLink = `/auth/gmail?state=${"g".repeat(43)}`;
 const slackLink = `/slack/link?token=${"a".repeat(43)}`;
 const bypasses = [
   "https://ai-insights.app.evil.com/share",
@@ -43,6 +44,21 @@ const bypasses = [
 ];
 
 describe("sign-in page return target", () => {
+  it.each(["https://app.matrix-os.com", "https://gmail-pilot.matrix-os.com"])("retains the absolute launcher returned by the shell proxy on %s", async origin => {
+    const target = origin + gmailLink;
+    expect(await signInRedirect(target)).toEqual({ forceRedirectUrl: target, fallbackRedirectUrl: target });
+  });
+  it.each(["https://app.matrix-os.com.evil.test", "https://app.matrix-os.com:443", "http://app.matrix-os.com", "https://evil@app.matrix-os.com"])("rejects ambiguous launcher origin %s", async origin => {
+    expect(await signInRedirect(origin + gmailLink)).toEqual({ forceRedirectUrl: "/", fallbackRedirectUrl: "/" });
+  });
+  it("returns a signed-out Gmail connection to its exact pending consent", async () => {
+    expect(await signInRedirect(gmailLink)).toEqual({ forceRedirectUrl: gmailLink, fallbackRedirectUrl: gmailLink });
+  });
+  it.each([gmailLink + "&next=https://evil.test", gmailLink + "#other", "https://evil.test" + gmailLink,
+    gmailLink + "&state=" + "x".repeat(43), "/auth/gmail?state=bad", "/auth/gmail?state=%2F"]) ("rejects malformed Gmail return %s", async target => {
+    expect(await signInRedirect(target)).toEqual({ forceRedirectUrl: "/", fallbackRedirectUrl: "/" });
+  });
+
   it("sends a satellite visitor back to the exact ai-insights.app page", async () => {
     expect(await signInRedirect(satellite)).toEqual({
       forceRedirectUrl: satellite,

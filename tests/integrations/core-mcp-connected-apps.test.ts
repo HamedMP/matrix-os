@@ -10,8 +10,8 @@ import type { PipedreamConnectClient } from "../../packages/gateway/src/integrat
 
 const userId = "11111111-1111-4111-8111-111111111111";
 
-function store(service: string) {
-  const row = { id: "22222222-2222-4222-8222-222222222222", user_id: userId, service, pipedream_account_id: "apn_1",
+function store(service: string, accountId = "apn_1") {
+  const row = { id: "22222222-2222-4222-8222-222222222222", user_id: userId, service, pipedream_account_id: accountId,
     account_label: service, account_email: "owner@example.test", scopes: [], status: "active" as const,
     connected_at: new Date(), last_used_at: null };
   return {
@@ -31,6 +31,18 @@ function deferred() {
 }
 
 describe("Connect Apps adapter", () => {
+  it("keeps native Gmail out of the Pipedream-only Core adapter", async () => {
+    const { db, connectionId } = store("gmail", "gmail_33333333-3333-4333-8333-333333333333");
+    const apps = createCoreConnectedApps({ db, pipedream: {} as PipedreamConnectClient,
+      execute: async () => { throw new Error("must not dispatch"); } });
+    const legacy = createCoreConnectedApps({ db: store("gmail").db, pipedream: {} as PipedreamConnectClient });
+    const [gmail] = await legacy.list(userId);
+    const read = gmail!.tools.find(tool => tool.risk === "read")!;
+    await expect(apps.list(userId)).resolves.toEqual([]);
+    await expect(apps.call({ userId, connectionId, action: read.name, signal: AbortSignal.timeout(1000) }))
+      .rejects.toMatchObject({ code: "forbidden" });
+  });
+
   it("lets a dispatched write finish and report its real result after the caller cancels", async () => {
     // Fault: Core reports "cancelled" while the provider write still lands, inviting a duplicate retry.
     const { db, connectionId } = store("figma");

@@ -81,7 +81,7 @@ describe("platform Matrix Core MCP composition", () => {
 
     const source = await readFile("packages/platform/src/platform-startup.ts", "utf8");
     expect(source).toContain("../../gateway/dist/integrations/custom-mcp/core-connected-apps.js");
-    expect(source).toMatch(/coreConnectedAppDeps = \{ db: trustedPlatformDb, pipedream \}/);
+    expect(source).toMatch(/coreConnectedAppDeps = \{ db: trustedPlatformDb, pipedream: legacyPipedream \}/);
     expect(source).toMatch(/connectedApps: \{ module: connectedAppsModule, \.\.\.coreConnectedAppDeps \}/);
     expect(source).toMatch(/ownerApprovals: customDb,\s*coreServiceSlugs: coreMcp\.serviceSlugs,/);
   });

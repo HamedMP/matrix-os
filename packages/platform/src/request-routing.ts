@@ -205,6 +205,12 @@ export function buildPostAuthRedirectPath(rawUrl: string): string {
       params.set('launch', '__chat__');
       params.set('runtime', 'primary');
     }
+    // Consent survives browser sign-in only on its exact launcher route.
+    const states = url.searchParams.getAll('state');
+    if (path === '/auth/gmail' && !/[\x00-\x1f\x7f]/.test(rawUrl)
+      && states.length === 1 && /^[A-Za-z0-9_-]{43}$/.test(states[0])) {
+      params.set('state', states[0]);
+    }
     const query = params.toString();
     return query ? `${path}?${query}` : path;
   } catch (err: unknown) {
