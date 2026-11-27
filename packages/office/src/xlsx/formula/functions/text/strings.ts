@@ -3,13 +3,16 @@
  * Positions are one-based and count UTF-16 code units, as the cell does.
  */
 
-import type { FormulaArg, FormulaError, FormulaValue, FunctionRegistry } from "../../../../api/formula.js";
-import { ERR, flattenValues, isError, toText } from "../../coerce.js";
+import type { FormulaArg, FormulaError, FormulaScalar, FormulaValue, FunctionRegistry } from "../../../../api/formula.js";
+import { ERR, MAX_BROADCAST_CELLS, extentOf, flattenValues, isArray, isError, toText } from "../../coerce.js";
 import { registerFunction } from "../../registry.js";
 import { boolArg, boundedText, intArg, MAX_TEXT_LENGTH, textArg } from "./args.js";
 import { hasWildcard, wildcardSearch } from "./wildcard.js";
 
 type Impl = (args: readonly FormulaArg[]) => FormulaValue;
+
+/** Most blank cells past the stored values of its references that one TEXTJOIN walks; more give `#VALUE!`. */
+const MAX_BLANK_CELLS = MAX_BROADCAST_CELLS;
 
 /** Wraps a function of text arguments: converts each to text and returns the first error. */
 function withTexts(count: number, fn: (texts: string[], args: readonly FormulaArg[]) => FormulaValue): Impl {
@@ -46,20 +49,41 @@ function textJoin(args: readonly FormulaArg[]): FormulaValue {
   }
   const ignoreEmpty = boolArg(args[1], true);
   if (isError(ignoreEmpty)) return ignoreEmpty;
-  const parts: string[] = [];
-  for (let i = 2; i < args.length; i += 1) {
-    for (const cell of flattenValues(args[i] ?? null)) {
-      const text = toText(cell);
-      if (isError(text)) return text;
-      if (ignoreEmpty && text === "") continue;
-      parts.push(text);
-    }
-  }
+  // Blank cells add only delimiters, so with none to add the blanks past a reference's stored values change nothing.
+  const walkBlanks = !ignoreEmpty && delimiters.some((delimiter) => delimiter !== "");
   let out = "";
-  for (let i = 0; i < parts.length; i += 1) {
-    if (i > 0) out += delimiters.length === 0 ? "" : delimiters[(i - 1) % delimiters.length];
-    out += parts[i];
-    if (out.length > MAX_TEXT_LENGTH) return ERR.VALUE;
+  let parts = 0;
+  let blanks = 0;
+  const add = (cell: FormulaScalar): FormulaError | null => {
+    const text = toText(cell);
+    if (isError(text)) return text;
+    if (ignoreEmpty && text === "") return null;
+    if (parts > 0 && delimiters.length > 0) out += delimiters[(parts - 1) % delimiters.length];
+    out += text;
+    parts += 1;
+    return out.length > MAX_TEXT_LENGTH ? ERR.VALUE : null;
+  };
+  for (let i = 2; i < args.length; i += 1) {
+    const arg = args[i] ?? null;
+    if (!walkBlanks || !isArray(arg) || arg.ref === null) {
+      for (const cell of flattenValues(arg)) {
+        const failed = add(cell);
+        if (failed !== null) return failed;
+      }
+      continue;
+    }
+    // A reference holds values only for the used part of the sheet; every cell of its bounds still takes a delimiter.
+    const { rows, cols } = extentOf(arg);
+    for (let r = 0; r < rows; r += 1) {
+      const line = r < arg.rows ? arg.values[r] : undefined;
+      for (let c = 0; c < cols; c += 1) {
+        const stored = line !== undefined && c < arg.cols;
+        // Delimiters that are mostly empty could make a whole-sheet reference walk for long without growing the text.
+        if (!stored && ++blanks > MAX_BLANK_CELLS) return ERR.VALUE;
+        const failed = add(stored ? (line[c] as FormulaScalar) : null);
+        if (failed !== null) return failed;
+      }
+    }
   }
   return out;
 }

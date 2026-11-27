@@ -124,6 +124,18 @@ describe("text functions", () => {
     expect(value(text)).toEqual(err(code));
   });
 
+  // Fault detected: a range read from a sheet holds values only up to the used part of the sheet, so TEXTJOIN that
+  // keeps empty cells left out the delimiters of the blank cells after the last value.
+  it("keeps every blank cell of a reference when TEXTJOIN does not ignore empty cells", () => {
+    expect(value('TEXTJOIN(",",FALSE,A5:A10)')).toBe("8,,,,,");
+    // Columns past the used part of the sheet count too, in the order of the cells.
+    expect(value('TEXTJOIN({",",";"},FALSE,K1:N2)')).toBe("-70000,A1;,;12000,Other!B2;,");
+    expect(value('TEXTJOIN(",",TRUE,A5:A10)')).toBe("8");
+    // A whole column of delimiters is longer than a cell holds; with no delimiter the blanks add nothing.
+    expect(value('TEXTJOIN(",",FALSE,A:A)')).toEqual(err("#VALUE!"));
+    expect(value('TEXTJOIN("",FALSE,A:A)')).toBe("12358");
+  });
+
   it("applies scalar text functions element by element to ranges", () => {
     expect(rows("UPPER(B1:B3)")).toEqual([["APPLE"], ["BANANA"], ["CHERRY"]]);
     expect(rows('LEFT(B1:B2,{1,2})')).toEqual([["a", "ap"], ["B", "Ba"]]);
