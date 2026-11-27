@@ -6,7 +6,7 @@
  */
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
-import { EMPTY_LOOK, TAB_LOOK_KEY, type TabLook, TabLookStore } from "../../../../home/apps/sheets/src/ui/sheet-tabs-model";
+import { EMPTY_LOOK, LEGACY_TAB_LOOK_KEY, type TabLook, TabLookStore } from "../../../../home/apps/sheets/src/ui/sheet-tabs-model";
 import { useTabLook } from "../../../../home/apps/sheets/src/ui/tab-look";
 
 afterEach(cleanup);
@@ -41,7 +41,7 @@ describe("tab order and colours of a workbook that gets a path", () => {
   });
 
   it("keeps the choices of a workbook saved as a copy, and stores them under the copy", async () => {
-    const { store } = memoryStore({ [TAB_LOOK_KEY]: { files: [{ path: "A.xlsx", order: ["b", "a"], colors: { a: "red" }, at: 1 }] } });
+    const { store } = memoryStore({ [LEGACY_TAB_LOOK_KEY]: { files: [{ path: "A.xlsx", order: ["b", "a"], colors: { a: "red" }, at: 1 }] } });
     const view = renderHook(({ path }) => useTabLook(store, path), { initialProps: { path: "A.xlsx" as string | null } });
     await settle();
     expect(view.result.current[0]).toEqual(LOOK);
@@ -57,7 +57,7 @@ describe("tab order and colours of a workbook that gets a path", () => {
     const gate = new Promise<void>((resolve) => {
       release = resolve;
     });
-    const data: Record<string, unknown> = { [TAB_LOOK_KEY]: { files: [{ path: "A.xlsx", order: ["a"], colors: {}, at: 1 }] } };
+    const data: Record<string, unknown> = { [LEGACY_TAB_LOOK_KEY]: { files: [{ path: "A.xlsx", order: ["a"], colors: {}, at: 1 }] } };
     const store = new TabLookStore({
       readData: async (key) => {
         await gate;
@@ -71,5 +71,31 @@ describe("tab order and colours of a workbook that gets a path", () => {
     release();
     await settle();
     expect(view.result.current[0]).toEqual(LOOK);
+  });
+});
+
+describe("tab order and colours chosen in two windows at once", () => {
+  // Outcome: arranging tabs of one workbook in one window never erases the tabs arranged for another workbook in a second window.
+  // Fault: every workbook's choices were one stored list, read then rewritten, so the later write dropped the other window's change.
+  it("keeps both workbooks' choices when two windows save at the same time", async () => {
+    const data: Record<string, unknown> = {};
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const kv = {
+      readData: async (key: string) => {
+        await gate;
+        return data[key];
+      },
+      writeData: async (key: string, value: unknown) => void (data[key] = JSON.parse(JSON.stringify(value))),
+    };
+    const first = new TabLookStore(kv);
+    const second = new TabLookStore(kv);
+    const saves = Promise.all([first.save("A.xlsx", LOOK), second.save("B.xlsx", { order: ["c"], colors: { c: "blue" } })]);
+    release();
+    await saves;
+    expect(await first.load("A.xlsx")).toEqual(LOOK);
+    expect(await first.load("B.xlsx")).toEqual({ order: ["c"], colors: { c: "blue" } });
   });
 });

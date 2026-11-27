@@ -78,16 +78,26 @@ export function pruneLook(look: TabLook, sheets: readonly SheetInfo[]): TabLook 
 
 // ---------------------------------------------------------------- persistence
 
-export const TAB_LOOK_KEY = "sheet_tabs_v1";
-/** Files remembered; the oldest is forgotten first. */
+/**
+ * Each file's choices are stored under a key of their own, so two windows
+ * arranging tabs of different workbooks never rewrite each other's. The key
+ * is a hash of the path (the store takes only letters, digits, `_` and `-`);
+ * the stored value names its path, so a hash shared by two paths reads as
+ * nothing rather than as the other file's tabs.
+ */
+export const TAB_LOOK_KEY_PREFIX = "sheet_tabs_v2_";
+/** The earlier store: one list of every file's choices. Read for files not yet stored on their own. */
+export const LEGACY_TAB_LOOK_KEY = "sheet_tabs_v1";
+/** Files read from the earlier list. */
 export const MAX_REMEMBERED_FILES = 50;
 const MAX_SHEETS_PER_FILE = 256;
+const MAX_SHEET_ID_LENGTH = 128;
+const MAX_PATH_LENGTH = 1024;
 
 interface StoredEntry {
   path: string;
   order: SheetId[];
   colors: Record<SheetId, TabColor>;
-  at: number;
 }
 
 interface KeyValue {
@@ -95,39 +105,58 @@ interface KeyValue {
   writeData?: (key: string, value: unknown) => Promise<void>;
 }
 
-function readEntries(value: unknown): StoredEntry[] {
-  if (typeof value !== "object" || value === null || !Array.isArray((value as { files?: unknown }).files)) return [];
-  const out: StoredEntry[] = [];
-  for (const item of (value as { files: unknown[] }).files.slice(0, MAX_REMEMBERED_FILES)) {
-    if (typeof item !== "object" || item === null) continue;
-    const entry = item as Record<string, unknown>;
-    if (typeof entry.path !== "string") continue;
-    const order = Array.isArray(entry.order) ? entry.order.filter((id): id is string => typeof id === "string").slice(0, MAX_SHEETS_PER_FILE) : [];
-    const colors: Record<SheetId, TabColor> = {};
-    if (typeof entry.colors === "object" && entry.colors !== null) {
-      for (const [id, color] of Object.entries(entry.colors as Record<string, unknown>).slice(0, MAX_SHEETS_PER_FILE)) if (isTabColor(color)) colors[id] = color;
-    }
-    out.push({ path: entry.path, order, colors, at: typeof entry.at === "number" ? entry.at : 0 });
+/** Two 32-bit FNV-1a hashes with different seeds, as 16 hex digits. */
+function hashPath(path: string): string {
+  let a = 0x811c9dc5;
+  let b = 0x01000193 ^ 0x5bd1e995;
+  for (let i = 0; i < path.length; i++) {
+    const code = path.charCodeAt(i);
+    a = Math.imul(a ^ code, 0x01000193);
+    b = Math.imul(b ^ code, 0x01000193) ^ (b >>> 13);
   }
-  return out;
+  return (a >>> 0).toString(16).padStart(8, "0") + (b >>> 0).toString(16).padStart(8, "0");
+}
+
+/** The key one file's choices are stored under. */
+export function tabLookKey(path: string): string {
+  return `${TAB_LOOK_KEY_PREFIX}${hashPath(path)}`;
+}
+
+function readEntry(item: unknown): StoredEntry | null {
+  if (typeof item !== "object" || item === null) return null;
+  const entry = item as Record<string, unknown>;
+  if (typeof entry.path !== "string" || entry.path.length > MAX_PATH_LENGTH) return null;
+  const isId = (id: unknown): id is string => typeof id === "string" && id.length <= MAX_SHEET_ID_LENGTH;
+  const order = Array.isArray(entry.order) ? entry.order.slice(0, MAX_SHEETS_PER_FILE).filter(isId) : [];
+  const colors: Record<SheetId, TabColor> = {};
+  if (typeof entry.colors === "object" && entry.colors !== null) {
+    for (const [id, color] of Object.entries(entry.colors as Record<string, unknown>).slice(0, MAX_SHEETS_PER_FILE)) if (isId(id) && isTabColor(color)) colors[id] = color;
+  }
+  return { path: entry.path, order, colors };
+}
+
+function readLegacy(value: unknown, path: string): StoredEntry | null {
+  if (typeof value !== "object" || value === null || !Array.isArray((value as { files?: unknown }).files)) return null;
+  for (const item of (value as { files: unknown[] }).files.slice(0, MAX_REMEMBERED_FILES)) {
+    const entry = readEntry(item);
+    if (entry !== null && entry.path === path) return entry;
+  }
+  return null;
 }
 
 export class TabLookStore {
   constructor(
     private readonly kv: KeyValue,
     private readonly log: (message: string, error: unknown) => void = () => undefined,
-    private readonly now: () => number = Date.now,
   ) {}
 
-  private async entries(): Promise<StoredEntry[]> {
-    if (typeof this.kv.readData !== "function") return [];
-    return readEntries(await this.kv.readData(TAB_LOOK_KEY));
-  }
-
   async load(path: string): Promise<TabLook> {
+    if (typeof this.kv.readData !== "function" || path.length > MAX_PATH_LENGTH) return EMPTY_LOOK;
     try {
-      const entry = (await this.entries()).find((item) => item.path === path);
-      return entry === undefined ? EMPTY_LOOK : { order: entry.order, colors: entry.colors };
+      const own = await this.kv.readData(tabLookKey(path));
+      // A stored value, even an empty one, is this file's latest choice; only a file never stored on its own falls back to the earlier list.
+      const entry = own === null || own === undefined ? readLegacy(await this.kv.readData(LEGACY_TAB_LOOK_KEY), path) : readEntry(own);
+      return entry === null || entry.path !== path ? EMPTY_LOOK : { order: entry.order, colors: entry.colors };
     } catch (error: unknown) {
       this.log("tab order could not be read", error);
       return EMPTY_LOOK;
@@ -135,13 +164,11 @@ export class TabLookStore {
   }
 
   async save(path: string, look: TabLook): Promise<void> {
-    if (typeof this.kv.writeData !== "function") return;
+    if (typeof this.kv.writeData !== "function" || path.length > MAX_PATH_LENGTH) return;
+    const entry = readEntry({ path, order: look.order, colors: look.colors });
+    if (entry === null) return;
     try {
-      const others = (await this.entries()).filter((item) => item.path !== path);
-      const empty = look.order.length === 0 && Object.keys(look.colors).length === 0;
-      const files = empty ? others : [{ path, order: look.order, colors: look.colors, at: this.now() }, ...others];
-      files.sort((a, b) => b.at - a.at);
-      await this.kv.writeData(TAB_LOOK_KEY, { files: files.slice(0, MAX_REMEMBERED_FILES) });
+      await this.kv.writeData(tabLookKey(path), entry);
     } catch (error: unknown) {
       this.log("tab order could not be saved", error);
     }

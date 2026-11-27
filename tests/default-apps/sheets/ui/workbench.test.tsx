@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
-import { TAB_LOOK_KEY } from "../../../../home/apps/sheets/src/ui/sheet-tabs-model";
+import { tabLookKey } from "../../../../home/apps/sheets/src/ui/sheet-tabs-model";
 import { flush, gridOf, pick, renderWithWorkbook } from "./harness";
 
 afterEach(cleanup);
@@ -151,10 +151,10 @@ describe("Sheets tabs", () => {
     expect(tabs()).toEqual(["Totals", "Sheet1"]);
     await pick("Options for Totals", "Colour: Green");
     await flush();
-    const stored = app.bridge.kv[TAB_LOOK_KEY] as { files: Array<{ path: string; order: string[]; colors: Record<string, string> }> };
+    const stored = app.bridge.kv[tabLookKey("Budget.xlsx")] as { path: string; order: string[]; colors: Record<string, string> };
     const totalsId = session.sheets().find((sheet) => sheet.name === "Totals")!.id;
-    expect(stored.files[0]).toMatchObject({ path: "Budget.xlsx", colors: { [totalsId]: "green" } });
-    expect(stored.files[0]!.order[0]).toBe(totalsId);
+    expect(stored).toMatchObject({ path: "Budget.xlsx", colors: { [totalsId]: "green" } });
+    expect(stored.order[0]).toBe(totalsId);
     expect(screen.getByRole("tab", { name: "Totals" }).parentElement?.className).toContain("sheets-tab-color--green");
 
     await pick("Options for Totals", "Delete");

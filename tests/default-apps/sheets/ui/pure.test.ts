@@ -6,7 +6,7 @@ import { MAX_IMPORT_AREA, parsePastedTable } from "../../../../home/apps/sheets/
 import { goToNames, resolveGoTo } from "../../../../home/apps/sheets/src/ui/name-box";
 import { changeDecimals, presetOf } from "../../../../home/apps/sheets/src/ui/number-format";
 import { selectionStats } from "../../../../home/apps/sheets/src/ui/selection-stats";
-import { EMPTY_LOOK, TAB_LOOK_KEY, TabLookStore, moveTab, orderedSheets, pruneLook, setTabColor } from "../../../../home/apps/sheets/src/ui/sheet-tabs-model";
+import { EMPTY_LOOK, LEGACY_TAB_LOOK_KEY, TabLookStore, moveTab, orderedSheets, pruneLook, setTabColor } from "../../../../home/apps/sheets/src/ui/sheet-tabs-model";
 import { harness } from "../session/fakes";
 
 async function sessionWith(build: (wb: ReturnType<typeof createXlsx>, sheet: string) => void) {
@@ -131,13 +131,22 @@ describe("sheet tabs model", () => {
     expect(pruneLook(look, sheets.slice(1))).toEqual({ order: ["c", "b"], colors: {} });
   });
 
-  it("persists per file with a cap and survives bad stored data", async () => {
-    const data: Record<string, unknown> = { [TAB_LOOK_KEY]: { files: [{ path: "x.xlsx", order: [1, "b"], colors: { b: "nope", a: "red" } }] } };
-    const store = new TabLookStore({ readData: async (k) => data[k], writeData: async (k, v) => void (data[k] = v) });
+  it("persists per file, reads the earlier list, and survives bad stored data", async () => {
+    const legacy = { files: [{ path: "x.xlsx", order: [1, "b"], colors: { b: "nope", a: "red" } }] };
+    const data: Record<string, unknown> = { [LEGACY_TAB_LOOK_KEY]: legacy };
+    const store = new TabLookStore({ readData: async (k) => data[k] ?? null, writeData: async (k, v) => void (data[k] = v) });
     expect(await store.load("x.xlsx")).toEqual({ order: ["b"], colors: { a: "red" } });
-    for (let i = 0; i < 60; i++) await store.save(`f${i}.xlsx`, { order: ["a"], colors: {} });
-    expect((data[TAB_LOOK_KEY] as { files: unknown[] }).files).toHaveLength(50);
-    expect(await store.load("f59.xlsx")).toEqual({ order: ["a"], colors: {} });
+    for (let i = 0; i < 3; i++) await store.save(`f${i}.xlsx`, { order: ["a"], colors: {} });
+    expect(await store.load("f2.xlsx")).toEqual({ order: ["a"], colors: {} });
+    // Saving never rewrites the earlier list, and each key holds one file's tabs.
+    expect(data[LEGACY_TAB_LOOK_KEY]).toBe(legacy);
+    expect(Object.keys(data).filter((key) => /^sheet_tabs_v2_[0-9a-f]{16}$/.test(key))).toHaveLength(3);
+    // Clearing a file's tabs is stored too, so the earlier list does not bring them back.
+    await store.save("x.xlsx", EMPTY_LOOK);
+    expect(await store.load("x.xlsx")).toEqual(EMPTY_LOOK);
+    // At most 256 sheets per file are kept.
+    await store.save("big.xlsx", { order: Array.from({ length: 300 }, (_, i) => `s${i}`), colors: {} });
+    expect((await store.load("big.xlsx")).order).toHaveLength(256);
     const broken = new TabLookStore({ readData: async () => Promise.reject(new Error("down")) });
     expect(await broken.load("x.xlsx")).toEqual(EMPTY_LOOK);
   });
