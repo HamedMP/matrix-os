@@ -314,14 +314,14 @@ export function fetchChatDetail(
   }
   // Recovery reads supply a deadline that covers every wake attempt.
   const deadline = timeoutMs === undefined ? undefined : createRequestTimeout(timeoutMs);
-  return fetchAuthenticatedResponse({
+  return fetchAuthenticatedJson({
     url: url + "&routineReceiptVersion=1",
     token: clerkToken,
+    schema: CanonicalChatDetailResponseSchema,
     errorMessage: CHAT_DETAIL_ERROR,
     timeoutMs,
     signal: deadline?.signal,
-  }, async (response) => CanonicalChatDetailResponseSchema.parse(await response.json()))
-    .finally(() => deadline?.cancel());
+  }).finally(() => deadline?.cancel());
 }
 
 /**
