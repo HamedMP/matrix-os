@@ -57,9 +57,8 @@ export function useCanonicalChatDetail(chatId: string | null) {
     queryKey: detailQueryKey,
     enabled: authEnabled && Boolean(computer) && Boolean(chatId),
     queryFn: async () => {
-      const token = await getToken();
-      if (!token || !computer || !chatId) throw new Error("Chat unavailable.");
-      const snapshot = await fetchChatDetail(token, `${HOSTED_GATEWAY_URL}${computer.gatewayPath}`, chatId);
+      if (!computer || !chatId) throw new Error("Chat unavailable.");
+      const snapshot = await fetchChatDetail(getToken, `${HOSTED_GATEWAY_URL}${computer.gatewayPath}`, chatId);
       // Streamed content may have moved the cache past this snapshot while it
       // was in flight; replacing it would rewind the text on screen.
       const cached = queryClient.getQueryData<CanonicalChatDetailResponse>(detailQueryKey);

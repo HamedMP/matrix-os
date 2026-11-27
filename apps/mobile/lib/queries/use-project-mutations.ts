@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
-import { useActiveGateway, type GatewaySession } from "@/lib/queries/use-active-gateway";
+import { useActiveGateway } from "@/lib/queries/use-active-gateway";
 import {
   archiveProject,
   createProject,
@@ -24,10 +24,10 @@ function useProjectListWrites() {
   const projectsKey = mobileQueryKeys.projects(gateway.userId, gateway.computerKey);
 
   return {
-    requireSession: async (): Promise<GatewaySession> => {
+    requireSession: async () => {
       const session = await gateway.session();
       if (!session) throw new ProjectRequestError("unavailable");
-      return session;
+      return { requestToken: session.getToken ?? session.token, gatewayUrl: session.gatewayUrl };
     },
     /** Applies a confirmed change to the list, if the list has been loaded. */
     write: (change: (projects: ProjectSummary[]) => ProjectSummary[]) => {
@@ -60,8 +60,8 @@ export function useCreateProject() {
   const { requireSession, write, confirmed } = useProjectListWrites();
   return useMutation({
     mutationFn: async (input: CreateProjectInput) => {
-      const { token, gatewayUrl } = await requireSession();
-      return createProject(token, gatewayUrl, input);
+      const { requestToken, gatewayUrl } = await requireSession();
+      return createProject(requestToken, gatewayUrl, input);
     },
     ...confirmed,
     onSuccess: (project: ProjectSummary) => write((projects) => movedToTop(projects, project)),
@@ -73,8 +73,8 @@ export function useRenameProject() {
   const { requireSession, write, confirmed } = useProjectListWrites();
   return useMutation({
     mutationFn: async ({ slug, name }: { slug: string; name: string }) => {
-      const { token, gatewayUrl } = await requireSession();
-      return renameProject(token, gatewayUrl, slug, name);
+      const { requestToken, gatewayUrl } = await requireSession();
+      return renameProject(requestToken, gatewayUrl, slug, name);
     },
     ...confirmed,
     onSuccess: (project: ProjectSummary) => write((projects) => movedToTop(projects, project)),
@@ -90,8 +90,8 @@ export function useArchiveProject() {
   const { requireSession, write, confirmed } = useProjectListWrites();
   return useMutation({
     mutationFn: async (slug: string) => {
-      const { token, gatewayUrl } = await requireSession();
-      return archiveProject(token, gatewayUrl, slug);
+      const { requestToken, gatewayUrl } = await requireSession();
+      return archiveProject(requestToken, gatewayUrl, slug);
     },
     ...confirmed,
     onSuccess: (project: ProjectSummary) => write((projects) => projects.filter((candidate) => candidate.id !== project.id)),

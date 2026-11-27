@@ -29,7 +29,7 @@ export function useRetryChatTurn() {
     mutationFn: async ({ chatId, turnId, baseRevision, clientRequestId }: RetryChatTurnInput) => {
       const session = await gateway.session();
       if (!session) throw new Error(RETRY_ERROR);
-      return retryChatTurn(session.token, session.gatewayUrl, chatId, turnId, { clientRequestId, baseRevision });
+      return retryChatTurn(session.getToken ?? session.token, session.gatewayUrl, chatId, turnId, { clientRequestId, baseRevision });
     },
     onError: () => warningHaptic(),
     // Not awaited, so the button is released as soon as the request is.

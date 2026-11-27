@@ -95,7 +95,7 @@ describe("useCancelRun", () => {
         .resolves.toEqual(aborted);
     });
 
-    expect(mockCancelChatRun).toHaveBeenCalledWith("session-token", gatewayUrl, "chat_one", "run_one", "req_stop1");
+    expect(mockCancelChatRun).toHaveBeenCalledWith(expect.any(Function), gatewayUrl, "chat_one", "run_one", "req_stop1");
     await waitFor(() => expect(result.current.detail).toBe("stopped"));
     await waitFor(() => expect(result.current.chats).toBe("stopped"));
   });
@@ -108,7 +108,7 @@ describe("useCancelRun", () => {
       await result.current.cancel.mutateAsync({ chatId: "chat_one", runId: "run_one" });
     });
 
-    expect(mockCancelChatRun).toHaveBeenCalledWith("session-token", gatewayUrl, "chat_one", "run_one", "req_minted");
+    expect(mockCancelChatRun).toHaveBeenCalledWith(expect.any(Function), gatewayUrl, "chat_one", "run_one", "req_minted");
   });
 
   it("is released as soon as the server answers, without waiting for the re-read", async () => {
