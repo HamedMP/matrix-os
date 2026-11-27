@@ -16,7 +16,7 @@
   },
   "dependencies": {
     "@hono/node-server": "^1.19.15",
-    "hono": "^4.12.25",
+    "hono": "^4.13.16",
     "undici": "7.30.1",
     "zod": "^4.6.6"
   },
