@@ -8,6 +8,7 @@ import {createBotRoutineExecution,type BotRoutineExecution} from "../bots/routin
 import {BotStateError} from "../bots/repositories/shared.js";
 import { createBotInputHistoryReader } from "../bots/historical-input.js";
 import { createSharedAttachmentSource } from "../bots/shared-integration-attachment.js";
+import { createGoogleBrokerRuntime } from './google-data.js';
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -376,6 +377,8 @@ export async function startBots(options: {
         ensureWorkspace: botId => ensureBotWorkspace(options.homePath, botId), now: options.now }),
       platform: options.routineActionPlatform, now: options.now }) : undefined;
   recoveryRegistry = registry;
+  const googleData = await createGoogleBrokerRuntime({ database: options.repository.kysely, registry,
+    ...(options.integrations ? { transport: options.integrations } : {}) });
   let brokerTool: import('../bots/broker-actions.js').BotBrokerActions['callTool'] = async () => { throw new Error('Bot broker not registered'); };
   const jevTools = options.jev ? createBotJevTools({ agents: options.agents, recipes, workflow: options.jev,
     signalFor: binding => registry.inferenceSignal(binding) ?? undefined,
@@ -486,6 +489,7 @@ export async function startBots(options: {
     events: { publish: (binding, event) => isManagedPiBinding(binding) ? managed.events.publish(binding, event) : orchestrator.eventSink.publish(binding, event) },
     tools: qualifiedTools,
     inference: {
+      googleData: googleData.inference,
       ...(isolatedChat ? { isolatedChat } : {}),
       ...(options.matrixAnthropic ? { matrixAnthropic: options.matrixAnthropic } : {}),
       ...(chatgptPlanPeers ? { chatgptPlan: chatgptPlanPeers } : {}),
@@ -507,6 +511,7 @@ export async function startBots(options: {
   brokerTool = actions.callTool;
   forgetRun = (runId) => { githubDeveloper.closeRun(runId); actions.forgetRun(runId); };
   const unregister = registerBotBroker(host, actions);
+  googleData.start();
   const adapter = createMatrixBotChatProviderAdapter({
     orchestrator, routines, proposals: routineCli?.proposals,
     stopRuntime: (runtimeHandle) => admission.release(runtimeHandle),
@@ -549,6 +554,7 @@ export async function startBots(options: {
       await reconciler.stop();
       await nativeTasks?.close();
       await managed.close();
+      await googleData.close();
     },
   };
 }

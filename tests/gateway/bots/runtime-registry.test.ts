@@ -22,6 +22,28 @@ const binding = (overrides: Partial<BotRuntimeBinding> = {}): BotRuntimeBinding 
 });
 
 describe("bot runtime registry", () => {
+  it("never lets heartbeats extend an original Google grant deadline", async () => {
+    vi.useFakeTimers(); vi.setSystemTime(0);
+    const registry = new BotRuntimeRegistry({ ttlMs: 1000 }); const value = binding(); registry.bind(value);
+    const signal = registry.inferenceSignal(value)!;
+    expect(registry.limitLifetime(value, 2000)).toBe(true);
+    for (let i = 0; i < 3; i++) { await vi.advanceTimersByTimeAsync(500); expect(registry.renew(value)).toBe(true); }
+    expect(registry.limitLifetime(value, 9000)).toBe(true);
+    await vi.advanceTimersByTimeAsync(499); expect(registry.lookupRun(value)).toEqual(value);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(signal.aborted).toBe(true); expect(registry.lookupRun(value)).toBeNull();
+    expect(registry.renew(value)).toBe(false); expect(registry.limitLifetime(value, 9000)).toBe(false);
+  });
+  it("cannot apply a deadline to another owner or replacement generation", async () => {
+    vi.useFakeTimers(); vi.setSystemTime(0);
+    const registry = new BotRuntimeRegistry({ ttlMs: 1000 }); const value = binding(); registry.bind(value);
+    expect(registry.limitLifetime({ ...value, ownerId: "other" }, 100)).toBe(false);
+    expect(registry.limitLifetime(value, 200)).toBe(true);
+    registry.bind({ ...value, executionGeneration: "5" });
+    await vi.advanceTimersByTimeAsync(250);
+    expect(registry.lookupRun({ ...value, executionGeneration: "5" })).not.toBeNull(); registry.shutdown();
+  });
+
   it("blocks recovery only for the same owner and Chat until release or expiry", () => {
     let now = 0;
     const registry = new BotRuntimeRegistry({ now: () => now, ttlMs: 1000 });

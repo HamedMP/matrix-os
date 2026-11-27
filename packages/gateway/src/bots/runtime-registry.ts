@@ -107,7 +107,7 @@ export function isManagedPiBinding(binding: PiRuntimeBinding): binding is Manage
 }
 export type PiInferenceIdentity = Pick<PiRuntimeBinding, "runtimeHandle" | "executionGeneration" | "runId" | "ownerId" | "chatId">;
 export type PiRuntimeRenewalIdentity = PiInferenceIdentity & Pick<PiRuntimeBinding, "rootFingerprint">;
-type StoredBinding = PiRuntimeBinding & { expiresAt: number; inference: AbortController; releaseTracking?: () => void };
+type StoredBinding = PiRuntimeBinding & { expiresAt: number; hardExpiresAt?: number; deadlineTimer?: ReturnType<typeof setTimeout>; inference: AbortController; releaseTracking?: () => void };
 
 export class BotRuntimeRegistryError extends Error {
   constructor(readonly code: "capacity_exceeded" | "invalid_binding") {
@@ -216,7 +216,7 @@ export class BotRuntimeRegistry {
     this.sweep();
     const entry = this.entries.get(runtimeHandle.data);
     if (!entry || entry.executionGeneration !== generation.data) return null;
-    const { expiresAt: _expiresAt, inference: _inference, releaseTracking: _releaseTracking, ...binding } = entry;
+    const { expiresAt: _expiresAt, hardExpiresAt: _hardExpiresAt, deadlineTimer: _deadlineTimer, inference: _inference, releaseTracking: _releaseTracking, ...binding } = entry;
     return structuredClone(binding);
   }
 
@@ -236,7 +236,24 @@ export class BotRuntimeRegistry {
     if (!entry || entry.inference.signal.aborted || entry.executionGeneration !== generation.data
       || entry.ownerId !== input.ownerId || entry.chatId !== input.chatId || entry.runId !== input.runId
       || entry.rootFingerprint !== input.rootFingerprint) return false;
-    entry.expiresAt = this.now() + this.ttlMs;
+    entry.expiresAt = Math.min(this.now() + this.ttlMs, entry.hardExpiresAt ?? Infinity);
+    return true;
+  }
+
+  /** A pinned grant may shorten this exact run's lifetime; heartbeats cannot extend it. */
+  limitLifetime(input: PiInferenceIdentity, deadline: number): boolean {
+    const binding = this.lookupRun(input);
+    if (!binding || binding.ownerId !== input.ownerId || binding.chatId !== input.chatId || !Number.isSafeInteger(deadline)) return false;
+    const entry = this.entries.get(binding.runtimeHandle)!;
+    if (deadline <= this.now()) { this.release(binding.runtimeHandle); return false; }
+    if (entry.hardExpiresAt !== undefined && entry.hardExpiresAt <= deadline) return true;
+    entry.hardExpiresAt = deadline;
+    entry.expiresAt = Math.min(entry.expiresAt, deadline);
+    if (entry.deadlineTimer) clearTimeout(entry.deadlineTimer);
+    entry.deadlineTimer = setTimeout(() => {
+      if (this.entries.get(binding.runtimeHandle) === entry) this.release(binding.runtimeHandle);
+    }, Math.min(deadline - this.now(), 2_147_483_647));
+    entry.deadlineTimer.unref?.();
     return true;
   }
 
@@ -283,6 +300,7 @@ export class BotRuntimeRegistry {
     if (runtimeHandle.success) {
       const entry = this.entries.get(runtimeHandle.data);
       this.entries.delete(runtimeHandle.data);
+      if (entry?.deadlineTimer) clearTimeout(entry.deadlineTimer);
       entry?.inference.abort();
       try { entry?.releaseTracking?.(); }
       catch (error: unknown) { console.warn("[bots] runtime tracking release failed", error instanceof Error ? error.name : "UnknownError"); }

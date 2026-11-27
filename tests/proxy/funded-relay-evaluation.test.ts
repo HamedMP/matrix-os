@@ -49,7 +49,10 @@ function requestBody(overrides: Record<string, unknown> = {}): string {
 function request(body = requestBody()): RequestInit {
   return {
     method: "POST",
-    headers: { "content-type": "application/json", "x-api-key": CREDENTIAL },
+    headers: { "content-type": "application/json", "x-api-key": CREDENTIAL,
+      "cf-aig-skip-cache": "false", "cf-skip-cache": "false", "cf-aig-cache-ttl": "3600",
+      "cf-cache-ttl": "3600", "cf-aig-cache-key": "private-caller-cache-key",
+      "cf-aig-collect-log-payload": "true", "cf-aig-metadata": "private-caller-metadata" },
     body,
   };
 }
@@ -212,6 +215,10 @@ describe("funded Jev evaluation relay", () => {
         .toBe("Bearer cloudflare-workers-ai-token-123456789012345");
       expect(new Headers(init?.headers).get("cf-aig-gateway-id")).toBe("matrix");
       expect(new Headers(init?.headers).get("cf-aig-collect-log-payload")).toBe("false");
+      expect(new Headers(init?.headers).get("cf-aig-skip-cache")).toBe("true");
+      for (const name of ["cf-skip-cache", "cf-aig-cache-ttl", "cf-cache-ttl", "cf-aig-cache-key", "cf-aig-metadata"]) {
+        expect(new Headers(init?.headers).has(name)).toBe(false);
+      }
       expect(init?.redirect).toBe("error");
       expect(body).toEqual({
         model: "typesafe/jev",

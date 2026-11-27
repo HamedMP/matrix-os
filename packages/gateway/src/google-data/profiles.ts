@@ -9,7 +9,7 @@ export const GoogleDataTimeSchema = z.iso.datetime();
 const endpoint = z.string().max(2048).refine(value => {
   try {
     const url = new URL(value);
-    return url.href === value && !url.username && !url.password && !url.search && !url.hash
+    return url.href === value && !url.username && !url.password && (url.search === '' || url.search === '?beta=true') && !url.hash
       && (url.protocol === 'https:' || (url.protocol === 'http:' && ['127.0.0.1', '[::1]'].includes(url.hostname)));
   } catch (error) { if (!(error instanceof TypeError)) throw error; return false; }
 }, 'Exact canonical endpoint required');
