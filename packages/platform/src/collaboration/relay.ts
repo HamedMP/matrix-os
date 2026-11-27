@@ -65,7 +65,8 @@ const FORWARDED_REQUEST_HEADERS = new Set([
   SESSION_HEADER, REQUEST_HEADER, RELAY_RUNTIME_HEADER, OWNER_RUNTIME_HEADER,
   COLLABORATION_CLIENT_REQUEST_ID_HEADER, COLLABORATION_EXPECTED_REVISION_HEADER, COLLABORATION_EXPECTED_MEMBER_REVISION_HEADER,
 ]);
-const FORWARDED_RESPONSE_HEADERS = new Set(["content-type", "content-length", "cache-control"]);
+/** `x-matrix-app-access` marks a view-only shared app's entry document (ENG-579). */
+const FORWARDED_RESPONSE_HEADERS = new Set(["content-type", "content-length", "cache-control", "x-matrix-app-access"]);
 const FORWARDED_SOCKET_HEADERS = new Set(["connection", "upgrade", "sec-websocket-key", "sec-websocket-version", "sec-websocket-protocol", "sec-websocket-extensions"]);
 const MAX_HEADER_VALUE = 8_192;
 const MAX_RAW_PATH = 2_048;
