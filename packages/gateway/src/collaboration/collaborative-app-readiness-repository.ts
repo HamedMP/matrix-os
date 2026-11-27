@@ -200,7 +200,7 @@ export class CollaborativeAppReadinessRepository {
         .where("revision", "=", input.expectedRevision)
         .returningAll().executeTakeFirst();
       if (!row) throw new CollaborativeAppReadinessRepositoryError("conflict");
-      if (row.status === "ready") await publishCollaborativeAppRecovery(trx, row, timestamp);
+      if (row.status === "ready" || row.status === "blocked") await publishCollaborativeAppRecovery(trx, row, timestamp);
       return toRecord(row);
     });
   }

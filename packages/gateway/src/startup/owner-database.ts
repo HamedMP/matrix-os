@@ -163,7 +163,7 @@ export async function initializeOwnerDatabaseServices(
       await bootstrapChatSharing(chatRepository.kysely);
       if (options.collaborationConfig) {
         const construction = await constructOwnerCollaboration({
-          homePath: options.homePath, chatRepository, appRegistry, canvasRepository,
+          homePath: options.homePath, chatRepository, appRegistry, canvasRepository, kvStore,
           collaborationConfig: options.collaborationConfig,
           providerSnapshotReader: options.providerSnapshotReader,
           codingAgentProjectManager: options.codingAgentProjectManager,
