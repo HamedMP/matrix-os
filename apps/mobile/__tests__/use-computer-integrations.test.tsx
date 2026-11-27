@@ -21,7 +21,7 @@ it("wires selected method and authenticated capability discovery to the current 
   const view = renderHook(() => useComputerIntegrations(), { wrapper });
   await waitFor(() => expect(view.result.current.computer?.handle).toBe("pilot"));
   await act(async () => { await view.result.current.gmailConnectionOptions(); await view.result.current.startConnection("gmail", { connectionMethod: "pipedream", label: "Work" }); });
-  expect(mockGmailOptions).toHaveBeenCalledWith("owner-token", "https://app.matrix-os.com/vm/pilot?runtime=preview-1");
-  expect(mockCreateConnect).toHaveBeenCalledWith("owner-token", "https://app.matrix-os.com/vm/pilot?runtime=preview-1", "gmail", { connectionMethod: "pipedream", label: "Work" });
+  expect(mockGmailOptions).toHaveBeenCalledWith(mockGetToken, "https://app.matrix-os.com/vm/pilot?runtime=preview-1");
+  expect(mockCreateConnect).toHaveBeenCalledWith(mockGetToken, "https://app.matrix-os.com/vm/pilot?runtime=preview-1", "gmail", { connectionMethod: "pipedream", label: "Work" });
   view.unmount(); client.clear();
 });
