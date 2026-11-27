@@ -1,3 +1,4 @@
+import "./install-stdio-guard";
 import { claimPreviewProfile } from "./preview-pair-profile-lease";
 import { createPreviewStartupAcknowledgement } from "./preview-pair-startup-ack";
 import { acknowledgeReopenedPreview } from "./preview-pair-reopen";
@@ -10,6 +11,7 @@ import { createFileDownloadService } from "./files/file-download-service";
 import { createOrganizationDriveTransferService } from "./files/organization-drive-transfer";
 import { readDriveUploadFile, saveDriveDownloadFile } from "./files/organization-drive-file-io";
 import { registerTerminalClipboardIpc } from "./files/terminal-clipboard";
+import { showDesktopNotification } from "./notifications";
 import { pathToFileURL } from "node:url";
 import { createNativeChatgptPlanService } from "./chatgpt-plan/service";
 import { fetchNativePlan } from "./chatgpt-plan/transport";
@@ -596,12 +598,10 @@ if (!gotLock) {
           shown: false,
         }),
         onReady: (version) => {
-          if (!Notification.isSupported()) return;
-          new Notification({
+          showDesktopNotification(Notification, {
             title: "Matrix OS update ready",
             body: `Use Update in the sidebar to restart and install version ${version}.`,
-            silent: false,
-          }).show();
+          });
         },
       }, { previewContext: previewContext ?? undefined });
       handleUpdateBeforeQuit = createUpdateAwareBeforeQuit({
@@ -848,14 +848,13 @@ if (!gotLock) {
           app.setBadgeCount(count);
         },
         notify: ({ threadId, title, body }) => {
-          if (!Notification.isSupported()) return;
-          const notification = new Notification({ title, body, silent: false });
-          notification.on("click", () => {
-            mainWindow?.show();
-            mainWindow?.focus();
-            sendEvent("notification:clicked", { threadId });
+          showDesktopNotification(Notification, { title, body }, {
+            onClick: () => {
+              mainWindow?.show();
+              mainWindow?.focus();
+              sendEvent("notification:clicked", { threadId });
+            },
           });
-          notification.show();
         },
         onRuntimeChanged: (slot) => {
           cancelDesktopPairing?.();

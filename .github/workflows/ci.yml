@@ -444,12 +444,10 @@ jobs:
           node-version: 20
           cache: pnpm
 
+      # This Node 20 package lane never launches Electron. Electron 42+ has no
+      # install-time download, so the install stays binary-free by default.
       - run: pnpm install --frozen-lockfile
         if: needs.changes.outputs.should_run == 'true'
-        env:
-          # This Node 20 package lane never launches Electron. Keep desktop
-          # download availability out of the CLI's compatibility boundary.
-          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
 
       - name: Build sync client
         if: needs.changes.outputs.should_run == 'true'
@@ -977,6 +975,13 @@ jobs:
             throw new Error('Shared Browser profile qualification requires executed passing tests with zero skips');
           }
           JS
+
+      # Electron 42+ downloads its binary on first launch instead of in
+      # postinstall. Fetch it once here so parallel E2E files do not race the
+      # lazy download and a download failure is reported as its own step.
+      - name: Install Electron binary
+        if: needs.changes.outputs.should_run == 'true' && matrix.lane == 'electron'
+        run: pnpm --dir desktop exec install-electron --no
 
       - name: Run native Electron terminal presentation regression
         if: needs.changes.outputs.should_run == 'true' && matrix.lane == 'electron'

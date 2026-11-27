@@ -86,7 +86,6 @@
       "better-sqlite3",
       "node-pty",
       "esbuild",
-      "electron",
       "sharp",
       "unrs-resolver",
       "@next/swc-linux-arm64-musl",
@@ -110,7 +109,7 @@
       },
       "electron-vite@*": {
         "dependencies": {
-          "electron": "^41.0.3"
+          "electron": "45.4.1"
         }
       },
       "node-pty@*": {
