@@ -1,3 +1,4 @@
+import { createOutlookStore, type OutlookStore } from "./integrations/outlook/store.js";
 import { observePostgresPoolErrors } from "@matrix-os/observability/postgres";
 import { Kysely, PostgresDialect, sql, type InsertObject } from "kysely";
 import pg from "pg";
@@ -255,7 +256,7 @@ export interface PlatformDb extends CustomMcpApprovalStore, CustomMcpExternalApp
 // Factory
 // ---------------------------------------------------------------------------
 
-export function createPlatformDb(opts: string | { dialect: any; now?: () => Date }): PlatformDb {
+export function createPlatformDb(opts: string | { dialect: any; now?: () => Date }): PlatformDb & { outlook: OutlookStore } {
   let kysely: Kysely<PlatformDatabase>;
   let pool: pg.Pool | null = null;
 
@@ -300,7 +301,8 @@ export function createPlatformDb(opts: string | { dialect: any; now?: () => Date
     };
   }
 
-  const db: PlatformDb = {
+  const db: PlatformDb & { outlook: OutlookStore } = {
+    outlook: createOutlookStore(kysely),
     ...createCustomMcpApprovalStore(kysely, typeof opts === "string" ? undefined : opts.now),
     ...createCustomMcpExternalApprovalStore(kysely, typeof opts === "string" ? undefined : opts.now),
     async migrate(): Promise<void> {
