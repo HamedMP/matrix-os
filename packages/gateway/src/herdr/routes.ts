@@ -34,7 +34,9 @@ export function createHerdrRoutes(options: {
   app.get("/", ownerOnly, async (c) => {
     if (!options.adapter) return c.json(DISABLED);
     try {
-      return c.json(await options.adapter.list());
+      const view = c.req.query("view");
+      if (view !== undefined && view !== "chat-control") return c.json({ error: "invalid_request" }, 400);
+      return c.json(view === "chat-control" ? await options.adapter.listForChatControl() : await options.adapter.list());
     } catch (error: unknown) {
       console.error("[herdr] listing failed", error instanceof Error ? error.name : "unknown_error");
       return c.json(DISABLED);

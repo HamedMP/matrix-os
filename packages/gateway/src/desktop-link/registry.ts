@@ -168,6 +168,15 @@ export function createDesktopLinkRegistry(options: DesktopLinkRegistryOptions = 
       const link = links.get(deviceId);
       return link !== undefined && !link.closed;
     },
+    /** Pin a Chat operation to this live link, including a fresh read of the owner's pairing. */
+    async chatLease(deviceId: string) {
+      const link = await current(deviceId);
+      if (!link) return null;
+      return {
+        current: () => links.get(deviceId) === link && !link.closed,
+        validate: async () => await current(deviceId) === link,
+      };
+    },
     /** The adapter for a device that is linked now, or null. */
     adapter(deviceId: string): HerdrAdapter | null {
       return this.online(deviceId) ? adapterFor(deviceId) : null;

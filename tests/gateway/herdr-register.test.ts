@@ -14,6 +14,13 @@ describe("Herdr sessions gateway switch", () => {
     expect(createHerdrSessionsFromEnv({ MATRIX_HERDR: "1" })).toBeNull();
   });
 
+  it("keeps a shared managed Preview off even when a self-host binary is configured", () => {
+    expect(createHerdrSessionsFromEnv({
+      MATRIX_PREVIEW_RUNTIME: "true", MATRIX_HERDR: "on", MATRIX_HERDR_CORE_BIN: "/unexpected/binary",
+    })).toBeNull();
+    expect(createHerdrSessionsFromEnv({ MATRIX_HANDLE: "pv-123-13572468", MATRIX_HERDR: "on" })).toBeNull();
+  });
+
   it("uses MATRIX_HERDR_CORE_BIN and reports a missing binary as not-installed", async () => {
     const exitListeners = process.listenerCount("exit");
     const adapter = createHerdrSessionsFromEnv({ MATRIX_HERDR: "on", MATRIX_HERDR_CORE_BIN: join(tmpdir(), "missing-herdr-core") });

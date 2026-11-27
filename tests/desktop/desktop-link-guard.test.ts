@@ -412,7 +412,7 @@ describe("Desktop link guard: what reaches the computer", () => {
     return decode(g.fromCore(reply(sent, result)))[0]!.body as { id: number; result: Record<string, unknown> };
   }
 
-  it("lists this device's terminals by address, state, title and status only", async () => {
+  it("lists only this device's terminals and exposes an opaque selection revision without its working directory", async () => {
     const answer = await answered("terminal.list", {}, {
       terminals: [
         terminalRecord("t1", 100, { status: { state: "working", msg: "thinking", extra: "x" } }),
@@ -423,7 +423,7 @@ describe("Desktop link guard: what reaches the computer", () => {
     });
     expect(answer).toEqual({ jsonrpc: "2.0", id: 5, result: {
       terminals: [
-        { address: "t1", state: "live", title: "Claude", status: { state: "working", msg: "thinking" } },
+        { address: "t1", state: "live", title: "Claude", selection_revision: expect.stringMatching(/^[a-f0-9]{64}$/), status: { state: "working", msg: "thinking" } },
         { address: "t3", state: "live", title: "Terminal" },
       ],
       hidden_finished: 0, machines: [],
@@ -530,6 +530,24 @@ describe("Desktop link guard: the owner's consent", () => {
     const { g } = await wired({ consent: c, script: (method) => (method === "terminal.list" ? list({ address: "t7", state: "live" }) : undefined) });
     for (const id of [3, 4]) expect((await settle(await g.push(call(id, "terminal.kill", { terminal: "t7" })))).forwarded).toHaveLength(1);
     expect(asks).toHaveLength(2);
+  });
+
+  it("checks the selected revision before asking for terminal access and never passes the revision to the core", async () => {
+    let created = 100;
+    const { c, asks } = consent([true]);
+    let autoAnswer = false;
+    const { g } = await wired({ consent: c, script: (method) => autoAnswer && method === "terminal.list" ? list(terminalRecord("t7", created)) : undefined });
+    const [sent] = ids((await settle(await g.push(call(20, "terminal.list", {})))).forwarded);
+    const listing = decode(g.fromCore(reply(sent, list(terminalRecord("t7", created)))))[0]!.body as {
+      result: { terminals: Array<{ selection_revision: string }> };
+    };
+    autoAnswer = true;
+    const params = { terminal: "t7", cols: 80, rows: 24, selection_revision: listing.result.terminals[0]!.selection_revision };
+    const allowed = (await settle(await g.push(call(21, "terminal.attach", params)))).forwarded;
+    expect((decode(allowed)[0]!.body as { params: unknown }).params).toEqual({ terminal: "t7", cols: 80, rows: 24 });
+    created++;
+    expect((await settle(await g.push(call(22, "terminal.attach", params)))).forwarded).toEqual([]);
+    expect(asks).toHaveLength(1);
   });
 
   it("refuses an approved terminal that became another one while the owner answered", async () => {

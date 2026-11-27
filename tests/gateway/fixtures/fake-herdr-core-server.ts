@@ -3,6 +3,7 @@ import type { HcSocket } from "@matrix-os/herdr-core-client/client";
 import { encodeFrame, HC_FRAME, HcFrameDecoder } from "@matrix-os/herdr-core-client/protocol";
 
 export interface FakeTerminal {
+  identity?: { pid: number; created_ms: number; cwd: string };
   title: string;
   status: { state: string; msg?: string } | null;
   /** What a viewer is painted with on attach. */
@@ -40,7 +41,7 @@ export function createFakeHerdrCore(options: { version?: string; methods?: strin
     if (call.method === "terminal.list") {
       if (listFailure) { reply(socket, call.id, { error: { code: -1, message: "x", data: { kind: listFailure } } }); return; }
       reply(socket, call.id, { result: { terminals: [...terminals.entries()].map(([address, terminal]) => ({
-        address, state: "live", title: terminal.title, status: terminal.status, created_ms: terminal.createdMs,
+        address, state: "live", title: terminal.title, status: terminal.status, created_ms: terminal.createdMs, ...terminal.identity,
       })) } });
       return;
     }
@@ -52,7 +53,7 @@ export function createFakeHerdrCore(options: { version?: string; methods?: strin
       viewers.push({ terminal: id, channel, socket, credits: 0 });
       // The reply and the first paint share one read, as the real core may do.
       socket.emit("data", Buffer.concat([
-        encodeFrame(0, HC_FRAME.DATA, Buffer.from(JSON.stringify({ jsonrpc: "2.0", id: call.id, result: { channel } }))),
+        encodeFrame(0, HC_FRAME.DATA, Buffer.from(JSON.stringify({ jsonrpc: "2.0", id: call.id, result: { channel, terminal: { address: id, state: "live", created_ms: terminal.createdMs } } }))),
         encodeFrame(channel, HC_FRAME.DATA, Buffer.from(terminal.screen)),
       ]));
       return;

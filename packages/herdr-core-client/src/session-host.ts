@@ -5,7 +5,7 @@
 // starts a shell, attaches and ends terminals, and does nothing else to it.
 import { describeError } from "#describe-error";
 import { connectHc, HcVersionMismatchError, type HcConnection, type HcHello, type HcSocket } from "#client";
-import { createHcSessions, type AttachmentSlots, type HcSessionSink } from "#sessions";
+import { createHcSessions, discoverHerdrMachines, type AttachmentSlots, type HcSessionSink } from "#sessions";
 
 /** The only methods ever sent to a core the app does not own (FR-014). */
 export const HERDR_SESSION_METHODS = ["terminal.list", "terminal.run", "terminal.attach", "terminal.kill"] as const;
@@ -86,6 +86,7 @@ export function createHerdrSessionHost(options: HerdrSessionHostOptions, sink: H
   // Calls the core has not answered yet: a connection waiting on one is never idle.
   let pending = 0;
   let connectedAt = 0;
+  let generation = 0;
   // Ends a stream that is still waiting for its handshake; set only while one is.
   let abandonPending: (() => void) | null = null;
 
@@ -170,6 +171,7 @@ export function createHerdrSessionHost(options: HerdrSessionHostOptions, sink: H
       .then((opened) => {
         if (disposed) { opened.close(); throw shutDown(); }
         connection = opened;
+        generation += 1;
         status = "ready";
         connectedAt = now();
         opened.onDisconnect(() => {
@@ -202,6 +204,20 @@ export function createHerdrSessionHost(options: HerdrSessionHostOptions, sink: H
   return {
     status: (): HerdrSessionHostStatus => status,
     list: sessions.list,
+    async discoverTerminals() {
+      const core = await ensure();
+      const reply = await core.call("terminal.list", {});
+      if (disposed || connection !== core) throw shutDown();
+      return discoverHerdrMachines(reply);
+    },
+    /** Inspect through the restricted, current connection. Never rebind a process to another core. */
+    async listProcesses() {
+      const core = await ensure();
+      const terminals = await sessions.listProcesses(core);
+      if (disposed || connection !== core) throw shutDown();
+      return { terminals, generation };
+    },
+    isCurrentGeneration: (expected: number) => !disposed && connection !== null && generation === expected,
 
     /**
      * Starts that computer's own shell in its home directory, or (`launch`) a
