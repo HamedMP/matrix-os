@@ -17,6 +17,24 @@ const sourceProjection = sql`jsonb_build_object('originId',s.origin_id,'googleAc
   'consentId',s.consent_id,'profileId',s.profile_id,'profileRevision',s.profile_revision,
   'purposeId',s.purpose_id,'expiresAt',s.expires_at,'state',s.state)`;
 
+/** Old Side Chat answers had no per-message origin. Remove answers in the affected
+ * owner threads and keep the owner's questions. Caller holds the context fence. */
+async function eraseSideChatAnswers<DB>(tx: Transaction<DB>, ownerId: string, chatIds?: readonly string[]) {
+  if (chatIds?.length === 0) return;
+  const schema = await sql<{ installed: boolean }>`SELECT to_regclass('chat_side_messages') IS NOT NULL AS installed`.execute(tx);
+  if (schema.rows[0]?.installed === false) return;
+  const eligible = chatIds === undefined
+    ? sql`SELECT m.chat_id FROM google_context_markers m
+        WHERE m.owner_id=${ownerId} AND m.state='deleted' AND EXISTS (
+          SELECT 1 FROM chat_side_threads t JOIN chat_side_messages a ON a.thread_id=t.id
+          WHERE t.chat_id=m.chat_id AND t.owner_type='personal' AND t.owner_id=m.owner_id AND a.role='assistant'
+        ) ORDER BY m.chat_id LIMIT 100`
+    : sql`SELECT unnest(${chatIds}::text[])`;
+  await sql`DELETE FROM chat_side_messages a USING chat_side_threads t
+    WHERE a.thread_id=t.id AND a.role='assistant' AND t.owner_type='personal' AND t.owner_id=${ownerId}
+      AND t.chat_id IN (${eligible})`.execute(tx);
+}
+
 /** Trusted metadata composition only: marking is classification, never P1 approval.
  * Revalidate current P1 after waits and before collection/context assembly/egress.
  * Unknown references require host handling; null means never classified, not proof of non-Google content. */
@@ -142,10 +160,19 @@ export function createGoogleContextStore<DB>(db: Kysely<DB>, options: GoogleCont
             SELECT 1 FROM google_context_origins o JOIN google_context_sources s ON s.origin_id=o.origin_id
             WHERE o.context_id=m.id AND s.owner_id=${ownerId} AND s.google_account_id=${account})
           RETURNING chat_id,revision`.execute(tx)).rows;
+        await eraseSideChatAnswers(tx, ownerId, contexts.map(context => context.chat_id));
         const revisions: Record<string, number> = Object.create(null);
         for (const context of contexts) revisions[context.chat_id] = context.revision;
         return { originIds: origins.map(row => row.origin_id), chatIds: contexts.map(row => row.chat_id), revisions,
           coverage: "registered-contexts-only" as const };
+      });
+    },
+    /** Repair closed markers left by older builds after their account links were removed. */
+    async cleanupClosedDerivedSurfaces(ownerId: string) {
+      contextOpaque.parse(ownerId);
+      await boundedProvenanceTransaction(db, async tx => {
+        await lockGoogleContexts(tx);
+        await eraseSideChatAnswers(tx, ownerId);
       });
     },
     /** Full owner-account lifecycle only, after host revocation/quiescence and actual content deletion.

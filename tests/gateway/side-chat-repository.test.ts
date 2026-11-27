@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createTestPGlite } from "../helpers/pglite-test-helper.js";
+import { createGoogleContextStore } from "../../packages/gateway/src/google-data/runtime/contexts.js";
 import { ChatRepository } from "../../packages/gateway/src/chat/repository.js";
 import { SideChatNotFoundError, SideChatRepository } from "../../packages/gateway/src/chat/side-chat-repository.js";
 
@@ -49,4 +50,32 @@ it("keeps newest main context when the side transcript is long", async () => {
   const generate = vi.fn(async (prompt: string) => ({ text: "Answer" }));
   await side.ask(owner, chat.chat.id, { clientRequestId: "req_side_latest", text: "Question" }, generate);
   expect(generate.mock.calls[0]?.[0]).toContain("RECENT_MAIN_CONTEXT");
+});
+
+it("withholds Side Chat on Gmail-marked parents and erases old answers without erasing owner questions", async () => {
+  const { chat } = await chats.create(owner, { id: "chat_side_gmail", clientRequestId: "req_side_gmail", title: "Main" });
+  const { chat: ordinary } = await chats.create(owner, { id: "chat_side_ordinary", clientRequestId: "req_side_ordinary", title: "Other" });
+  const generate = vi.fn(async () => ({ text: "Synthetic Side Chat answer" }));
+  for (const id of [chat.id, ordinary.id]) {
+    await side.create(owner, id);
+    await side.ask(owner, id, { clientRequestId: "req_old_answer", text: "Owner question" }, generate);
+  }
+  const contexts = createGoogleContextStore(chats.kysely);
+  await contexts.migrate();
+  const account = "10000000-0000-4000-8000-000000000001";
+  const deadline = new Date(Date.now() + 60_000).toISOString();
+  await contexts.mark({ ownerId: owner.ownerId, chatId: chat.id, googleAccountId: account,
+    consentId: "consent_side", profileId: "profile_side", profileRevision: 1, purposeId: "assistant",
+    expiresAt: deadline, retentionDeadline: deadline });
+
+  await expect(side.read(owner, chat.id)).rejects.toThrow();
+  await expect(side.ask(owner, chat.id, { clientRequestId: "req_new_answer", text: "Question" }, generate)).rejects.toThrow();
+  expect(generate).toHaveBeenCalledTimes(2);
+  await contexts.beginPurge(owner.ownerId, account);
+
+  const rows = await chats.kysely.selectFrom("chat_side_messages as m")
+    .innerJoin("chat_side_threads as t", "t.id", "m.thread_id").select("m.role")
+    .where("t.chat_id", "=", chat.id).execute();
+  expect(rows).toEqual([{ role: "user" }]);
+  expect((await side.read(owner, ordinary.id)).messages).toHaveLength(2);
 });
