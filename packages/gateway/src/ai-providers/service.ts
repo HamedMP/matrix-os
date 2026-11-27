@@ -9,6 +9,7 @@ import {
   AiProviderReadinessSchema,
   AiProviderSnapshotV3Schema,
   FUNDED_AI_READINESS_TIMEOUTS,
+  MATRIX_BEDROCK_SOURCE_ID,
   isFundedCloudflarePreviewCohortModel,
   isFundedCloudflarePreviewModel,
   AiProviderDriverViewSchema,
@@ -455,10 +456,19 @@ export class AiProviderService implements AiProviderSnapshotReader {
       "matrix",
       now,
     );
-    const discoveredFundedModelIds = funded?.discoverableModelIds ?? funded?.allowedModelIds ?? [];
-    const catalog = buildBundledModelCatalog()
+    // Platform policy/readiness is the authority for configured Matrix relay
+    // models. Extend only existing reviewed descriptors; this adds the relay
+    // path without inventing vendor, capabilities, or display metadata.
+    const observedMatrixIncludedModelIds = [...new Set([
+      ...(funded?.discoverableModelIds ?? []),
+      ...(funded?.allowedModelIds ?? []),
+    ])];
+    const effectiveBedrockModelIds = new Set((funded?.upstreamPreference?.effectiveBedrockModelIds ?? [])
+      .map((modelId) => modelId.replace(/^anthropic\//, "")));
+    const catalog = buildBundledModelCatalog(observedMatrixIncludedModelIds,
+      new Set(observedMatrixIncludedModelIds.filter(modelId => effectiveBedrockModelIds.has(modelId))))
       .filter(model => !isFundedCloudflarePreviewModel(model.id)
-        || isFundedCloudflarePreviewCohortModel(model.id) && discoveredFundedModelIds.includes(model.id));
+        || isFundedCloudflarePreviewCohortModel(model.id) && observedMatrixIncludedModelIds.includes(model.id));
     const observeFundedSource = (sourceId: string) => fundedSourceObservation(
       eligibleModelsForSource(sourceId, catalog).map(model => model.id), matrixReadiness, funded,
     );
@@ -473,6 +483,8 @@ export class AiProviderService implements AiProviderSnapshotReader {
         eligibleModelIds, discoverableModelIds, policyVersion: AI_PROVIDER_CATALOG_VERSION,
       }, readiness)];
     });
+    const { eligibleModelIds: bedrockEligible, discoverableModelIds: bedrockDiscoverable, readiness: bedrockReadiness } =
+      observeFundedSource(MATRIX_BEDROCK_SOURCE_ID);
 
     const accessSources: AiAccessSourceView[] = [
       sourceFromReadiness({
@@ -483,6 +495,11 @@ export class AiProviderService implements AiProviderSnapshotReader {
         policyVersion: AI_PROVIDER_CATALOG_VERSION,
       }, fundedSources.matrix_cloudflare.readiness),
       ...previewSources,
+      ...(bedrockDiscoverable.length === 0 ? [] : [sourceFromReadiness({
+        id: MATRIX_BEDROCK_SOURCE_ID, displayName: "Matrix AI", fundingKind: "matrix_included", vendor: "amazon",
+        accountLabel: "Included", eligibleModelIds: bedrockEligible, discoverableModelIds: bedrockDiscoverable,
+        policyVersion: AI_PROVIDER_CATALOG_VERSION,
+      }, bedrockReadiness)]),
       sourceFromReadiness({
         id: "matrix_included",
         displayName: "Matrix AI",
@@ -578,7 +595,10 @@ export class AiProviderService implements AiProviderSnapshotReader {
       .filter((source) => source.vendor === "anthropic")
       .map((source) => {
         const sourceModels = eligibleModelsForSource(source.id, catalog)
-          .filter((model) => source.eligibleModelIds.includes(model.id));
+          .filter((model) => source.eligibleModelIds.includes(model.id))
+          // The Claude SDK speaks Anthropic Messages. Bedrock is exposed only
+          // by the relay's OpenAI-compatible endpoint and remains available to Matrix Pi.
+          .filter((model) => source.id !== "matrix_included" || !effectiveBedrockModelIds.has(model.id));
         // A persisted selection is an explicit route request. If the selected
         // access source cannot serve it, fail closed instead of silently
         // replacing it with a cheaper or differently governed model.
@@ -657,6 +677,7 @@ export class AiProviderService implements AiProviderSnapshotReader {
       contractVersion: 3,
       ...(matrixAnthropicConnection ? { matrixAnthropicConnection } : {}),
       ...(nativeHarnessCatalog ? { nativeHarnessCatalog } : {}),
+      ...(funded?.upstreamPreference ? { upstreamPreference: funded.upstreamPreference } : {}),
       revision: 0,
       refreshedAt: now,
       accessSources,

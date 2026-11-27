@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { isSupportedGenericHarnessCredentialRoute } from "@matrix-os/contracts";
 import type {
+  FundedAiUpstreamPreferenceView,
   ProviderAccount,
   ProviderAccessSource,
   ProviderGatewayPolicy,
@@ -20,6 +21,7 @@ export function RemovalDialog({
   sources,
   harnesses,
   gatewayPolicy,
+  upstreamPreference,
   disabled,
   canRemove,
   canReassign,
@@ -31,6 +33,7 @@ export function RemovalDialog({
   sources: ProviderAccessSource[];
   harnesses: ProviderHarnessInstance[];
   gatewayPolicy: ProviderGatewayPolicy | null;
+  upstreamPreference?: FundedAiUpstreamPreferenceView;
   disabled: boolean;
   canRemove: boolean;
   canReassign: boolean;
@@ -41,7 +44,7 @@ export function RemovalDialog({
   const sourceSupportsEveryRoute = (source: ProviderAccessSource) => (
     source.providerId === account.providerId
     && affectedHarnesses.every((harness) => source.eligibleModelIds.includes(harness.route.modelId)
-      && isSupportedGenericHarnessCredentialRoute({ ...harness, accessSourceId: source.id }, source))
+      && isSupportedGenericHarnessCredentialRoute({ ...harness, accessSourceId: source.id }, source, { upstreamPreference }))
     && (source.kind !== "matrix_gateway"
       || (gatewayPolicy !== null
         && affectedHarnesses.every((harness) => gatewayPolicyAllowsModel(gatewayPolicy, harness.route.modelId))))

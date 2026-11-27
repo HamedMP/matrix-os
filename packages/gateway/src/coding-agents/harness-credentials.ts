@@ -86,7 +86,7 @@ export function createCodingHarnessCredentialResolver(options: {
       // allowlisted by the adapter and receives no gateway/provider secrets.
       return { env: {} };
     }
-    if (!isPortableGenericHarnessCredentialRoute(harness, source)) throw new Error(SAFE_ERROR);
+    if (!isPortableGenericHarnessCredentialRoute(harness, source, snapshot)) throw new Error(SAFE_ERROR);
     const managedGlm = harness.accessSourceId === "matrix_cloudflare";
     const parsedSource = KernelCredentialAccessSourceIdSchema.safeParse(managedGlm ? "matrix_included" : harness.accessSourceId);
     if (!parsedSource.success) throw new Error(SAFE_ERROR);

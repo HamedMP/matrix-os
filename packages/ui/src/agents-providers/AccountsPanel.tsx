@@ -2,6 +2,7 @@ import { resolvedWorkflowRowStatus } from "./workflow-row-status.js";
 import { type ReactNode, useState } from "react";
 import { isSupportedGenericHarnessCredentialRoute } from "@matrix-os/contracts";
 import type {
+  FundedAiUpstreamPreferenceView,
   ProviderAccount,
   ProviderAccessSource,
   ProviderConnectionAttempt,
@@ -76,6 +77,7 @@ export function AccountsPanel({
   sources,
   allHarnesses,
   gatewayPolicy,
+  upstreamPreference,
   attempt,
   disabled,
   canLogin,
@@ -96,6 +98,7 @@ export function AccountsPanel({
   sources: ProviderAccessSource[];
   allHarnesses: ProviderHarnessInstance[];
   gatewayPolicy: ProviderGatewayPolicy | null;
+  upstreamPreference?: FundedAiUpstreamPreferenceView;
   attempt: ProviderConnectionAttempt | null;
   disabled: boolean;
   canLogin: boolean;
@@ -487,6 +490,7 @@ export function AccountsPanel({
           )}
           harnesses={allHarnesses}
           gatewayPolicy={gatewayPolicy}
+          upstreamPreference={upstreamPreference}
           disabled={disabled}
           canRemove={canRemove}
           canReassign={canReassign}

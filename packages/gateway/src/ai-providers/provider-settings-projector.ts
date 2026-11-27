@@ -11,6 +11,7 @@ import { projectMissingCredentialAuth } from "./provider-missing-credential-auth
 import { qualifyGeneratedNativeSource } from "./provider-generated-native-route.js";
 import {
   ProviderSettingsSnapshotSchema,
+  isEffectiveBedrockModel,
   isLocallyObservedNativeHarnessRoute,
   type AiProviderReadiness,
   type AiProviderSnapshotV3,
@@ -250,7 +251,9 @@ function projectHarness(input: {
   // Keep historical saved intent, but never project Matrix funding as native
   // Claude authentication or execution authority.
   const forbiddenNativeMatrix = input.stored.harness === "claude" && source?.kind === "matrix_gateway";
-  const sourceEligible = !forbiddenNativeMatrix && source?.providerId === input.stored.route.providerId
+  const unsupportedBedrockRoute = (input.stored.harness === "pi" || input.stored.harness === "opencode")
+    && source !== undefined && isEffectiveBedrockModel(input.canonical, source.id, input.stored.route.modelId);
+  const sourceEligible = !forbiddenNativeMatrix && !unsupportedBedrockRoute && source?.providerId === input.stored.route.providerId
     && source.eligibleModelIds.includes(input.stored.route.modelId)
     && (source.kind !== "harness_profile" || source.harness === input.stored.harness)
     && (source.kind !== "matrix_gateway" || input.allowedGatewayModels.has(input.stored.route.modelId));
@@ -259,7 +262,7 @@ function projectHarness(input: {
       || (input.stored.harness === "hermes" && source?.kind === "harness_profile"));
   const managedCatalogRoute = source?.kind === "matrix_gateway"
     && source.providerId === input.stored.route.providerId && !generatedNative;
-  const routeCatalogUnavailable = !routeAvailable
+  const routeCatalogUnavailable = !routeAvailable || unsupportedBedrockRoute
     || (input.catalogUnavailable && !managedCatalogRoute);
   const nativeCredentialRoute = input.stored.harness === "pi" || input.stored.harness === "opencode"
     || (input.stored.harness === "hermes" && source?.kind === "harness_profile");
@@ -557,6 +560,7 @@ export async function projectProviderSettings(input: {
     accounts,
     harnesses,
     gatewayPolicy,
+    ...(input.canonical.upstreamPreference ? { upstreamPreference: input.canonical.upstreamPreference } : {}),
   });
 }
 

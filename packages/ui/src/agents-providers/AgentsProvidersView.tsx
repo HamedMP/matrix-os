@@ -207,6 +207,7 @@ export function AgentsProvidersView({
           onUsageHistory={onLoadUsageHistory ? () => setHistoryLoader(() => onLoadUsageHistory) : undefined}
           disabled={mutationsDisabled} canSetBudget={supports("set_gateway_budget")}
           canSetAllowlist={supports("set_gateway_allowlist")} canAddCredit={supports("add_credit")}
+          canSetUpstream={supports("set_gateway_upstream")} upstreamPreference={snapshot.upstreamPreference}
           onMutate={onMutate} onAddCredit={onAddCredit} onRefresh={refreshSettings}
           selectedAgentName={harness?.displayName ?? null}
           selectedAgentEnabled={harness?.enabled ?? false}
@@ -342,6 +343,7 @@ export function AgentsProvidersView({
                   <AccountsPanel harness={harness} accounts={snapshot.accounts.filter(item => harness.accountIds.includes(item.id))}
                     nativeObservationTime={nativeObservationTime}
                     sources={snapshot.accessSources} allHarnesses={snapshot.harnesses} gatewayPolicy={snapshot.gatewayPolicy}
+                    upstreamPreference={snapshot.upstreamPreference}
                     attempt={connectionAttempt?.harnessInstanceId === harness.id ? connectionAttempt : null}
                     disabled={mutationsDisabled} canLogin={workflowPermission !== "forbidden" && supports("start_login")} canLogout={supports("logout_account")} canRemove={supports("remove_account")} canReassign={supports("reassign_account")}
                     onMutate={onMutate} onOpenTerminal={onOpenTerminal} onOpenBrowser={onOpenBrowser} onSetupHarness={onSetupHarness} onRefresh={refreshSettings} />

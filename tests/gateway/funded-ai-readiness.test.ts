@@ -30,6 +30,62 @@ function setup() {
 }
 
 describe("funded AI readiness", () => {
+  it("carries the platform preference and exact effective Bedrock models into canonical readiness", async () => {
+    const f = setup();
+    f.getFundingSummary.mockImplementationOnce(async () => ({ ...f.state, chatAvailability: {
+      contractVersion: 1 as const, asOf: f.state.funding.asOf,
+      eligibleBalanceMicrousd: f.state.funding.creditBalanceMicrousd,
+      availableBalanceMicrousd: f.state.funding.remainingBalanceMicrousd,
+    }, upstreamPreference: {
+      selectedUpstream: "aws_bedrock" as const,
+      effectiveUpstream: "aws_bedrock" as const,
+      effectiveBedrockModelIds: ["anthropic/claude-sonnet-5"],
+      revision: 2, updatedAt: now.toISOString(), validThrough: "2026-10-01T00:00:00.000Z",
+    } }));
+    await expect(f.reader.read()).resolves.toMatchObject({ upstreamPreference: {
+      effectiveUpstream: "aws_bedrock",
+      effectiveBedrockModelIds: ["anthropic/claude-sonnet-5"],
+    } });
+  });
+
+  const customBedrockModels = ["anthropic/claude-opus-5", "bedrock/amazon.nova-pro-v1:0"];
+  it.each(customBedrockModels)("re-reads platform upstream truth after readiness refreshes %s", async (modelId) => {
+    const f = setup();
+    f.state.policy.allowedModelIds = [modelId];
+    const preference = (effective: "cloudflare" | "aws_bedrock") => ({
+      selectedUpstream: "aws_bedrock" as const, effectiveUpstream: effective,
+      effectiveBedrockModelIds: effective === "aws_bedrock" ? [modelId] : [],
+      revision: 2, updatedAt: now.toISOString(), validThrough: "2026-10-01T00:00:00.000Z",
+    });
+    let summaryReads = 0;
+    f.getFundingSummary.mockImplementation(async () => ({ ...f.state, chatAvailability: {
+      contractVersion: 1 as const, asOf: f.state.funding.asOf,
+      eligibleBalanceMicrousd: f.state.funding.creditBalanceMicrousd,
+      availableBalanceMicrousd: f.state.funding.remainingBalanceMicrousd,
+    }, upstreamPreference: preference(summaryReads++ === 0 ? "cloudflare" : "aws_bedrock") }));
+    await expect(f.reader.read()).resolves.toMatchObject({ readiness: { state: "ready" },
+      allowedModelIds: [modelId.replace(/^anthropic\//, "")], upstreamPreference: {
+        effectiveUpstream: "aws_bedrock", effectiveBedrockModelIds: [modelId],
+      } });
+    expect(f.getFundingSummary).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(customBedrockModels)("does not expose %s when the synchronized preference remains Cloudflare", async (modelId) => {
+    const f = setup();
+    f.state.policy.allowedModelIds = [modelId];
+    const upstreamPreference = { selectedUpstream: "aws_bedrock" as const,
+      effectiveUpstream: "cloudflare" as const, effectiveBedrockModelIds: [], revision: 2,
+      updatedAt: now.toISOString(), validThrough: "2026-10-01T00:00:00.000Z" };
+    f.getFundingSummary.mockImplementation(async () => ({ ...f.state, chatAvailability: {
+      contractVersion: 1 as const, asOf: f.state.funding.asOf,
+      eligibleBalanceMicrousd: f.state.funding.creditBalanceMicrousd,
+      availableBalanceMicrousd: f.state.funding.remainingBalanceMicrousd,
+    }, upstreamPreference }));
+    await expect(f.reader.read()).resolves.toMatchObject({ readiness: { state: "unavailable" },
+      allowedModelIds: [], upstreamPreference });
+    expect(f.getFundingSummary).toHaveBeenCalledTimes(2);
+  });
+
   it("does not infer Chat credit from speech-only or legacy aggregate funds", async () => {
     const f = setup();
     for (const chatAvailability of [undefined, { contractVersion: 1, asOf: now.toISOString(), eligibleBalanceMicrousd: 0, availableBalanceMicrousd: 0 }]) {

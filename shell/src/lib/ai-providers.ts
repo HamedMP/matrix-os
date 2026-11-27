@@ -101,10 +101,11 @@ export async function loadAiProviderSnapshot(options: {
   refresh?: boolean;
 } = {}): Promise<AiProviderSnapshotV3> {
   const fetcher = options.fetcher ?? fetch;
-  const suffix = options.refresh ? "?refresh=true" : "";
+  const query = new URLSearchParams({ includeUpstreamPreference: "true" });
+  if (options.refresh) query.set("refresh", "true");
   let response: Response;
   try {
-    response = await fetcher(`${getGatewayUrl()}/api/ai/providers${suffix}`, {
+    response = await fetcher(`${getGatewayUrl()}/api/ai/providers?${query}`, {
       signal: AbortSignal.timeout(READ_TIMEOUT_MS),
     });
   } catch (_error) {

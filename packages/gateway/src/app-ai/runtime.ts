@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { z } from "zod/v4";
 import { generateAppText } from "@matrix-os/kernel";
 import type { AiProviderSnapshotV3, ProviderSettingsSnapshot } from "@matrix-os/contracts";
-import { AppAiRequestSchema, AppAiRouteSelectionSchema, type AppAiRequest, type AppAiRoutes, type AppAiRoute, type AppAiRouteSelection } from "@matrix-os/contracts";
+import { MATRIX_BEDROCK_SOURCE_ID, AppAiRequestSchema, AppAiRouteSelectionSchema, isEffectiveBedrockModel, type AppAiRequest, type AppAiRoutes, type AppAiRoute, type AppAiRouteSelection } from "@matrix-os/contracts";
 import { buildKernelCredentialLaunch, resolveKernelCredentialSources } from "../kernel-credentials.js";
 import type { MatrixFundedCredentialProvider } from "../funded-ai-credential-manager.js";
 import type { FundedAdmissionQueue } from "../funded-ai/admission-queue.js";
@@ -124,8 +124,14 @@ export function createRuntimeAppAiRoutes(options: RuntimeOptions) {
             if (route.availability !== "available")
                 continue;
             if (route.accessSourceId === CHATGPT_PLAN_SOURCE) continue;
-            if (route.accessSourceId === "matrix_cloudflare" || route.accessSourceId === "matrix_included") {
-                if (!options.fundedCredentialProvider?.enabled || !managedReadiness.some(entry=>entry.accessSourceId===route.accessSourceId && entry.modelId===route.modelId && entry.availability==="available")) {
+            if (route.accessSourceId === "matrix_cloudflare" || route.accessSourceId === "matrix_included"
+                || route.accessSourceId === MATRIX_BEDROCK_SOURCE_ID) {
+                // App AI currently consumes non-streaming JSON; the Bedrock relay
+                // deliberately accepts only bounded streaming chat completions.
+                if (route.accessSourceId === MATRIX_BEDROCK_SOURCE_ID
+                    || isEffectiveBedrockModel(canonical, route.accessSourceId, route.modelId)
+                    || !options.fundedCredentialProvider?.enabled
+                    || !managedReadiness.some(entry=>entry.accessSourceId===route.accessSourceId && entry.modelId===route.modelId && entry.availability==="available")) {
                     route.availability = "unavailable";
                     route.readiness = "unavailable";
                     route.reason = "completion_unavailable";

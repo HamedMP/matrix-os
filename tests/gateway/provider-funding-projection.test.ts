@@ -6,11 +6,168 @@ import type { AiProviderReadiness } from "@matrix-os/contracts";
 import { AiProviderService } from "../../packages/gateway/src/ai-providers/service.js";
 import { initialProviderSettingsConfiguration } from "../../packages/gateway/src/ai-providers/provider-settings-persistence.js";
 import { projectProviderSettings } from "../../packages/gateway/src/ai-providers/provider-settings-projector.js";
+import { applyProviderConfigurationMutation } from "../../packages/gateway/src/ai-providers/provider-settings-mutations.js";
 import { managedPiChatInstances } from "../../packages/gateway/src/chat/managed-chat-catalog.js";
 import { readProviderSettingsEnrichment } from "../../packages/gateway/src/ai-providers/provider-settings-enrichment.js";
+import { createCodingHarnessCredentialResolver } from "../../packages/gateway/src/coding-agents/harness-credentials.js";
 
 const now = new Date("2026-10-02T08:00:00.000Z");
 describe("owner-funded discovery projection", () => {
+  it("adds a configured healthy Bedrock model to Provider V3 through the Matrix relay path", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "provider-bedrock-model-"));
+    const readiness: AiProviderReadiness = { state: "ready", checkedAt: now.toISOString(),
+      staleAfter: "2026-10-02T08:00:30.000Z", action: "none", safeReason: null };
+    const service = new AiProviderService({ homePath, now: () => now,
+      fundedCredentialProvider: { enabled: true, maxRunMs: 600_000,
+        getCredential: vi.fn(), invalidate: () => {}, close: () => {} },
+      driverInventory: async () => [],
+      fundedReadinessReader: { read: async () => ({ readiness,
+        allowedModelIds: ["claude-opus-5"], discoverableModelIds: ["claude-opus-5"],
+        upstreamPreference: {
+          selectedUpstream: "aws_bedrock", effectiveUpstream: "aws_bedrock",
+          effectiveBedrockModelIds: ["anthropic/claude-opus-5"], revision: 2,
+          updatedAt: now.toISOString(), validThrough: "2026-10-31T00:00:00.000Z",
+        },
+      }) } });
+    try {
+      const canonical = await service.getSnapshot();
+      expect(canonical.models.find(model => model.id === "claude-opus-5")).toMatchObject({
+        vendor: "anthropic",
+        eligibleAccessSourceIds: expect.arrayContaining(["matrix_included"]),
+        dataPolicies: expect.arrayContaining([{
+          accessSourceId: "matrix_included", route: "matrix_relay",
+          disclosureKey: "matrix-cloudflare-anthropic",
+        }]),
+      });
+      expect(canonical.accessSources.find(source => source.id === "matrix_included"))
+        .toMatchObject({ state: "ready", eligibleModelIds: ["claude-opus-5"] });
+      expect(canonical.upstreamPreference).toMatchObject({
+        effectiveUpstream: "aws_bedrock", effectiveBedrockModelIds: ["anthropic/claude-opus-5"],
+      });
+      expect(canonical.instances.find(instance => instance.id === "kernel_matrix_included"))
+        .toMatchObject({ modelIds: [], defaultModelId: null });
+      expect(managedPiChatInstances(canonical, now.getTime())[0]?.models)
+        .toContainEqual(expect.objectContaining({ id: "claude-opus-5", availability: "available" }));
+    } finally { service.close(); await rm(homePath, { recursive: true, force: true }); }
+  });
+
+  it("exposes the qualified Nova Pro route in Settings and on the managed Matrix Chat picker", async () => {
+    const modelId = "bedrock/amazon.nova-pro-v1:0";
+    const homePath = await mkdtemp(join(tmpdir(), "provider-bedrock-nova-"));
+    const checkedAt = now.toISOString();
+    const staleAfter = "2026-10-02T08:00:30.000Z";
+    const readiness: AiProviderReadiness = { state: "ready", checkedAt, staleAfter, action: "none", safeReason: null };
+    let effective = false;
+    const service = new AiProviderService({ homePath, now: () => now,
+      fundedCredentialProvider: { enabled: true, maxRunMs: 600_000,
+        getCredential: vi.fn(), invalidate: () => {}, close: () => {} },
+      driverInventory: async () => [],
+      fundedReadinessReader: { read: async () => ({ readiness,
+        allowedModelIds: [modelId], discoverableModelIds: [modelId],
+        upstreamPreference: {
+          selectedUpstream: "aws_bedrock", effectiveUpstream: effective ? "aws_bedrock" : "cloudflare",
+          effectiveBedrockModelIds: effective ? [modelId] : [], revision: 2, updatedAt: checkedAt,
+          validThrough: "2026-10-31T00:00:00.000Z",
+        },
+      }) },
+    });
+    try {
+      expect((await service.getSnapshot()).models.some(model => model.id === modelId)).toBe(false);
+      effective = true;
+      const canonical = await service.getSnapshot({ refresh: true });
+      const settings = await projectProviderSettings({ canonical, config: initialProviderSettingsConfiguration(canonical),
+        now, supportedActions: [], fundedPolicyAuthoritative: true,
+        fundedPolicy: { enabled: true, globalRevision: 1, runtimeRevision: 1, allowedModelIds: [modelId],
+          monthlyBudgetMicrousd: 5_000_000, checkedAt, staleAfter } });
+      expect(settings.matrixModelInventory).toContainEqual(expect.objectContaining({ id: modelId, displayName: "Nova Pro" }));
+      expect(managedPiChatInstances(canonical, now.getTime())[0]?.models).toContainEqual(expect.objectContaining({
+        id: modelId, availability: "available", supportsVision: false,
+      }));
+      expect(canonical.instances.some(instance => instance.driverId === "kernel" && instance.modelIds.includes(modelId))).toBe(false);
+    } finally { service.close(); await rm(homePath, { recursive: true, force: true }); }
+  });
+
+  it.each(["pi", "opencode"] as const)("keeps Bedrock in managed Matrix AI while excluding it from the Anthropic %s launcher", async (harness) => {
+    const homePath = await mkdtemp(join(tmpdir(), "provider-bedrock-coding-"));
+    const checkedAt = now.toISOString();
+    const staleAfter = "2026-10-02T08:00:30.000Z";
+    const readiness: AiProviderReadiness = { state: "ready", checkedAt, staleAfter, action: "none", safeReason: null };
+    const service = new AiProviderService({ homePath, now: () => now,
+      fundedCredentialProvider: { enabled: true, maxRunMs: 600_000,
+        getCredential: vi.fn(), invalidate: () => {}, close: () => {} },
+      driverInventory: async () => [{ id: harness, displayName: harness, kind: "cli", installState: "installed",
+        health: "ready", capabilities: ["tools"], setupActions: [] }],
+      fundedReadinessReader: { read: async () => ({ readiness,
+        allowedModelIds: ["claude-opus-5", "claude-sonnet-5"], discoverableModelIds: ["claude-opus-5", "claude-sonnet-5"],
+        upstreamPreference: {
+          selectedUpstream: "aws_bedrock", effectiveUpstream: "aws_bedrock",
+          effectiveBedrockModelIds: ["anthropic/claude-opus-5"], revision: 2,
+          updatedAt: checkedAt, validThrough: "2026-10-31T00:00:00.000Z",
+        },
+      }) },
+    });
+    try {
+      const canonical = await service.getSnapshot();
+      const config = initialProviderSettingsConfiguration(canonical);
+      const route = { kind: "configurable" as const, providerId: "anthropic", modelId: "claude-opus-5" };
+      config.harnesses = [{ id: `harness_${harness}`, driverId: harness, harness, displayName: harness,
+        accentColor: null, enabled: true, accessSourceId: "matrix_included", selectedAccountId: null, route }];
+      const settings = await projectProviderSettings({ canonical, config, now, supportedActions: [],
+        fundedPolicyAuthoritative: true, fundedPolicy: { enabled: true, globalRevision: 1, runtimeRevision: 1,
+          allowedModelIds: ["anthropic/claude-opus-5", "anthropic/claude-sonnet-5"], monthlyBudgetMicrousd: 5_000_000,
+          checkedAt, staleAfter } });
+
+      expect(settings.accessSources.find(source => source.id === "matrix_included")?.eligibleModelIds)
+        .toEqual(["claude-opus-5", "claude-sonnet-5"]);
+      expect(settings.gatewayPolicy?.allowedModelIds).toEqual(["claude-opus-5", "claude-sonnet-5"]);
+      expect(settings.harnesses[0]).toMatchObject({ route, enabled: false, accessSourceId: null });
+      expect(settings.matrixModelInventory).toContainEqual(expect.objectContaining({ id: "claude-opus-5" }));
+      expect(managedPiChatInstances(canonical, now.getTime())[0]?.models)
+        .toContainEqual(expect.objectContaining({ id: "claude-opus-5", availability: "available" }));
+
+      const resolveCredentialLaunch = vi.fn();
+      const launch = createCodingHarnessCredentialResolver({ harness, homePath,
+        settings: { getSnapshot: async () => settings }, resolveCredentialLaunch });
+      await expect(launch()).rejects.toThrow("Selected coding harness access is unavailable");
+      expect(resolveCredentialLaunch).not.toHaveBeenCalled();
+      expect(() => applyProviderConfigurationMutation({ config, canonical, snapshot: settings, id: () => "new_harness",
+        mutation: { type: "add_harness", harness, displayName: harness, route, accessSourceId: "matrix_included",
+          accountId: null, expectedRevision: 0, idempotencyKey: "bedrock-harness-add" },
+      })).toThrow(expect.objectContaining({ code: "invalid_route" }));
+      expect(applyProviderConfigurationMutation({ config, canonical, snapshot: settings, id: () => "cloudflare_harness",
+        mutation: { type: "add_harness", harness, displayName: harness, route: { ...route, modelId: "claude-sonnet-5" },
+          accessSourceId: "matrix_included", accountId: null, expectedRevision: 0, idempotencyKey: "cloudflare-harness-add" },
+      })).toBe(true);
+    } finally { service.close(); await rm(homePath, { recursive: true, force: true }); }
+  });
+
+  it("projects the platform-authoritative upstream preference only for an entitled owner", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "provider-upstream-preference-"));
+    const service = new AiProviderService({ homePath, now: () => now, driverInventory: async () => [] });
+    try {
+      const canonical = await service.getSnapshot();
+      const preference = {
+        selectedUpstream: "aws_bedrock" as const,
+        effectiveUpstream: "cloudflare" as const,
+        effectiveBedrockModelIds: [],
+        revision: 3,
+        updatedAt: "2026-10-02T07:59:00.000Z",
+        validThrough: "2026-10-31T00:00:00.000Z",
+      };
+      const funding = { asOf: now.toISOString(), periodStart: "2026-10-01T00:00:00.000Z", monthlyBudgetMicrousd: 2_000_000,
+        settledThisMonthMicrousd: 0, reservedMicrousd: 0, reservedThisMonthMicrousd: 0, promotionalBalanceMicrousd: 1_000_000,
+        addonBalanceMicrousd: 0, creditBalanceMicrousd: 1_000_000, remainingBalanceMicrousd: 1_000_000, remainingBudgetMicrousd: 2_000_000 };
+      const policy = { enabled: true, globalRevision: 1, runtimeRevision: 1, allowedModelIds: [], monthlyBudgetMicrousd: 2_000_000,
+        checkedAt: now.toISOString(), staleAfter: "2026-10-02T08:01:00.000Z" };
+      const enrichment = await readProviderSettingsEnrichment({ canonical, refresh: false, catalogFailureHarnesses: [],
+        fundingSummary: { getFundingSummary: async () => ({ funding, policy, upstreamPreference: preference }) } });
+      const settings = await projectProviderSettings({ canonical, config: initialProviderSettingsConfiguration(canonical), now,
+        supportedActions: ["set_gateway_upstream"], fundedPolicyAuthoritative: true, ...enrichment });
+      expect(settings.upstreamPreference).toEqual(preference);
+      expect(settings.supportedActions).toContain("set_gateway_upstream");
+    } finally { service.close(); await rm(homePath, { recursive: true, force: true }); }
+  });
+
   it("carries negotiated speech-only observation from funding reader into shared Settings without changing total credit", async () => {
     const homePath = await mkdtemp(join(tmpdir(), "provider-chat-credit-"));
     const service = new AiProviderService({ homePath, now: () => now, driverInventory: async () => [] });

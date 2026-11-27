@@ -5,6 +5,7 @@ import {
   MatrixAnthropicConnectionSchema,
   MatrixAnthropicCredentialGenerationSchema,
 } from "#matrix-anthropic-connection";
+import { FundedAiUpstreamPreferenceViewSchema } from "#funded-ai";
 
 function unique(values: readonly string[]): boolean {
   return new Set(values).size === values.length;
@@ -23,6 +24,7 @@ export const AiProviderVendorSchema = z.enum([
   "google",
   "moonshotai",
   "alibaba",
+  "amazon",
 ]);
 
 export const AiProviderReadinessStateSchema = z.enum([
@@ -274,6 +276,7 @@ export const AiProviderSnapshotV3Schema = z.object({
   contractVersion: z.literal(3),
   nativeHarnessCatalog: AiNativeHarnessCatalogSchema.optional(),
   matrixAnthropicConnection: MatrixAnthropicConnectionSchema.optional(),
+  upstreamPreference: FundedAiUpstreamPreferenceViewSchema.optional(),
   revision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
   refreshedAt: IsoTimestampSchema,
   accessSources: z.array(AiAccessSourceViewSchema).max(16),
@@ -371,3 +374,18 @@ export type AiProviderDriverView = z.infer<typeof AiProviderDriverViewSchema>;
 export type AiProviderInstanceView = z.infer<typeof AiProviderInstanceViewSchema>;
 export type AiModelDescriptorView = z.infer<typeof AiModelDescriptorViewSchema>;
 export type AiProviderSnapshotV3 = z.infer<typeof AiProviderSnapshotV3Schema>;
+
+export const MATRIX_BEDROCK_SOURCE_ID = "matrix_bedrock";
+
+/** Platform routing for an exact Matrix model on the OpenAI-compatible Bedrock relay. */
+export function isEffectiveBedrockModel(
+  snapshot: Pick<AiProviderSnapshotV3, "upstreamPreference"> | undefined,
+  accessSourceId: string,
+  modelId: string,
+): boolean {
+  if (accessSourceId !== "matrix_included" && accessSourceId !== MATRIX_BEDROCK_SOURCE_ID) return false;
+  if (snapshot?.upstreamPreference?.effectiveUpstream !== "aws_bedrock") return false;
+  const leafModelId = modelId.replace(/^anthropic\//, "");
+  return (snapshot.upstreamPreference.effectiveBedrockModelIds ?? [])
+    .some((candidate) => candidate.replace(/^anthropic\//, "") === leafModelId);
+}

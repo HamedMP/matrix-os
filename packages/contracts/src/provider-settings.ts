@@ -1,8 +1,14 @@
 import { z } from "zod/v4";
 import { canonicalReferenceId, canonicalSafeLabel } from "#canonical-chat-primitives";
 import { IsoTimestampSchema, ProviderModelReferenceSchema } from "#contract-primitives";
-import { AiProviderLocalObservationSchema } from "#ai-provider";
-import { FundedAiChatAvailabilitySchema, PreviewRequestQuotaSchema, isManagedWorkersAiModel } from "#funded-ai";
+import { AiProviderLocalObservationSchema, isEffectiveBedrockModel } from "#ai-provider";
+import {
+  FundedAiChatAvailabilitySchema,
+  FundedAiUpstreamPreferenceValueSchema,
+  FundedAiUpstreamPreferenceViewSchema,
+  PreviewRequestQuotaSchema,
+  isManagedWorkersAiModel,
+} from "#funded-ai";
 import { MatrixAnthropicConnectionSchema } from "#matrix-anthropic-connection";
 import { MATRIX_CHATGPT_PLAN_INSTANCE_ID } from "#bots/model-choice";
 
@@ -397,6 +403,7 @@ export const ProviderSettingsSupportedActionSchema = z.enum([
   "reassign_account",
   "set_gateway_budget",
   "set_gateway_allowlist",
+  "set_gateway_upstream",
   "add_credit",
   "submit_api_key",
 ]);
@@ -415,7 +422,7 @@ export const ProviderSettingsSnapshotSchema = z.object({
   revision: RevisionSchema,
   refreshedAt: IsoTimestampSchema,
   access: ProviderSettingsAccessSchema,
-  supportedActions: z.array(ProviderSettingsSupportedActionSchema).max(15),
+  supportedActions: z.array(ProviderSettingsSupportedActionSchema).max(16),
   configurationHarnessKinds: z.array(ProviderHarnessKindSchema).max(6).optional(),
   harnessCatalog: z.array(ProviderHarnessCatalogEntrySchema).length(4),
   modelProviders: z.array(ProviderModelProviderSchema).max(32),
@@ -427,6 +434,7 @@ export const ProviderSettingsSnapshotSchema = z.object({
     providerId: ProviderIdSchema, accessSourceId: ReferenceIdSchema,
   })).max(256).optional(),
   gatewayPolicy: ProviderGatewayPolicySchema.nullable(),
+  upstreamPreference: FundedAiUpstreamPreferenceViewSchema.optional(),
 }).strict().superRefine((snapshot, ctx) => {
   const collections = [
     ["modelProviders", snapshot.modelProviders.map((value) => value.id)],
@@ -467,6 +475,9 @@ export const ProviderSettingsSnapshotSchema = z.object({
     || snapshot.supportedActions.includes("set_gateway_allowlist"))
     && snapshot.gatewayPolicy === null) {
     ctx.addIssue({ code: "custom", path: ["supportedActions"], message: "Gateway policy mutations require a gateway policy" });
+  }
+  if (snapshot.supportedActions.includes("set_gateway_upstream") && !snapshot.upstreamPreference) {
+    ctx.addIssue({ code: "custom", path: ["supportedActions"], message: "Upstream mutation requires platform preference truth" });
   }
   for (const [key, ids] of collections) {
     if (!unique(ids)) ctx.addIssue({ code: "custom", path: [key], message: `Duplicate ${key} id` });
@@ -598,6 +609,10 @@ export const ProviderSettingsMutationSchema = z.discriminatedUnion("type", [
     allowedModelIds: z.array(ProviderModelReferenceSchema).max(256) }).strict().superRefine((value, ctx) => {
       if (!unique(value.allowedModelIds)) ctx.addIssue({ code: "custom", path: ["allowedModelIds"], message: "Duplicate allowed model" });
     }),
+  z.object({ type: z.literal("set_gateway_upstream"), ...MutationBase,
+    expectedUpstreamRevision: RevisionSchema,
+    selectedUpstream: FundedAiUpstreamPreferenceValueSchema,
+  }).strict(),
 ]);
 
 export const ProviderConnectionAttemptActionSchema = z.discriminatedUnion("kind", [
@@ -665,7 +680,8 @@ export type ProviderSettingsMutationResponse = z.infer<typeof ProviderSettingsMu
 
 /**
  * Returns whether a generic coding harness can receive the selected access
- * source as explicit Anthropic-compatible process credentials.
+ * source as explicit portable process credentials. Matrix Bedrock models
+ * run through the separate managed Matrix Pi worker.
  *
  * Claude subscription/OAuth profiles are intentionally excluded: those are
  * valid for Claude Code, but they do not yield a portable API key that Pi or
@@ -678,6 +694,7 @@ export function isPortableGenericHarnessCredentialRoute(
     ProviderAccessSource,
     "id" | "kind" | "fundingKind" | "providerId" | "accountId"
   > | null | undefined,
+  snapshot?: Pick<ProviderSettingsSnapshot, "upstreamPreference">,
 ): boolean {
   if ((harness.harness !== "pi" && harness.harness !== "opencode")
     || harness.route.kind !== "configurable"
@@ -693,6 +710,7 @@ export function isPortableGenericHarnessCredentialRoute(
       || (source.id === "matrix_cloudflare" && source.providerId === "cloudflare"
         && isManagedWorkersAiModel(harness.route.modelId)))
       && source.accountId === null
+      && !isEffectiveBedrockModel(snapshot, source.id, harness.route.modelId)
       && (source.fundingKind === "matrix_included" || source.fundingKind === "matrix_addon");
   }
   return source.kind === "provider_account"
@@ -729,8 +747,9 @@ export function isRunnableGenericHarnessCredentialRoute(
     ProviderAccessSource,
     "id" | "kind" | "fundingKind" | "providerId" | "accountId" | "harness"
   > | null | undefined,
+  snapshot?: Pick<ProviderSettingsSnapshot, "upstreamPreference">,
 ): boolean {
-  return isPortableGenericHarnessCredentialRoute(harness, source)
+  return isPortableGenericHarnessCredentialRoute(harness, source, snapshot)
     || isNativeGenericHarnessCredentialRoute(harness, source);
 }
 
@@ -738,6 +757,7 @@ export function isRunnableGenericHarnessCredentialRoute(
 export function isSupportedGenericHarnessCredentialRoute(
   harness: Pick<ProviderHarnessInstance, "harness" | "accessSourceId" | "route">,
   source: ProviderAccessSource | null | undefined,
+  snapshot?: Pick<ProviderSettingsSnapshot, "upstreamPreference">,
 ): boolean {
   // Paired-device authority is executable only through its managed route adapter.
   if (source?.id === MATRIX_CHATGPT_PLAN_INSTANCE_ID) return false;
@@ -746,7 +766,7 @@ export function isSupportedGenericHarnessCredentialRoute(
       || isNativeGenericHarnessCredentialRoute(harness, source);
   }
   if (harness.harness === "pi" || harness.harness === "opencode") {
-    return isRunnableGenericHarnessCredentialRoute(harness, source);
+    return isRunnableGenericHarnessCredentialRoute(harness, source, snapshot);
   }
   return true;
 }

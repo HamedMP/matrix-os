@@ -35,7 +35,7 @@ function sourceSupportsModel(
       ...harness,
       accessSourceId: source.id,
       route: { kind: "configurable", providerId: source.providerId, modelId },
-    }, source)) return false;
+    }, source, snapshot)) return false;
   if (source.kind !== "matrix_gateway") return true;
   return gatewayPolicyAllowsModel(snapshot.gatewayPolicy, modelId);
 }
@@ -83,7 +83,7 @@ export function HarnessEditor({
     && retiredManagedWorkersAiModel(harness.route.modelId) !== undefined;
   const accessSource = snapshot.accessSources.find((source) => source.id === harness.accessSourceId) ?? null;
   useLocalObservationExpiry([accessSource?.localObservation?.staleAfter, harness.localObservation?.staleAfter]);
-  const savedSourceUnsupported = accessSource !== null && !isSupportedGenericHarnessCredentialRoute(harness, accessSource);
+  const savedSourceUnsupported = accessSource !== null && !isSupportedGenericHarnessCredentialRoute(harness, accessSource, snapshot);
   const account = snapshot.accounts.find((candidate) => candidate.id === harness.selectedAccountId) ?? null;
   const sources = snapshot.accessSources.filter((source) => source.providerId === harness.route.providerId
     && sourceSupportsModel(snapshot, source, harness.route.modelId, harness));
