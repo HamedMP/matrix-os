@@ -391,21 +391,28 @@ describe("useIntegrations store", () => {
     expect(api.post).toHaveBeenCalledWith("/api/integrations/connect", { service: "gmail" });
   });
 
-  it("opens Outlook reconnect on the Preview browser origin from a tagged Preview API", async () => {
-    const baseUrl = "https://pr-3801---matrix-platform-preview-example-ey.a.run.app";
-    const id = CONNECTIONS[0].id;
+  it("validates Outlook reconnect against the configured Matrix browser origin", async () => {
     const service = "microsoft_outlook";
     const authorize = "/api/integrations/outlook/oauth/authorize?state=" + "a".repeat(43);
-    const previewConsent = "https://preview.matrix-os.com" + authorize;
-    const api = { ...makeApi({ post: async () => ({ url: previewConsent, service }) }), baseUrl };
-    await expect(useIntegrations.getState().startConnect(service, api, id)).resolves.toBe(previewConsent);
+    const browserOrigin = "https://matrix.example.com";
+    const apiOrigin = "https://api.example.com";
+    const reconnect = (origin: string) => {
+      const api = { ...makeApi({ post: async () => ({ url: origin + authorize, service }) }), baseUrl: apiOrigin };
+      return useIntegrations.getState().startConnect(service, api, CONNECTIONS[0].id);
+    };
 
-    for (const origin of ["https://app.matrix-os.com", baseUrl, baseUrl.replace("3801", "3800")]) {
-      const wrong = { ...makeApi({ post: async () => ({ url: origin + authorize, service }) }), baseUrl };
-      await expect(useIntegrations.getState().startConnect(service, wrong, id)).resolves.toBeNull();
+    vi.stubEnv("VITE_MATRIX_APP_ORIGIN", "");
+    try {
+      await expect(reconnect(browserOrigin)).resolves.toBeNull();
+      await expect(reconnect("https://app.matrix-os.com")).resolves.toBe("https://app.matrix-os.com" + authorize);
+
+      vi.stubEnv("VITE_MATRIX_APP_ORIGIN", browserOrigin);
+      await expect(reconnect(browserOrigin)).resolves.toBe(browserOrigin + authorize);
+      await expect(reconnect(apiOrigin)).resolves.toBeNull();
+      await expect(reconnect("https://app.matrix-os.com")).resolves.toBeNull();
+    } finally {
+      vi.unstubAllEnvs();
     }
-    const production = { ...api, baseUrl: "https://api.matrix-os.com" };
-    await expect(useIntegrations.getState().startConnect(service, production, id)).resolves.toBeNull();
   });
 
   it("startConnect() drops a consent URL minted for a superseded runtime", async () => {

@@ -111,7 +111,7 @@ export function IntegrationsSettingsSection({ pollIntervals, active = true }: In
     }
     if (!isCurrentAttempt()) return;
 
-    const matrixOwned = isMatrixOutlookConsentUrl(serviceId, url, api.baseUrl);
+    const matrixOwned = isMatrixOutlookConsentUrl(serviceId, url, import.meta.env.VITE_MATRIX_APP_ORIGIN);
     const isLanded = () => useIntegrations.getState().connections.some(connection => connection.service === serviceId
       && (connectionId ? connection.id === connectionId && connection.outlookConnection === "matrix"
         && (previousAccount?.outlookConnection !== "matrix" || previousAccount.connectedAt !== connection.connectedAt)

@@ -49,17 +49,9 @@ Bound callback query and request bodies, token responses, Graph page size and re
 ## Rollout
 
 1. Register a Matrix-owned Entra web application for organizational and personal Microsoft accounts. Register the exact platform callback URI and configure its client ID and pinned Secret Manager versions for the client secret and dedicated encryption key.
-2. Release the compatible browser and native clients, then set `MATRIX_OUTLOOK_ENABLED=true` in a reviewed environment. Verify onboarding and Settings sign-in for both Microsoft account types, including managed-tenant consent, scoped reads, approved writes, disconnect and legacy reconnect.
+2. Release the compatible browser and native clients, then set `MATRIX_OUTLOOK_ENABLED=true` in a reviewed environment. The web and Electron builds trust their configured Matrix browser origin (`NEXT_PUBLIC_MATRIX_APP_URL` and `VITE_MATRIX_APP_ORIGIN`, respectively), which must match the callback origin. Both default to `https://app.matrix-os.com`. Verify onboarding and Settings sign-in for both Microsoft account types, including managed-tenant consent, scoped reads, approved writes, disconnect and legacy reconnect.
 3. Keep eligible legacy connections available while owners reconnect. Use the same-account check for each in-place cutover. Watch for outstanding provider cleanup before moving to retirement.
 4. Set `MATRIX_OUTLOOK_LEGACY_RETIRED=true` after migration. New Outlook authorization, reads, writes and refresh then use Matrix grants. Previously linked legacy accounts can still be disconnected or reauthorized. Monitor auth failures and keep the migration journal until outstanding cleanup completes.
-
-## Outlook Preview
-
-Use the existing Preview Cloud Run service. Dispatch `preview-platform.yml` from the branch with the PR number, `require_existing_service=true`, and `outlook_preview=true`. The workflow deploys a tagged revision with zero traffic. For the browser test window, record the current shared Preview target, temporarily point `preview.matrix-os.com` at the PR tag, and restore the recorded target when done. Use the [Preview routing runbook](../../docs/dev/preview-environments.md#platform-preview-revisions).
-
-The browser uses Preview's existing production Clerk configuration. For Outlook, set `OUTLOOK_PREVIEW_PR_NUMBER` and `OUTLOOK_PREVIEW_CLIENT_ID` in the GitHub Preview environment. Supply pinned version 1 of `matrix-outlook-client-secret-preview` and `matrix-outlook-credential-key-preview` through Secret Manager, with access for the Preview runtime service account. Register `https://preview.matrix-os.com/api/integrations/outlook/oauth/callback` as the Entra Web redirect URI.
-
-Run Electron from this branch with a separate dev profile and the tagged origin for both its gateway and Platform API. Connect it to an isolated test runtime paired to the same Preview authority. The Outlook opt-in mounts only the test OAuth app and leaves legacy retirement disabled. The initial fresh-account smoke can run with Pipedream absent. Use a dedicated legacy test connection and Preview Pipedream configuration for a live migration check.
 
 ## GitHub Stack Plan
 

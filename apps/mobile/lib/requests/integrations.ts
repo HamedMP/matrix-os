@@ -165,7 +165,7 @@ export async function createIntegrationConnectUrl(
     }),
   });
   if (response.service !== serviceId
-    || (!isMatrixOutlookConsentUrl(serviceId, response.url, computerGatewayUrl) && (connectionId || !isTrustedPipedreamConnectUrl(response.url)))) {
+    || (!isMatrixOutlookConsentUrl(serviceId, response.url) && (connectionId || !isTrustedPipedreamConnectUrl(response.url)))) {
     throw new Error(INTEGRATION_CONNECT_ERROR);
   }
   return response.url;

@@ -171,7 +171,7 @@ export const useIntegrations = create<IntegrationsState>()((set) => ({
       const raw = await api.post<unknown>(CONNECT_PATH, { service: serviceId, ...(connectionId ? { connectionId } : {}) });
       if (!isCurrentRuntimeGeneration(runtimeGeneration)) return null;
       const url = parseConnectUrl(raw);
-      if (!url || (connectionId && !isMatrixOutlookConsentUrl(serviceId, url, api.baseUrl))) {
+      if (!url || (connectionId && !isMatrixOutlookConsentUrl(serviceId, url, import.meta.env.VITE_MATRIX_APP_ORIGIN))) {
         logWarn("connect returned no usable https url", new Error("invalid_connect_url"));
         set({ errorMessage: categoryMessage("server") });
         return null;

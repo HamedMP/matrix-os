@@ -221,7 +221,7 @@ export function IntegrationsSection({ active = true, onOpenGithubDisconnectTermi
       }
       const { url } = await res.json();
       const consentUrl = new URL(url);
-      const matrixConsent = isMatrixOutlookConsentUrl(serviceId, consentUrl.href, window.location.origin);
+      const matrixConsent = isMatrixOutlookConsentUrl(serviceId, consentUrl.href, process.env.NEXT_PUBLIC_MATRIX_APP_URL);
       if (consentUrl.protocol !== "https:" || (connectionId && !matrixConsent)) throw new Error("Invalid consent URL");
       if (!popup) throw new Error("Consent window blocked");
       popup.opener = null;

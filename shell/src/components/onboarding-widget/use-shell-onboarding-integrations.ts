@@ -233,7 +233,7 @@ export function useShellOnboardingIntegrations(
         ...(optionsRef.current.pollIntervals ? { intervals: optionsRef.current.pollIntervals } : {}),
         tick: async () => {
           if (!isCurrent()) return;
-          const matrixConsent = isMatrixOutlookConsentUrl(serviceId, url, window.location.origin);
+          const matrixConsent = isMatrixOutlookConsentUrl(serviceId, url, process.env.NEXT_PUBLIC_MATRIX_APP_URL);
           const synced = parseConnectedIntegrations(await readJson(
             fetchFn, `${gatewayUrl}/api/integrations${matrixConsent ? "" : "/sync"}`, { method: matrixConsent ? "GET" : "POST" },
           ));
