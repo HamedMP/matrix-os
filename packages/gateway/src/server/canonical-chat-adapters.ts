@@ -65,7 +65,7 @@ export function createGatewayChatAdapters(options: {
         providerId, threads: options.threads, homePath, toolOutputKey,
         nativeInputProvider: options.providers.find(provider => provider.providerId === providerId),
         ...(routineCli ? { routineCli } : {}),
-        ...(providerId === "codex" ? { ...(sharedBrowser ? { sharedBrowser } : {}), gatewayPort } : {}),
+        ...(providerId === "codex" ? { matrixMcpCapabilityIssuer: options.claude.matrixMcpCapabilityIssuer, ...(sharedBrowser ? { sharedBrowser } : {}), gatewayPort } : {}),
       }));
     }
   }
