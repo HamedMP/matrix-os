@@ -206,6 +206,31 @@ export function createBotRoutinesRepository(db: BotExecutor, options: { now?: ()
         .orderBy("scheduled_for", "desc").orderBy("fire_id").limit(21).execute();
       return { fires: rows.slice(0, 20).map(fire), truncated: rows.length > 20, requiresReview: await repository.hasUncertain(ownerId, routineId, ex) };
     },
+    /**
+     * Whether a live occurrence is executing, retrying now, or due but not yet claimed by the scheduler pass.
+     * Expired dispatch leases belong to recovery; routines held by an unfinished or uncertain fire are excluded
+     * exactly as in `due()`. Uses idx_bot_routine_fires_pending and idx_bot_routines_due.
+     */
+    async hasActiveFire(now: string) {
+      const due = await db.selectFrom("bot_routines").select("routine_id").where("status", "=", "active")
+        .where("next_fire_at", "<=", now).where(LIVE_ROUTINE).where(NO_UNFINISHED_FIRE).limit(1).executeTakeFirst();
+      if (due) return true;
+      return Boolean(await db.selectFrom("bot_routine_fires").select("fire_id").where("status", "in", ["claimed", "dispatched"])
+        .where(eb => eb.or([
+          eb.and([eb("status", "=", "dispatched"), eb("lease_expires_at", ">", now)]),
+          eb.and([eb("status", "=", "claimed"), eb.or([eb("retry_after", "is", null), eb("retry_after", "<=", now)])]),
+        ])).limit(1).executeTakeFirst());
+    },
+    /** Earliest future live scheduled fire or deferred retry (past rows such as review-held routines are skipped); uses idx_bot_routines_due and idx_bot_routine_fires_pending. */
+    async nextFireAt(now: string = new Date().toISOString()): Promise<Date | null> {
+      const scheduled = await db.selectFrom("bot_routines").select("next_fire_at").where("status", "=", "active")
+        .where("next_fire_at", ">", now).where(LIVE_ROUTINE).orderBy("next_fire_at").limit(1).executeTakeFirst();
+      const retry = await db.selectFrom("bot_routine_fires").select("retry_after")
+        .where("status", "=", "claimed").where("retry_after", ">", now).orderBy("retry_after").limit(1).executeTakeFirst();
+      const times = [optionalIsoTimestamp(scheduled?.next_fire_at ?? null), optionalIsoTimestamp(retry?.retry_after ?? null)]
+        .filter((value): value is string => value !== null).map(value => Date.parse(value));
+      return times.length === 0 ? null : new Date(Math.min(...times));
+    },
     async due(now: string) {
       return (await db.selectFrom("bot_routines").selectAll().where("status", "=", "active").where("next_fire_at", "<=", now).where(LIVE_ROUTINE).where(NO_UNFINISHED_FIRE).orderBy("next_fire_at").limit(32).execute()).map(routine);
     },
