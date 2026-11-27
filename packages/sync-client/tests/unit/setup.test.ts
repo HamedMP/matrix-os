@@ -40,6 +40,18 @@ afterEach(() => {
 });
 
 describe("mos setup poll loop", () => {
+  it("says the Free plan is at capacity when the platform reports it full (ENG-520)", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ error: "busy" }, { status: 503 })));
+
+    await runSetup({ json: true });
+
+    expect(process.exitCode).toBe(1);
+    expect(lastJsonError()).toEqual({
+      code: "free_capacity_full",
+      message: "Free computers are at capacity right now. Try again in a few minutes.",
+    });
+  });
+
   it("bails after repeated journey failures instead of sleeping the full ceiling", async () => {
     // retry-provision succeeds, then every journey poll 401s (auth expired
     // mid-provision) and fetchJourney collapses it to null.

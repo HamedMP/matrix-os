@@ -23,13 +23,13 @@ export default function SystemSettingsScreen() {
     <SettingsPage>
       <SettingsCardStack>
         <SettingsRow card title="App version" detail={appVersion} />
-        <SettingsRow card title="VPS release version" detail={releaseVersion} />
+        <SettingsRow card title="Matrix release version" detail={releaseVersion} />
         <SettingsRow card title="Model information" detail={modelInformation} />
       </SettingsCardStack>
       {isError ? (
         <>
           <Spacer size="md" />
-          <Text size="muted" tone="subtle">Some VPS information could not be loaded.</Text>
+          <Text size="muted" tone="subtle">Some computer information could not be loaded.</Text>
         </>
       ) : null}
     </SettingsPage>

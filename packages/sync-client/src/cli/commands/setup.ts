@@ -1,5 +1,6 @@
 import { defineCommand } from "citty";
-import { formatCliError, formatCliSuccess } from "../output.js";
+import { formatCliError, formatCliErrorMessage, formatCliSuccess } from "../output.js";
+import { FREE_CAPACITY_FULL_CODE } from "@matrix-os/contracts/free-plan-copy";
 import { resolveCliProfile } from "../profiles.js";
 import { resolveCliAuthStatus } from "../auth-state.js";
 import { fetchJourney, journeyGuidance, describeProgress } from "../journey.js";
@@ -10,6 +11,17 @@ const MAX_POLLS = 180; // ~15 min ceiling at the default interval
 // Bail after this many consecutive failures instead of sleeping the full ceiling
 // in silence — a mid-provision token expiry otherwise looks like a 15-min hang.
 const MAX_CONSECUTIVE_FAILURES = 5;
+
+/** True when a 503 from retry-provision names the full Free plan; its body is never printed. */
+async function isFreeCapacityFull(response: Response): Promise<boolean> {
+  try {
+    const body = await response.json() as { error?: unknown };
+    return body.error === FREE_CAPACITY_FULL_CODE;
+  } catch (err: unknown) {
+    if (!(err instanceof SyntaxError)) console.warn("[setup] unreadable setup response:", err instanceof Error ? err.name : typeof err);
+    return false;
+  }
+}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -67,6 +79,11 @@ export const setupCommand = defineCommand({
       }
       if (trigger.status === 409) {
         console.error(json ? formatCliError("retry_exhausted") : "Setup has failed repeatedly. Contact support@matrix-os.com.");
+        process.exitCode = 1;
+        return;
+      }
+      if (trigger.status === 503 && await isFreeCapacityFull(trigger)) {
+        console.error(json ? formatCliError("free_capacity_full") : formatCliErrorMessage("free_capacity_full"));
         process.exitCode = 1;
         return;
       }

@@ -1,3 +1,4 @@
+import { FREE_PLAN_COPY } from "@matrix-os/contracts/free-plan-copy";
 import { ActivityIndicator, Pressable, ScrollView, Text, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 
@@ -10,9 +11,6 @@ import {
 import { allowsExternalPurchaseLinks } from "@/lib/store-policy";
 
 const SUPPORT_URL = "mailto:support@matrix-os.com";
-/** Same copy as the web install step: free computers preinstall a fixed pair of agents (spec 2691). */
-const FREE_PREINSTALLS_NOTE =
-  "Claude Code and Codex come preinstalled on your free computer. You can install OpenCode or Pi later from the Terminal’s + menu.";
 
 interface JourneyGateProps {
   /** null while the first fetch is in flight. */
@@ -197,7 +195,9 @@ function InstallChoices({ journey, working, error, onStart }: {
     <Centered>
       <Title>Set up your Matrix computer</Title>
       <Body>{journey.detail}</Body>
-      <Body>{FREE_PREINSTALLS_NOTE}</Body>
+      {/* Same copy as the web install step (spec 2691): fixed preinstalls and the sleep rule. */}
+      <Body>{FREE_PLAN_COPY.preinstalls}</Body>
+      <Body>{FREE_PLAN_COPY.sleep}</Body>
       {error ? <SetupError message={error} /> : null}
       <PrimaryButton label={working ? "Starting…" : idleLabel} testID="journey-start" onPress={onStart} />
     </Centered>

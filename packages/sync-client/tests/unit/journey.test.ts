@@ -60,6 +60,12 @@ describe("cli journeyGuidance", () => {
     expect(g.suggestedCommand).toBe("setup");
   });
 
+  it("tells a free-plan owner to start their free computer with `mos setup` (ENG-520)", () => {
+    const g = journeyGuidance(state({ phase: "install_choices_required", nextAction: { kind: "start_provision" } }));
+    expect(g.lines.join(" ")).toBe("You're signed in. Run `mos setup` to start your free Matrix computer.");
+    expect(g.suggestedCommand).toBe("setup");
+  });
+
   it("describeProgress maps the provisioning stage to a human label", () => {
     expect(describeProgress(state({ phase: "provisioning", progress: { stage: "booting", startedAt: "x" } }))).toBe("booting your computer");
   });
