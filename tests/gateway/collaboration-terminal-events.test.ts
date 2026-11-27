@@ -134,6 +134,25 @@ describe("CollaborationTerminalEventRegistry", () => {
     fixture.registry.shutdown();
   });
 
+  it("closes a revoked member at once on a committed scope change, even on a quiet terminal (spec 2710)", async () => {
+    const fixture = setup();
+    const revoked = socket();
+    const current = socket();
+    const other = socket();
+    await fixture.registry.open(connection(scopeA, "user_revoked", "revoked", revoked));
+    await fixture.registry.open(connection(scopeA, "user_current", "current", current));
+    await fixture.registry.open(connection(scopeB, "user_revoked", "elsewhere", other));
+    fixture.revoked.add("user_revoked");
+
+    await fixture.registry.reauthorizeScope(scopeA);
+    expect(frames(revoked)).toContainEqual(expect.objectContaining({ type: "terminal.unavailable", code: "revoked" }));
+    expect(revoked.close).toHaveBeenCalledWith(1008, "Revoked");
+    expect(current.close).not.toHaveBeenCalled();
+    // Only the committed scope is re-checked.
+    expect(other.close).not.toHaveBeenCalled();
+    fixture.registry.shutdown();
+  });
+
   it("reauthorizes after terminal lookup before admitting a connection", async () => {
     let revoked = false;
     let releaseLookup!: () => void;

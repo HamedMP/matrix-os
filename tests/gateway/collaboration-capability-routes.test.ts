@@ -243,9 +243,9 @@ describe("collaboration capability HTTP routes", () => {
       .toEqual({ actorId: ownerId, displayName: "Organization member" });
   });
 
-  it("rejects every new standalone live scope", async () => {
+  it("rejects every new standalone live scope except a team terminal (spec 2710)", async () => {
     const prefix = `/api/collaboration/runtimes/${runtimeId}`;
-    for (const kind of ["chat", "terminal", "file", "folder", "app"] as const) {
+    for (const kind of ["chat", "file", "folder", "app"] as const) {
       const response = await signed({
         actorId: ownerId,
         method: "POST",
@@ -263,6 +263,14 @@ describe("collaboration capability HTTP routes", () => {
       expect(response.status, `${kind} should be safely unavailable`).toBe(403);
       expect(await response.json()).toMatchObject({ code: "forbidden" });
     }
+    // A home without the shared terminal runtime still creates nothing for a team terminal.
+    const terminal = await signed({
+      actorId: ownerId, method: "POST", path: `${prefix}/scopes`, scopeId: null,
+      body: { kind: "terminal", resourceId: "main:tab_new", organizationId, clientRequestId: randomUUID(),
+        expectedRevision: "0", confirmationToken: "a".repeat(64) },
+    });
+    expect(terminal.status).toBeGreaterThanOrEqual(400);
+    expect(await fixture.db.selectFrom("collaboration_scopes").selectAll().where("kind", "=", "terminal").execute()).toEqual([]);
   });
 
   it("rejects every legacy project grant and activation route", async () => {

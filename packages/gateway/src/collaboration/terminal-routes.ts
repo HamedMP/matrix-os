@@ -1,7 +1,7 @@
 /** Extracted verbatim from packages/gateway/src/collaboration/routes.ts (S01 / T008). */
 import {
   CollaborationIdSchema,
-  CollaborationTerminalActionSchema,
+  CollaborationTeamTerminalActionSchema,
 } from "@matrix-os/contracts";
 import type { Hono } from "hono";
 import {
@@ -23,7 +23,7 @@ export function registerTerminalRoutes(routes: Hono, options: CollaborationRoute
   routes.post("/api/collaboration/scopes/:scopeId/terminal/actions", async (c) => handle(c, async () => {
     const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
     const { value, bytes } = await readJson(c);
-    const action = CollaborationTerminalActionSchema.parse(value);
+    const action = CollaborationTeamTerminalActionSchema.parse(value);
     const context = await authorize(options, c, bytes, "control_execution", scopeId);
     const connectionId = "connectionId" in action ? action.connectionId : `http_${context.actorId}`;
     return c.json(await requireTerminalDispatcher(options.terminalDispatcher).dispatch({
