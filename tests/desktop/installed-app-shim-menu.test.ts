@@ -22,4 +22,10 @@ describe("app shim menu", () => {
     const template = shimMenuTemplate("Notes", { reload() {}, openInMatrix() {}, showInFinder() {}, uninstall() {} });
     expect(template.slice(1)).toEqual([{ role: "editMenu" }, { role: "windowMenu" }]);
   });
+
+  it("names the app menu as Finder and the Dock do, anti-spoof suffix included", () => {
+    const actions = { reload() {}, openInMatrix() {}, showInFinder() {}, uninstall() {} };
+    expect(shimMenuTemplate("Matrix Settings", actions)[0]!.label).toBe("Matrix Settings (Matrix App)");
+    expect(shimMenuTemplate("Notes.app", actions)[0]!.label).toBe("Notes");
+  });
 });

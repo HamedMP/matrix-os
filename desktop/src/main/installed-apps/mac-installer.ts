@@ -7,7 +7,7 @@
 // resolved strictly inside the Matrix Apps folder, and symlinks are never followed.
 import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { chmod, copyFile, lstat, mkdir, mkdtemp, readdir, realpath, rename, rm, rmdir, writeFile } from "node:fs/promises";
+import { chmod, copyFile, lstat, mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, rmdir, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { z } from "zod/v4";
 import {
@@ -15,8 +15,11 @@ import {
   SHIM_ENTITLEMENTS,
   bundleDisplayName,
   bundleFileName,
+  bundleTempOwner,
+  bundleTempPrefix,
   parseCdHashes,
   shimBundleFiles,
+  shimBundleIdentifier,
 } from "./mac-bundle";
 import type { RunTool } from "./mac-host";
 import { InstalledAppLimitError, MAX_INSTALLED_APPS, type InstalledAppStore } from "./record-store";
@@ -25,6 +28,9 @@ import { NewInstalledAppSchema, type InstalledAppRecord } from "./record";
 const MAX_NAME_ATTEMPTS = 50;
 const CODESIGN = "/usr/bin/codesign";
 const SIGN_TIMEOUT_MS = 30_000;
+/** Another channel's temp folder is swept only when its owner is gone and it has sat this long. */
+const STALE_TEMP_MS = 10 * 60_000;
+const MAX_INFO_PLIST_BYTES = 64 * 1024;
 
 export const MacInstallRequestSchema = NewInstalledAppSchema.pick({ appIdentity: true, slug: true, runtimeSlot: true, name: true });
 export type MacInstallRequest = z.infer<typeof MacInstallRequestSchema>;
@@ -46,7 +52,23 @@ export interface MacInstallerOptions {
   /** Runs `/usr/bin/codesign` (execFile, no shell). */
   codesign: RunTool;
   forgetWindowState(installId: string): Promise<void>;
+  /** Whether a temp folder's writer still runs; default `process.kill(pid, 0)`. */
+  isProcessAlive?(pid: number): boolean;
+  now?(): number;
 }
+
+function processAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error: unknown) {
+    // EPERM: it runs as another user, so it is alive.
+    if (errorCode(error) === "ESRCH") return false;
+    if (errorCode(error) === "EPERM") return true;
+    throw error;
+  }
+}
+
 
 function errorCode(error: unknown): string | undefined {
   return (error as NodeJS.ErrnoException | null)?.code;
@@ -58,6 +80,39 @@ function logFailure(label: string, error: unknown): void {
 
 export function createMacInstaller(options: MacInstallerOptions) {
   const appsDir = resolve(options.appsDir);
+  const isProcessAlive = options.isProcessAlive ?? processAlive;
+  const now = options.now ?? Date.now;
+  const tempPrefix = bundleTempPrefix(options.host.serverName, process.pid);
+
+  /**
+   * Stable, Canary and dev share the Matrix Apps folder. A temp folder is ours
+   * to sweep when this channel wrote it in an earlier run, or when its writer
+   * is gone and it is stale. Folders without an owner count as gone.
+   */
+  function sweepable(name: string, mtimeMs: number): boolean {
+    const owner = bundleTempOwner(name);
+    if (owner?.pid === process.pid) return false;
+    if (owner?.server === options.host.serverName) return true;
+    const gone = !owner || !isProcessAlive(owner.pid);
+    return gone && now() - mtimeMs > STALE_TEMP_MS;
+  }
+
+  /** True only when the bundle at `path` carries this install's bundle id and recorded cdhash. */
+  async function isThisInstall(path: string, record: InstalledAppRecord): Promise<boolean> {
+    try {
+      const plistPath = join(path, "Contents/Info.plist");
+      const info = await lstat(plistPath);
+      if (!info.isFile() || info.size > MAX_INFO_PLIST_BYTES) return false;
+      const plist = await readFile(plistPath, "utf8");
+      const bundleId = /<key>CFBundleIdentifier<\/key>\s*<string>([^<]*)<\/string>/.exec(plist)?.[1];
+      if (bundleId !== shimBundleIdentifier(record.installId)) return false;
+      const { stdout, stderr } = await options.codesign(CODESIGN, ["-dvvv", path], { signal: AbortSignal.timeout(SIGN_TIMEOUT_MS) });
+      return parseCdHashes(`${stdout}\n${stderr}`).some((hash) => record.cdHashes.includes(hash));
+    } catch (error: unknown) {
+      if (errorCode(error) !== "ENOENT") logFailure("could not check an installed bundle", error);
+      return false;
+    }
+  }
 
   /**
    * The Matrix Apps folder's real path (null when it does not exist). A
@@ -156,7 +211,7 @@ export function createMacInstaller(options: MacInstallerOptions) {
       const root = (await requireAppsDir(true))!;
       const installId = randomUUID();
       const displayName = bundleDisplayName(input.name);
-      const temp = await mkdtemp(join(root, BUNDLE_TEMP_PREFIX));
+      const temp = await mkdtemp(join(root, tempPrefix));
       let reserved: string | null = null;
       let record: InstalledAppRecord | null = null;
       try {
@@ -200,7 +255,9 @@ export function createMacInstaller(options: MacInstallerOptions) {
           try {
             const info = await lstat(path);
             if (info.isSymbolicLink() || !info.isDirectory()) throw new InstalledAppBundleError("Bundle is not a folder");
-            await rm(path, { recursive: true });
+            // The owner may have moved this bundle and a new install taken its name: delete only our own.
+            if (await isThisInstall(path, record)) await rm(path, { recursive: true });
+            else console.warn("[installed-apps] recorded bundle path holds another app; forgetting the record only");
           } catch (error: unknown) {
             if (errorCode(error) !== "ENOENT") throw error;
           }
@@ -211,7 +268,7 @@ export function createMacInstaller(options: MacInstallerOptions) {
       return removed;
     },
 
-    /** Start-up: deletes temp bundles left by a crash and empty name reservations. */
+    /** Start-up: deletes temp bundles left by a crash (see `sweepable`) and empty name reservations. */
     async sweep(): Promise<void> {
       const root = await requireAppsDir(false);
       if (!root) return;
@@ -223,6 +280,7 @@ export function createMacInstaller(options: MacInstallerOptions) {
         });
         if (!info || info.isSymbolicLink() || !info.isDirectory()) continue;
         if (name.startsWith(BUNDLE_TEMP_PREFIX)) {
+          if (!sweepable(name, info.mtimeMs)) continue;
           await cleanup("stale temp bundle cleanup failed", () => rm(path, { recursive: true, force: true }));
         } else if (name.endsWith(".app")) {
           await rmdir(path).catch((error: unknown) => {

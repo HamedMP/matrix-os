@@ -1,15 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { lstat, mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, symlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createMacInstaller } from "@desktop/main/installed-apps/mac-installer";
 import { createInstalledAppStore, MAX_INSTALLED_APPS } from "@desktop/main/installed-apps/record-store";
 
 const CDHASH = "70319dee84e8125748db84fee5a36fceda50e82b";
-// A stand-in for codesign's per-bundle hash: unique to the bundle that was signed.
-const cdHashOf = (path: string) => createHash("sha1").update(path).digest("hex");
+// A stand-in for codesign's per-bundle hash: it follows the sealed Info.plist, so it
+// is unique per install and unchanged by the move into place.
+const cdHashOf = (text: string) => createHash("sha1").update(text).digest("hex");
+const bundleHash = async (bundle: string) => cdHashOf(await readFile(join(bundle, "Contents/Info.plist"), "utf8"));
 
 interface SignCall { args: string[]; files: string[]; entitlements: string | null; appsDirEntries: string[] }
 const ICON = new Uint8Array(Buffer.from("icns-bytes"));
@@ -23,9 +25,11 @@ describe("macOS installed-app installer", () => {
   let forgetWindowState: ReturnType<typeof vi.fn>;
   let codesign: ReturnType<typeof vi.fn>;
   let signCalls: SignCall[];
-  let fail: { sign?: boolean; verify?: boolean; noHash?: boolean };
+  let fail: { sign?: boolean; verify?: boolean; noHash?: boolean; otherHash?: boolean };
+  let livePids: Set<number>;
 
   const installer = () => createMacInstaller({
+    isProcessAlive: (pid) => livePids.has(pid),
     appsDir,
     records,
     host: { appPath: "/Applications/Matrix OS.app", bundleId: "com.matrix-os.operator", serverName: "matrix-stable", hostArguments: [], loaderPath },
@@ -45,6 +49,7 @@ describe("macOS installed-app installer", () => {
     forgetWindowState = vi.fn(async () => undefined);
     signCalls = [];
     fail = {};
+    livePids = new Set([process.pid]);
     codesign = vi.fn(async (file: string, args: string[], options: { signal: AbortSignal }) => {
       expect(file).toBe("/usr/bin/codesign");
       expect(options.signal).toBeInstanceOf(AbortSignal);
@@ -58,7 +63,11 @@ describe("macOS installed-app installer", () => {
       });
       if (args[0] === "--force" && fail.sign) throw new Error("codesign failed");
       if (args[0] === "--verify" && fail.verify) throw new Error("invalid signature");
-      if (args[0] === "-dvvv") return { stdout: "", stderr: fail.noHash ? "code object is not signed at all" : `Identifier=x\nCDHash=${cdHashOf(target)}\n` };
+      if (args[0] === "-dvvv") {
+        if (fail.noHash) return { stdout: "", stderr: "code object is not signed at all" };
+        const hash = fail.otherHash ? cdHashOf("another bundle") : await bundleHash(target);
+        return { stdout: "", stderr: `Identifier=x\nCDHash=${hash}\n` };
+      }
       return { stdout: "", stderr: "" };
     });
   });
@@ -70,7 +79,7 @@ describe("macOS installed-app installer", () => {
   it("writes the whole bundle before moving it into place and records its path and cdhash", async () => {
     const record = await installer().install(app());
     const bundle = join(appsDir, "Notes.app");
-    expect(record).toMatchObject({ name: "Notes", slug: "notes", bundlePath: bundle, cdHashes: [cdHashOf(signCalls[0]!.args.at(-1)!)],
+    expect(record).toMatchObject({ name: "Notes", slug: "notes", bundlePath: bundle, cdHashes: [await bundleHash(bundle)],
       iconSha256: createHash("sha256").update(ICON).digest("hex") });
     expect(await records.get(record.installId)).toEqual(record);
     const plist = await readFile(join(bundle, "Contents/Info.plist"), "utf8");
@@ -87,7 +96,8 @@ describe("macOS installed-app installer", () => {
     expect(signCalls.map((call) => call.args[0])).toEqual(["--force", "--verify", "-dvvv"]);
     const [sign, verify, describe] = signCalls;
     const temp = sign!.args.at(-1)!;
-    expect(temp).toMatch(/\/\.matrix-app-tmp-[^/]+\/Shim\.app$/);
+    // The temp folder names its owner (channel server and pid), so other channels' sweeps leave it alone.
+    expect(temp).toMatch(new RegExp(`/\\.matrix-app-tmp-matrix-stable-${process.pid}-[^/]+/Shim\\.app$`));
     expect(sign!.args.slice(0, 5)).toEqual(["--force", "--sign", "-", "--options", "runtime"]);
     // Only the entitlement that lets an ad-hoc shim load Matrix's team-signed framework.
     expect(sign!.entitlements).toContain("<key>com.apple.security.cs.disable-library-validation</key>");
@@ -179,6 +189,29 @@ describe("macOS installed-app installer", () => {
     expect(await installer().uninstall(record.installId)).toBe(false);
   });
 
+  it("checks the bundle on disk is this install before deleting it", async () => {
+    const record = await installer().install(app());
+    signCalls = [];
+    expect(await installer().uninstall(record.installId)).toBe(true);
+    expect(signCalls.map((call) => call.args)).toEqual([["-dvvv", record.bundlePath!]]);
+  });
+
+  it.each([
+    ["another install's bundle identifier", async (bundle: string, installId: string) => {
+      const plist = join(bundle, "Contents/Info.plist");
+      await writeFile(plist, (await readFile(plist, "utf8")).replace(installId, "0b6f7c8d-1e2f-4a3b-8c4d-5e6f7a8b9c0d"));
+    }],
+    ["another bundle's code signature", async () => { fail.otherHash = true; }],
+    ["no Info.plist", async (bundle: string) => { await rm(join(bundle, "Contents/Info.plist")); }],
+  ])("keeps a bundle at the recorded path that has %s, and drops only the stale record", async (_label, change) => {
+    const record = await installer().install(app());
+    await change(record.bundlePath!, record.installId);
+    expect(await installer().uninstall(record.installId)).toBe(true);
+    expect((await stat(join(record.bundlePath!, "Contents"))).isDirectory()).toBe(true);
+    expect(await records.get(record.installId)).toBeNull();
+    expect(forgetWindowState).toHaveBeenCalledWith(record.installId);
+  });
+
   it("uninstalls a record whose bundle the owner already deleted", async () => {
     const record = await installer().install(app());
     await rm(record.bundlePath!, { recursive: true });
@@ -210,16 +243,38 @@ describe("macOS installed-app installer", () => {
     expect(await readFile(join(victim, "keep.txt"), "utf8")).toBe("data");
   });
 
-  it("sweeps leftover temp bundles and empty reservations, but nothing else", async () => {
+  it("sweeps only temp folders that cannot be another channel's install in progress", async () => {
     await installer().install(app());
     const target = join(root, "target");
     await mkdir(target);
-    await mkdir(join(appsDir, ".matrix-app-tmp-abc", "Contents"), { recursive: true });
-    await symlink(target, join(appsDir, ".matrix-app-tmp-link"));
+    const old = new Date(Date.now() - 20 * 60_000);
+    const temp = async (name: string, stale = false) => {
+      await mkdir(join(appsDir, name, "Shim.app"), { recursive: true });
+      if (stale) await utimes(join(appsDir, name), old, old);
+    };
+    livePids.add(4242);
+    await temp(".matrix-app-tmp-matrix-stable-999991-crashA");      // ours, left by a crashed run
+    await temp(`.matrix-app-tmp-matrix-stable-${process.pid}-liveAB`); // ours, this process: in flight
+    await temp(".matrix-app-tmp-matrix-canary-4242-freshA");         // Canary, running, fresh
+    await temp(".matrix-app-tmp-matrix-canary-4242-oldAAA", true);   // Canary, running, slow
+    await temp(".matrix-app-tmp-matrix-canary-999992-newAAA");       // Canary, dead, but fresh
+    await temp(".matrix-app-tmp-matrix-canary-999993-deadAA", true); // Canary, dead and stale
+    await temp(".matrix-app-tmp-legacy", true);                      // no owner, stale
+    await temp(".matrix-app-tmp-legac2");                            // no owner, fresh
+    await symlink(target, join(appsDir, ".matrix-app-tmp-matrix-stable-999994-linkAA"));
     await mkdir(join(appsDir, "Empty.app"));
     await mkdir(join(appsDir, "Folder"));
     await installer().sweep();
-    expect((await readdir(appsDir)).sort()).toEqual([".matrix-app-tmp-link", "Folder", "Notes.app"]);
+    expect((await readdir(appsDir)).sort()).toEqual([
+      ".matrix-app-tmp-legac2",
+      ".matrix-app-tmp-matrix-canary-4242-freshA",
+      ".matrix-app-tmp-matrix-canary-4242-oldAAA",
+      ".matrix-app-tmp-matrix-canary-999992-newAAA",
+      `.matrix-app-tmp-matrix-stable-${process.pid}-liveAB`,
+      ".matrix-app-tmp-matrix-stable-999994-linkAA",
+      "Folder",
+      "Notes.app",
+    ].sort());
     expect((await stat(target)).isDirectory()).toBe(true);
   });
 

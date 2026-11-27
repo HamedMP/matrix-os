@@ -4,6 +4,8 @@ import {
   appShimServerName,
   bundleDisplayName,
   bundleFileName,
+  bundleTempOwner,
+  bundleTempPrefix,
   hostAppBundlePath,
   looksLikeProtectedName,
   parseCdHashes,
@@ -177,5 +179,17 @@ describe("code signatures", () => {
     expect(SHIM_ENTITLEMENTS).toContain("<key>com.apple.security.cs.disable-library-validation</key>\n\t<true/>");
     expect(SHIM_ENTITLEMENTS.match(/<key>/g)).toHaveLength(1);
     expect(SHIM_ENTITLEMENTS.startsWith('<?xml version="1.0" encoding="UTF-8"?>')).toBe(true);
+  });
+});
+
+describe("temp folder owners", () => {
+  it("names the channel server and pid that are writing a temp bundle", () => {
+    expect(bundleTempPrefix("matrix-preview-cp-12-abcdef12-3-a", 4242)).toBe(".matrix-app-tmp-matrix-preview-cp-12-abcdef12-3-a-4242-");
+    expect(bundleTempOwner(".matrix-app-tmp-matrix-preview-cp-12-abcdef12-3-a-4242-Xy12Zq"))
+      .toEqual({ server: "matrix-preview-cp-12-abcdef12-3-a", pid: 4242 });
+  });
+
+  it.each([".matrix-app-tmp-AbC123", ".matrix-app-tmp-matrix-stable-x-AbC123", "Notes.app"])("finds no owner in %s", (name) => {
+    expect(bundleTempOwner(name)).toBeNull();
   });
 });

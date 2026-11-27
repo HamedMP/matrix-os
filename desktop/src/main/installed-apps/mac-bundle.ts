@@ -66,6 +66,21 @@ export function bundleDisplayName(raw: string): string {
   return looksLikeProtectedName(name) ? `${name}${PROTECTED_NAME_SUFFIX}` : name;
 }
 
+// `.matrix-app-tmp-<server name>-<pid>-<random>` names who is writing it.
+const TEMP_OWNER = /^(.+)-(\d+)-[A-Za-z0-9]{6}$/;
+
+/** The `mkdtemp` prefix of an install in progress by `pid` of the channel serving `serverName`. */
+export function bundleTempPrefix(serverName: string, pid: number): string {
+  return `${BUNDLE_TEMP_PREFIX}${serverName}-${pid}-`;
+}
+
+/** Who wrote a temp folder; null for a name without an owner. */
+export function bundleTempOwner(name: string): { server: string; pid: number } | null {
+  if (!name.startsWith(BUNDLE_TEMP_PREFIX)) return null;
+  const match = TEMP_OWNER.exec(name.slice(BUNDLE_TEMP_PREFIX.length));
+  return match ? { server: match[1]!, pid: Number(match[2]) } : null;
+}
+
 /** `Name.app`, then `Name 2.app`, `Name 3.app`… for later attempts. */
 export function bundleFileName(displayName: string, attempt: number): string {
   if (!Number.isInteger(attempt) || attempt < 1) throw new RangeError("invalid bundle attempt");
