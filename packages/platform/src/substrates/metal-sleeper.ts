@@ -96,6 +96,11 @@ export interface MetalSleeperDeps {
   env?: NodeJS.ProcessEnv;
   /** Overrides SUSPEND_WAIT_MS (tests). */
   suspendWaitMs?: number;
+  /**
+   * The `free-tier-sleep` PostHog switch (ENG-608) per owner. False skips the
+   * suspend; scheduled wakes and resuming still run. Absent means sleep is on.
+   */
+  sleepAllowed?: (clerkUserId: string) => Promise<boolean>;
 }
 
 export interface MetalSleeper {
@@ -309,6 +314,10 @@ export function createMetalSleeper(deps: MetalSleeperDeps): MetalSleeper {
       source, machine.clerkUserId, at, machine.runtimeSlot, env);
     if ((await resolvePlan(db))?.source !== 'free') {
       log('sleep_skipped_paid', { machineId: machine.machineId });
+      return;
+    }
+    if (deps.sleepAllowed && !await deps.sleepAllowed(machine.clerkUserId)) {
+      log('sleep_skipped_flag', { machineId: machine.machineId });
       return;
     }
     let read: LifecycleRead;

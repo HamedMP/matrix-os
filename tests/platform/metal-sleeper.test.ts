@@ -14,6 +14,7 @@ import {
   type UserMachineRecord,
 } from '../../packages/platform/src/db.js';
 import { buildFreeEntitlement } from '../../packages/platform/src/free-tier/free-entitlement.js';
+import { createFreeTierSleepSwitch } from '../../packages/platform/src/free-tier/switches.js';
 import { buildPlatformVerificationToken } from '../../packages/platform/src/platform-token.js';
 import { createMetalHostsRepository } from '../../packages/platform/src/substrates/metal-hosts-repository.js';
 import {
@@ -277,6 +278,33 @@ describe('metal idle sleeper', () => {
 
     expect(ensureRunning).not.toHaveBeenCalled();
     expect((await machine(id)).status).toBe('suspended');
+  });
+
+  it('free-tier-sleep off skips suspends but scheduled wakes still run (ENG-608)', async () => {
+    const idle = await seedMachine();
+    const asleep = await seedMachine({ overrides: { status: 'suspended', nextWakeAt: ago(MINUTE) } });
+    const evaluate = vi.fn(async () => false);
+    const flags = { configured: true, evaluate, shutdown: async () => undefined };
+    const { sleeper: s, stop, ensureRunning, readLifecycle } = sleeper({ sleepAllowed: createFreeTierSleepSwitch(flags) });
+
+    await s.tick(NOW);
+
+    expect(stop).not.toHaveBeenCalled();
+    expect(readLifecycle).not.toHaveBeenCalled();
+    expect(await machine(idle)).toMatchObject({ status: 'running' });
+    expect(ensureRunning).toHaveBeenCalledTimes(1);
+    expect(ensureRunning.mock.calls[0]?.[0]).toMatchObject({ machineId: asleep });
+    expect(evaluate).toHaveBeenCalledWith('free-tier-sleep', { distinctId: (await machine(idle)).clerkUserId });
+    expect(logs).toContainEqual({ event: 'sleep_skipped_flag', fields: { machineId: idle } });
+
+    // Cold start (definitions not loaded) also keeps runtimes awake; turning the flag on resumes sleeping.
+    evaluate.mockResolvedValue(undefined as never);
+    await s.tick(new Date(NOW.getTime() + SLEEP_RECHECK_AFTER_MS));
+    expect(stop).not.toHaveBeenCalled();
+    evaluate.mockResolvedValue(true);
+    await s.tick(new Date(NOW.getTime() + 2 * SLEEP_RECHECK_AFTER_MS));
+    expect(stop.mock.calls.map(([ref]) => (ref as { machineId: string }).machineId)).toContain(idle);
+    expect(await machine(idle)).toMatchObject({ status: 'suspended' });
   });
 
   it('never sleeps paid VMs', async () => {

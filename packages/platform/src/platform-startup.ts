@@ -58,6 +58,7 @@ import { createPlatformSubstrateRegistry } from './substrates/platform-substrate
 import type { SubstrateRegistry } from './substrates/registry.js';
 import { createConfiguredMetalRuntime } from './substrates/metal-runtime.js';
 import { loadConfiguredFreeTier, type FreeTierConfig } from './free-tier/config.js';
+import { createServerFeatureFlags } from './feature-flags/server-flags.js';
 import { createFreeTierRuntime, type FreeRuntimeProvisioner } from './free-tier/provision-free-runtime.js';
 import { closeUpstreamDispatchers } from './substrates/upstream-transport.js';
 import {
@@ -1221,14 +1222,19 @@ async function startPlatformServerWithCleanup(
   registerCustomMcpStartupCleanup(async () => { await atsBackgroundWorker?.shutdown(); });
   // Metal provisioning (spec 2691): free signup's provisioner, the stale-row and teardown maintenance pass,
   // and the idle sleeper (MATRIX_FREE_TIER_SLEEP_ENABLED) that suspends idle free runtimes and wakes them for scheduled work.
+  // Server-side PostHog runtime switches (ENG-608, docs/dev/feature-flags.md). Without
+  // POSTHOG_FEATURE_FLAGS_SECURE_API_KEY every switch keeps its env behavior.
+  const serverFlags = createServerFeatureFlags({ env: appEnv });
+  registerCustomMcpStartupCleanup(() => serverFlags.shutdown());
   const metalRuntime = createConfiguredMetalRuntime({
     db, env: appEnv, backgroundWorkersEnabled: metalWorkersEnabled, substrates: substrateRegistry, platformSecret,
+    flags: serverFlags,
     customerVps: customerVpsDependencies
       ? { config: customerVpsDependencies.config, cloudInitTemplate: customerVpsDependencies.cloudInitTemplate }
       : undefined,
   });
   registerCustomMcpStartupCleanup(async () => { await metalRuntime?.shutdown(); });
-  const freeTier = createFreeTierRuntime({ db, config: freeTierConfig, metal: metalRuntime?.provisioner });
+  const freeTier = createFreeTierRuntime({ db, config: freeTierConfig, metal: metalRuntime?.provisioner, flags: serverFlags });
   const app = createPlatformApp({
     accountDeletion,
     db,
@@ -1347,6 +1353,7 @@ async function startPlatformServerWithCleanup(
           closeUpstreamDispatchers(),
           customMcpShutdown?.(),
           coreRepo.shutdown(),
+          serverFlags.shutdown(),
         ]);
         posthogProcessErrors.dispose();
         await shutdownPlatformApp(app);
