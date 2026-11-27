@@ -212,6 +212,39 @@ describe("cron catch-up of missed runs", () => {
     expect(onTrigger).not.toHaveBeenCalled();
   });
 
+  it("catches up the first cron occurrence once after channels start", async () => {
+    vi.setSystemTime(new Date("2026-11-21T08:00:00.000Z"));
+    startWith([makeJob({ schedule: { type: "cron", cron: "0 9 * * *" } })]);
+    const firstRunAt = service.nextRunAt()!;
+    // Restart just after the first occurrence, with no run recorded on disk.
+    service.stop();
+    vi.setSystemTime(firstRunAt.getTime() + 60 * 60_000);
+
+    const channelsReady = Promise.withResolvers<void>();
+    store = createCronStore(storePath);
+    const recordRun = vi.spyOn(store, "recordRun");
+    service = createCronService({ store, onTrigger, catchUpAfter: channelsReady.promise });
+    try {
+      service.start();
+      expect(store.list()[0]?.lastRunAt).toBeUndefined();
+      expect(onTrigger).not.toHaveBeenCalled();
+
+      channelsReady.resolve();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(onTrigger).toHaveBeenCalledTimes(1);
+      expect(service.nextRunAt()?.getTime()).toBe(firstRunAt.getTime() + 24 * 60 * 60_000);
+      await Promise.all(recordRun.mock.results.map((result) => result.value));
+
+      service.stop();
+      service.start();
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(onTrigger).toHaveBeenCalledTimes(1);
+    } finally {
+      service.stop();
+      await Promise.all(recordRun.mock.results.map((result) => result.value));
+    }
+  });
+
   it.each([
     { restartAt: "11:58", untilDue: 2 * 60_000, deliveredAt: "12:00" },
     { restartAt: "12:00", untilDue: 0, deliveredAt: "12:00" },

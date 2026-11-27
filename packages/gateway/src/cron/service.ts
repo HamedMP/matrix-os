@@ -110,12 +110,12 @@ export function createCronService(config: CronServiceConfig): CronService {
         return deadline !== null && deadline <= now;
       }
       case "cron": {
-        const lastRunAt = epochMs(job.lastRunAt);
-        if (lastRunAt === null) return false;
+        const anchor = epochMs(job.lastRunAt) ?? epochMs(job.createdAt);
+        if (anchor === null) return false;
         const entry = cronTasks.get(job.id);
         const matcher = entry ? cronMatcher(entry.task) : null;
         if (matcher === null) return false;
-        const next = epochMs(matcher.getNextMatch(new Date(lastRunAt)));
+        const next = epochMs(matcher.getNextMatch(new Date(anchor)));
         return next !== null && next <= now;
       }
       case "once":
