@@ -39,7 +39,10 @@ describe("installed app launcher installer (Windows and Linux)", () => {
       },
       async remove(path, installId) {
         // Like the real launchers: delete only an entry that names this install.
-        const text = await readFile(path, "utf8").catch(() => null);
+        const text = await readFile(path, "utf8").catch((error: unknown) => {
+          if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+          throw error;
+        });
         if (text === null || !path.endsWith(`${installId}.launcher`)) return false;
         await rm(path);
         return true;
