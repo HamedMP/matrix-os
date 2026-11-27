@@ -115,6 +115,13 @@ describe("Info.plist", () => {
     expect(plist).not.toContain("<B>");
   });
 
+  it("drops only the characters XML 1.0 cannot carry", () => {
+    const kept = "퟿�\u{1F600}\t";
+    const dropped = "\u0001\u001F￾￿";
+    const plist = shimInfoPlist({ ...plistInput, hostPath: `/Apps/${kept}${dropped}X.app` });
+    expect(plist).toContain(`<string>/Apps/${kept}X.app</string>`);
+  });
+
   it("refuses an install id that is not a UUID", () => {
     expect(() => shimInfoPlist({ ...plistInput, installId: "../notes" })).toThrow();
   });

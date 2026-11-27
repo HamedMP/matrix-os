@@ -92,7 +92,7 @@ export function shimBundleIdentifier(installId: string): string {
 
 function escapeXml(value: string): string {
   // Characters XML 1.0 cannot carry are dropped; the rest are escaped.
-  return value.replace(/[^\t\n\r -퟿-�\u{10000}-\u{10FFFF}]/gu, "")
+  return value.replace(/[^\t\n\r\u0020-\uD7FF\uE000-\uFFFD\u{10000}-\u{10FFFF}]/gu, "")
     .replace(/[&<>"']/g, (character) => ({
       "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;",
     })[character]!);
