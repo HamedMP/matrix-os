@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { constants, type BigIntStats } from "node:fs";
-import { link, lstat, mkdir, open, rename, rm } from "node:fs/promises";
+import { link, lstat, mkdir, open, rename, rm, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { appFileVersion } from "@matrix-os/contracts/app-files";
 import { AppFileError } from "../app-files/errors.js";
@@ -71,7 +71,13 @@ export class OfficeFileStore {
 
   /** 503 unless the configured home is an existing directory. */
   async assertAvailable(): Promise<void> {
-    const info = await lstatOrNull(this.options.homePath);
+    // The configured home may itself be a link; follow it once here. Links below it are still refused.
+    let info;
+    try { info = await stat(this.options.homePath); }
+    catch (error: unknown) {
+      if (errnoCode(error) !== "ENOENT") throw error;
+      info = null;
+    }
     if (!info || !info.isDirectory()) throw new OfficeDocumentError("unavailable", "home path missing");
   }
 

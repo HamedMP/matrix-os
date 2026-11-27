@@ -190,6 +190,21 @@ describe("misconfiguration", () => {
     }
   });
 
+  it("serves documents when the configured home is a link to the real home", async () => {
+    const path = await h.copyFixture("basic.docx");
+    const linkedHome = join(tmpdir(), `office-linked-home-${Date.now()}`);
+    await symlink(h.home, linkedHome);
+    const linked = await createOfficeHarness({ homePath: linkedHome });
+    try {
+      const response = await linked.post("/documents/describe", { path });
+      expect(response.status).toBe(200);
+      DocumentDescribeReplySchema.parse(await json(response));
+    } finally {
+      await linked.cleanup();
+      await rm(linkedHome, { force: true });
+    }
+  });
+
   it("answers 503 when the home directory is missing", async () => {
     const missing = join(tmpdir(), `office-missing-${Date.now()}`);
     const broken = await createOfficeHarness({ homePath: missing });
