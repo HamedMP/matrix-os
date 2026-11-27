@@ -26,6 +26,7 @@ import {
   SCHEDULED_WAKE_LEAD_MS,
   SLEEP_PASS_BUDGET_MS,
   SLEEP_RECHECK_AFTER_MS,
+  SLEEP_CANDIDATES_PER_TICK,
   WAKE_PASS_BUDGET_MS,
   WAKE_RETRY_MAX_MS,
   createMetalSleeper,
@@ -305,6 +306,39 @@ describe('metal idle sleeper', () => {
     await s.tick(new Date(NOW.getTime() + 2 * SLEEP_RECHECK_AFTER_MS));
     expect(stop.mock.calls.map(([ref]) => (ref as { machineId: string }).machineId)).toContain(idle);
     expect(await machine(idle)).toMatchObject({ status: 'suspended' });
+  });
+
+  it('free-tier-sleep turned on suspends an idle VM on the next tick, not after the recheck window', async () => {
+    const idle = await seedMachine();
+    let allowed = false;
+    const { sleeper: s, stop } = sleeper({ sleepAllowed: async () => allowed });
+
+    await s.tick(NOW);
+    expect(stop).not.toHaveBeenCalled();
+
+    allowed = true;
+    await s.tick(new Date(NOW.getTime() + METAL_SLEEP_INTERVAL_MS));
+    expect(stop).toHaveBeenCalledTimes(1);
+    expect(await machine(idle)).toMatchObject({ status: 'suspended' });
+  });
+
+  it('VMs skipped by free-tier-sleep rotate behind others instead of filling every batch', async () => {
+    // A full batch of owners with sleep off, all idler than the one owner rolled in.
+    for (let i = 0; i <= SLEEP_CANDIDATES_PER_TICK; i += 1) {
+      await seedMachine({ overrides: { lastActivityAt: ago(3 * HOUR) } });
+    }
+    const target = await seedMachine();
+    const targetOwner = (await machine(target)).clerkUserId;
+    const sleepAllowed = vi.fn(async (owner: string) => owner === targetOwner);
+    const { sleeper: s, stop } = sleeper({ sleepAllowed });
+
+    await s.tick(NOW);
+    expect(stop).not.toHaveBeenCalled();
+    await s.tick(new Date(NOW.getTime() + METAL_SLEEP_INTERVAL_MS));
+    expect(stop).toHaveBeenCalledTimes(1);
+    expect(stop.mock.calls[0]?.[0]).toMatchObject({ machineId: target });
+    // Each tick stays bounded while the flag is off.
+    expect(sleepAllowed.mock.calls.length).toBeLessThanOrEqual(2 * SLEEP_CANDIDATES_PER_TICK);
   });
 
   it('never sleeps paid VMs', async () => {

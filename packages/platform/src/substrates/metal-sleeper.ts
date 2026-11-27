@@ -316,10 +316,6 @@ export function createMetalSleeper(deps: MetalSleeperDeps): MetalSleeper {
       log('sleep_skipped_paid', { machineId: machine.machineId });
       return;
     }
-    if (deps.sleepAllowed && !await deps.sleepAllowed(machine.clerkUserId)) {
-      log('sleep_skipped_flag', { machineId: machine.machineId });
-      return;
-    }
     let read: LifecycleRead;
     try {
       read = await deps.readLifecycle(machine, signal);
@@ -531,6 +527,7 @@ export function createMetalSleeper(deps: MetalSleeperDeps): MetalSleeper {
     const idleBefore = new Date(nowMs - IDLE_SLEEP_AFTER_MS);
     const settledBefore = new Date(nowMs - WAKE_SETTLE_MS);
     const recheckBefore = new Date(nowMs - SLEEP_RECHECK_AFTER_MS);
+    const flagRecheckStamp = new Date(nowMs - SLEEP_RECHECK_AFTER_MS + METAL_SLEEP_INTERVAL_MS);
     const rows = await db.executor.selectFrom('user_machines as m').selectAll('m')
       .where('m.substrate', '=', 'metal')
       .where('m.status', '=', 'running')
@@ -555,8 +552,12 @@ export function createMetalSleeper(deps: MetalSleeperDeps): MetalSleeper {
       }
       const machine = mapUserMachine(row);
       try {
+        const sleepAllowed = !deps.sleepAllowed || await deps.sleepAllowed(machine.clerkUserId);
         // Stamped before the check, so a runtime that fails or is skipped rotates behind the others.
-        const stamped = await db.executor.updateTable('user_machines').set({ sleep_checked_at: now })
+        // A runtime skipped only because `free-tier-sleep` is off is due again after one interval,
+        // so turning the flag on takes effect on the next pass while the scan still rotates.
+        const stamped = await db.executor.updateTable('user_machines')
+          .set({ sleep_checked_at: sleepAllowed ? now : flagRecheckStamp })
           .where('machine_id', '=', machine.machineId)
           .where('generation', '=', machine.generation)
           .where('status', '=', 'running')
@@ -564,6 +565,10 @@ export function createMetalSleeper(deps: MetalSleeperDeps): MetalSleeper {
           .returning('machine_id')
           .executeTakeFirst();
         if (!stamped) continue;
+        if (!sleepAllowed) {
+          log('sleep_skipped_flag', { machineId: machine.machineId });
+          continue;
+        }
         await sleepOne(machine, now, clock, signal);
       } catch (error: unknown) {
         if (signal.aborted) return;
