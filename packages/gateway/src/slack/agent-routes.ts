@@ -15,7 +15,13 @@ type Address = Pick<SlackAgentChannel, "ownerId" | "runtimeId" | "appId" | "team
 export function attestsSlackAgentRoute(snapshot: SlackAgentRouteSnapshot, channels: readonly SlackAgentChannel[]) {
   return channels.some(c => c.ownerId === snapshot.ownerId && c.runtimeId === snapshot.runtimeId
     && c.appId === snapshot.appId && c.teamId === snapshot.teamId && c.channelId === snapshot.channelId
-    && c.installationGeneration === snapshot.installationGeneration && c.sourceId === snapshot.sourceId && c.senderId === snapshot.senderId);
+    && c.installationGeneration === snapshot.installationGeneration && c.sourceId === snapshot.sourceId
+    && c.senderId === snapshot.senderId && c.channelSummary === snapshot.channelSummary);
+}
+
+export function matchesSlackRouteSender(route: SlackAgentRouteSnapshot, event: RoutedSlackEvent) {
+  return route.kind === "summary" && route.channelSummary === true
+    || route.senderId === event.userId && !event.botId;
 }
 
 /** A route belongs to exactly one owner and channel. All grant additions serialize on the owner's Agent lock. */
@@ -40,7 +46,7 @@ async function readRoute(db: QueryExecutorProvider, address: Address) {
   if (!parsed.success || parsed.data.kind !== "slack_channel") return null;
   const route = parsed.data.route;
   if (!route || route.ownerId !== ownerId || route.runtimeId !== runtimeId || route.sourceId !== sourceId
-    || route.installationGeneration !== installationGeneration) return null;
+    || route.installationGeneration !== installationGeneration || (route.channelSummary && route.kind !== "summary")) return null;
   const privateBinding = await sql`SELECT 1 FROM bot_resource_grants g
     INNER JOIN bot_chat_bindings b ON b.bot_id=g.bot_id AND b.owner_id=g.owner_id AND b.chat_id=g.chat_id
     INNER JOIN chats c ON c.id=b.chat_id AND c.owner_id=b.owner_id
@@ -66,7 +72,7 @@ async function readRoute(db: QueryExecutorProvider, address: Address) {
   }
   const snapshot: SlackAgentRouteSnapshot = { ownerId, runtimeId, appId, teamId, channelId, installationGeneration, sourceId,
     agentId: row.bot_id, chatId: row.chat_id, routeId: row.grant_id, revision: Number(row.revision),
-    senderId: route.senderId, kind: route.kind, ...(github ? { github } : {}) };
+    senderId: route.senderId, kind: route.kind, ...(route.channelSummary ? { channelSummary: true } : {}), ...(github ? { github } : {}) };
   return { snapshot, enabledAt: new Date(row.created_at).getTime() };
 }
 
@@ -81,7 +87,7 @@ export function createSlackAgentRouteResolver(deps: { ownerId: string; runtimeId
     async resolve(event: RoutedSlackEvent, tx: QueryExecutorProvider): Promise<SlackAgentRouteSnapshot | null> {
       if (event.ownerId !== deps.ownerId || event.runtimeId !== deps.runtimeId) return null;
       const found = await readRoute(tx, event);
-      if (!found || found.snapshot.senderId !== event.userId || Number(event.ts) * 1000 < found.enabledAt
+      if (!found || !matchesSlackRouteSender(found.snapshot, event) || Number(event.ts) * 1000 < found.enabledAt
         || !await deps.isActiveManagedAgent(deps.ownerId, found.snapshot.agentId)) return null;
       return found.snapshot;
     },

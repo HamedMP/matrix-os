@@ -46,7 +46,7 @@ async function verifyGitHubReviewRepository(
 
 export function routeCandidates(channels: readonly SlackAgentChannel[]): BotResourceGrantCandidate[] {
   return channels.flatMap(({ name, teamId, channelId, ...source }) =>
-    (["summary", "review"] as const).map(kind => ({
+    (source.channelSummary ? ["summary"] as const : ["summary", "review"] as const).map(kind => ({
       connectionId: source.appId + "." + teamId,
       label: "#" + name + (kind === "summary" ? " · Summarize new messages" : " · Review pull requests"),
       scope: { kind: "slack_channel", teamId, channelId, route: { ...source, kind } },

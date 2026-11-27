@@ -19,11 +19,13 @@ import { createSlackOwnerClient } from "../../packages/gateway/src/startup/slack
 import { registerOwnerSlack } from "../../packages/gateway/src/startup/slack-owner.js";
 import { createSlackHomeTransport } from "../../packages/platform/src/slack-home-transport.js";
 import { createSlackApp } from "../../packages/platform/src/slack/wiring.js";
+import { loadSlackDevAgentChannels } from "../../packages/platform/src/slack/agent-channels.js";
 import { encryptSlackToken } from "../../packages/platform/src/slack/security.js";
 import type { SlackDatabase } from "../../packages/platform/src/slack/database.js";
 import { createRealBotStateDatabase, insertChat } from "./bots/bot-state-support.js";
+import { summaryRuntime } from "./slack-summary-runtime-support.js";
 
-it("reopens two Apps assignments and matches signed events from one installation to their original private Chats", async () => {
+it.each([false, true])("routes signed events to two private Chats (channel-wide summaries: %s)", async (channelSummary) => {
   const fixture = await createRealBotStateDatabase();
   const { db } = fixture;
   const close: Array<() => Promise<unknown> | void> = [fixture.destroy];
@@ -38,7 +40,10 @@ it("reopens two Apps assignments and matches signed events from one installation
     const ownerId = "user_intake", organizationId = "org_intake", handle = "intake-dev", token = "a".repeat(64);
     const appId = "A123", teamId = "T123", senderId = "U123", machineId = "6c949f52-99a8-42eb-8a15-11bb1a045cc6";
     const dev = {ownerId,organizationId,handle,machineId,teamId,channelId:"C999",ownerSlackId:senderId};
-    const channels = [{channelId:"C101",name:"summary",senderId},{channelId:"C102",name:"reviews",senderId}];
+    const channels = [
+      { channelId: "C101", name: "summary", senderId, ...(channelSummary ? { channelSummary: true as const } : {}) },
+      { channelId: "C102", name: "reviews", senderId },
+    ];
     const agents = ["bot_1234567812345678","bot_abcdef0123456789"];
     const chats = ["chat_intake_summary","chat_intake_review"];
     const config = { appId, clientId:"123.456", clientSecret:"c".repeat(32), signingSecret:"s".repeat(32),
@@ -49,7 +54,8 @@ it("reopens two Apps assignments and matches signed events from one installation
     const gateway = new Hono();
     const sendHome = createSlackHomeTransport({fetchImpl:async(url,init)=>gateway.fetch(new Request(url,init))});
     const platform = await createSlackApp({db:db as unknown as Kysely<SlackDatabase>,config,api,startCleanup:false,
-      readOnlyDev:dev,agentChannels:{teamId,ownerSlackId:senderId,channels},resolveActor:async()=>null,requireOrgAdmin:async()=>false,
+      readOnlyDev:dev,agentChannels:loadSlackDevAgentChannels(JSON.stringify({teamId,ownerSlackId:senderId,channels}),dev),
+      resolveActor:async()=>null,requireOrgAdmin:async()=>false,
       isCurrentMember:async()=>true,authorizeChannelBinding:async()=>false,authorizeReply:async()=>false,
       resolveDestination:async()=>({ownerId,runtimeId:machineId}), authenticateRuntime:async()=>({ownerId,runtimeId:machineId}),
       dispatch:vi.fn(),dispatchRouted:async(event,signal)=>{await sendHome({ownerId,token,origin:"https://gateway.example"},"agent-event",event,signal);} });
@@ -73,21 +79,25 @@ it("reopens two Apps assignments and matches signed events from one installation
     close.push(bridge.close);
     const openApps=()=>createBotResourceGrantService({transact,isActiveManagedAgent,providers:createBotResourceCandidates({
       runtimeOwnerId:ownerId,client:github,githubReview:repo,slackRouteChannels:lane.listChannels})});
-    for (const [i,id] of agents.entries()) {
+    for (const i of [1, 0]) {
+      const id = agents[i]!;
       await insertChat(db,chats[i]!,ownerId);
       await db.insertInto("bot_chat_bindings").values({owner_id:ownerId,chat_id:chats[i]!,bot_id:id,kind:"direct",created_at:new Date(),removed_at:null}).execute();
       const apps=openApps();
       if(i===1) await apps.grant(ownerId,id,(await apps.list(ownerId,id)).candidates.find(c=>c.kind==="github_repository")!.id);
-      const c=(await apps.list(ownerId,id)).candidates.find(c=>c.routeKind===(i===0?"summary":"review") && c.label.includes("#"+channels[i]!.name));
+      const candidates = (await apps.list(ownerId, id)).candidates;
+      if (i === 1) expect(candidates.some(candidate =>
+        candidate.routeKind === "review" && candidate.label.startsWith("#summary "))).toBe(!channelSummary);
+      const c = candidates.find(c=>c.routeKind===(i===0?"summary":"review") && c.label.includes("#"+channels[i]!.name));
       expect(c).toBeDefined();
       await apps.grant(ownerId,id,c!.id);
       expect((await openApps().list(ownerId,id)).grants).toHaveLength(i+1);
     }
     const eventSeconds = Math.floor(Date.now() / 1000) + 1;
-    async function push(i:number,text:string, sequence = i + 1){
+    async function push(i: number, text: string, sequence = i + 1, eventFields: Record<string, unknown> = {}) {
       const ts = eventSeconds + "." + String(sequence).padStart(6, "0");
       const body=JSON.stringify({type:"event_callback",api_app_id:appId,team_id:teamId,event_id:"EvRoute" + sequence,
-        event:{type:"message",channel_type:"channel",channel:channels[i]!.channelId,user:senderId,ts,text}});
+        event:{type:"message",channel_type:"channel",channel:channels[i]!.channelId,user:senderId,ts,text,...eventFields}});
       const timestamp=String(Math.floor(Date.now()/1000));
       const signature=createHmac("sha256",config.signingSecret).update("v0:"+timestamp+":"+body).digest("hex");
       return platform.routes.request("/webhooks/slack/events",{method:"POST",body,headers:{"x-slack-request-timestamp":timestamp,"x-slack-signature":"v0="+signature}});
@@ -98,6 +108,47 @@ it("reopens two Apps assignments and matches signed events from one installation
     const githubInventory = vi.spyOn(github, "inventory");
     const review = "Please review https://github.com/acme/demo/pull/1";
     const jobCount = async () => (await sql`SELECT id FROM slack_mention_summary_jobs`.execute(db)).rows.length;
+    if (channelSummary) {
+      const reply = { user: "U456", thread_ts: eventSeconds + ".000009" };
+      const notification = { user: undefined, bot_id: "B123", subtype: "bot_message", channel_type: undefined };
+      expect((await push(0, review, 9, { user: "U456" })).status).toBe(200);
+      expect((await push(0, "Follow-up from a teammate.", 7, reply)).status).toBe(200);
+      expect((await push(0, "Linear moved the ticket to In Progress.", 8, notification)).status).toBe(200);
+      expect((await push(0, "Linear moved the ticket to In Progress.", 8, notification)).status).toBe(200);
+      expect((await push(0, "An edited message", 10, { ...reply, subtype: "message_changed" })).status).toBe(200);
+      expect((await push(0, "From our Slack app", 11, { ...notification, app_id: appId })).status).toBe(200);
+      expect((await push(0, "From our Slack bot", 12, { ...notification, user: "UBOT" })).status).toBe(200);
+      expect((await push(0, "A different channel", 13, { user: "U456", channel: "C456" })).status).toBe(200);
+      expect((await push(1, review, 14, { user: "U456" })).status).toBe(200);
+      expect((await push(1, review, 15, { ...notification, user: senderId })).status).toBe(200);
+      expect((await push(0, "From our app profile", 16, { ...notification, bot_profile: { app_id: appId } })).status).toBe(200);
+      expect((await push(0, "Explicitly marked as a private group", 17, { ...notification, channel_type: "group" })).status).toBe(200);
+
+      const added = await sql`SELECT bot_id, chat_id, routed->>'kind' AS kind,
+        envelope->>'eventId' AS event, envelope->>'userId' AS author, envelope->>'botId' AS bot
+        FROM slack_mention_summary_jobs ORDER BY envelope->>'eventId'`.execute(db);
+      const summary = { bot_id: agents[0], chat_id: chats[0], kind: "summary" };
+      expect(added.rows).toEqual([
+        { ...summary, event: "EvRoute7", author: "U456", bot: null },
+        { ...summary, event: "EvRoute8", author: null, bot: "B123" },
+        { ...summary, event: "EvRoute9", author: "U456", bot: null },
+      ]);
+      const runtime = await summaryRuntime(db, worker, ownerId, agents[0]!, "Channel update summarized.");
+      close.push(runtime.close);
+      await vi.waitFor(async () => {
+        await worker.drain();
+        const committed = await db.selectFrom("chat_messages").select("chat_id")
+          .where("role", "=", "assistant").where("state", "=", "committed").execute();
+        expect(committed).toEqual(Array.from({ length: 3 }, () => ({ chat_id: chats[0] })));
+      }, { timeout: 15_000 });
+      expect(runtime.modelRequests).toHaveLength(3);
+      expect(JSON.stringify(runtime.modelRequests)).toContain("Linear moved the ticket to In Progress.");
+      expect(runtime.modelRequests.every(request => !Array.isArray(request.tools) || request.tools.length === 0)).toBe(true);
+      expect(githubCall).not.toHaveBeenCalled();
+      expect(api.postMessage).not.toHaveBeenCalled();
+      expect(api.addReaction).not.toHaveBeenCalled();
+      return;
+    }
     expect((await push(1,"Please review https://github.com/other/repo/pull/1",3)).status).toBe(200);
     expect(api.conversationInfo).not.toHaveBeenCalled();
     api.hasChannelMember.mockResolvedValueOnce(false);
@@ -121,5 +172,6 @@ it("reopens two Apps assignments and matches signed events from one installation
     const jobs=await sql`SELECT bot_id,chat_id,routed->>'kind' AS kind FROM slack_mention_summary_jobs ORDER BY chat_id`.execute(db);
     expect(jobs.rows).toEqual([{bot_id:agents[1],chat_id:chats[1],kind:"review"},{bot_id:agents[0],chat_id:chats[0],kind:"summary"}]);
     expect(api.postMessage).not.toHaveBeenCalled();
+    expect(api.addReaction).not.toHaveBeenCalled();
   } finally { for(const finish of close.reverse()) await finish(); }
 },30000);

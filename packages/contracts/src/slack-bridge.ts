@@ -225,10 +225,12 @@ export const SlackAgentChannelSchema = z.strictObject({
   teamId: Provenance.shape.teamId, channelId: SlackChannelMetadataSchema.shape.id,
   name: SlackChannelMetadataSchema.shape.name.refine(name => name.toLowerCase() !== "tech"),
   installationGeneration: z.number().int().positive(), senderId: Provenance.shape.userId, sourceId: Digest,
+  channelSummary: z.literal(true).optional(),
 });
 export type SlackAgentChannel = z.infer<typeof SlackAgentChannelSchema>;
-export const RoutedSlackEventSchema = SlackAgentChannelSchema.omit({name:true,senderId:true}).extend({
-  eventId: Provenance.shape.eventId, ts: Timestamp, threadTs: Timestamp, userId: Provenance.shape.userId,
+export const RoutedSlackEventSchema = SlackAgentChannelSchema.omit({ name: true, senderId: true, channelSummary: true }).extend({
+  eventId: Provenance.shape.eventId, ts: Timestamp, threadTs: Timestamp, userId: Provenance.shape.userId.optional(),
+  botId: z.string().regex(/^B[A-Z0-9]{2,63}$/).optional(),
   text: z.string().trim().min(1).max(12_000),
-});
+}).refine(event => Boolean(event.userId || event.botId));
 export type RoutedSlackEvent = z.infer<typeof RoutedSlackEventSchema>;

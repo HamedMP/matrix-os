@@ -25,6 +25,7 @@ const EnvelopeSchema = z.object({ type: z.literal("event_callback"), api_app_id:
 const CallbackQuerySchema = SlackOAuthCallbackQuerySchema;
 const ChallengeSchema = z.object({ type: z.literal("url_verification"), challenge: z.string().min(1).max(1_024), api_app_id: SlackAppIdSchema.optional() }).passthrough();
 const digest = (text: string) => createHash("sha256").update(text).digest("hex");
+const newMessageSubtypes = ["bot_message", "file_share", "me_message", "reply_broadcast", "thread_broadcast"];
 
 export type SlackAppRouteOptions = SlackAuthorityDependencies & SlackThreadContextOptions & SlackAgentChannelsOptions & {
   config: SlackAppConfig; repository: SlackRepository; api: SlackApi; now?: () => Date; readOnlyDev?: SlackDevAcceptance;
@@ -230,12 +231,22 @@ export function createSlackAppRoutes(options: SlackAppRouteOptions): Hono & { sh
     const installed = await options.repository.getInstallation(appId, teamId);
     if ((!installed || installed.state !== "active") && !revocation) return fail(c, "Forbidden", 403);
     if (envelope.data.is_ext_shared_channel || event.is_ext_shared || (event.user_team && event.user_team !== teamId)) return c.json({ received: true });
-    if (agentLane && routeWorkspace && event.type === "message" && event.channel_type === "channel" && installed
-      && !event.bot_id && !event.subtype && event.app_id === undefined && event.user && event.user !== installed.botUserId
-      && event.channel && event.ts && event.text && options.agentChannels!.channels.some(ch => ch.channelId === event.channel)) {
-      const status = await agentLane.receive({ eventId, channelId: event.channel, userId: event.user, ts: event.ts,
-        threadTs: event.thread_ts, text: event.text }, installed, body, signal);
-      return status === 200 ? c.json({ received: true }) : fail(c, status === 409 ? "Conflicting delivery" : "Slack unavailable", status);
+    const routedChannel = routeWorkspace && options.agentChannels?.channels.find(ch => ch.channelId === event.channel);
+    const routedPublicMessage = event.channel_type === "channel"
+      || (routedChannel && routedChannel.channelSummary && event.channel_type === undefined && event.channel?.startsWith("C"));
+    if (agentLane && routedChannel && event.type === "message" && routedPublicMessage && installed && event.channel
+      && event.ts && event.text && event.user !== installed.botUserId) {
+      const profile = event.bot_profile;
+      const profileAppId = profile && typeof profile === "object" && "app_id" in profile ? profile.app_id : undefined;
+      const newSummaryPost = (event.user || event.bot_id)
+        && (!event.subtype || newMessageSubtypes.includes(event.subtype))
+        && event.app_id !== appId && profileAppId !== appId;
+      const ordinaryHumanPost = !event.bot_id && !event.subtype && event.app_id === undefined && event.user;
+      if (routedChannel.channelSummary ? newSummaryPost : ordinaryHumanPost) {
+        const status = await agentLane.receive({ eventId, channelId: event.channel, userId: event.user, botId: event.bot_id,
+          ts: event.ts, threadTs: event.thread_ts, text: event.text }, installed, body, signal);
+        return status === 200 ? c.json({ received: true }) : fail(c, status === 409 ? "Conflicting delivery" : "Slack unavailable", status);
+      }
     }
     if (dev && !revocation && (event.type !== "message" || teamId !== dev.teamId || event.channel !== dev.channelId)) return c.json({ received: true });
     if (threadContext.receive && installed && event.type === "message" && event.channel_type === "channel"

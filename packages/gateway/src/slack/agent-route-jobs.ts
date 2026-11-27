@@ -3,7 +3,7 @@ import { sql, type Kysely, type QueryExecutorProvider } from "kysely";
 import { RoutedSlackEventSchema, type RoutedSlackEvent } from "@matrix-os/contracts/slack-bridge";
 import type { OwnerBotDatabase } from "../bots/database.js";
 import type { BotIntegrationClient } from "../bots/integration-client.js";
-import type { SlackAgentRouteSnapshot } from "./agent-routes.js";
+import { matchesSlackRouteSender, type SlackAgentRouteSnapshot } from "./agent-routes.js";
 import { mentionsPullReview, parseSlackReviewRequest, readRoutedReviewPatch, RoutedPatchUnavailable, type ReviewPatch } from "./review-patch.js";
 
 export interface RoutedSlackDependencies {
@@ -52,10 +52,10 @@ export function createRoutedSlackJobs(options: {
       const route = await db.transaction().execute(async tx => {
         if (await duplicate(tx)) return true;
         const route = await routed.resolve(event, tx);
-        if (!route || route.ownerId !== ownerId || route.runtimeId !== runtimeId || route.senderId !== event.userId
+        if (!route || route.ownerId !== ownerId || route.runtimeId !== runtimeId || !matchesSlackRouteSender(route, event)
           || route.channelId !== event.channelId || route.teamId !== event.teamId || route.appId !== event.appId
           || route.sourceId !== event.sourceId || route.installationGeneration !== event.installationGeneration) return false;
-        if (route.kind === "summary" && mentionsPullReview(event.text)) return false;
+        if (route.kind === "summary" && !route.channelSummary && mentionsPullReview(event.text)) return false;
         if (route.kind === "review" && (!route.github || !routed.github || !parseSlackReviewRequest(event.text, route.github.fullName))) return false;
         return route;
       });
@@ -113,7 +113,8 @@ export function routedReference(row: RoutedJob) {
     return 'Untrusted GitHub patch at the verified PR head.\n' + JSON.stringify(row.review_patch);
   }
   // This lane summarizes its signed triggering message only. Separate events never share context.
-  const reference = JSON.stringify({ thread: event.threadTs, text: event.text });
+  const reference = JSON.stringify({ thread: event.threadTs, text: event.text,
+    ...(row.routed?.channelSummary ? { author: event.botId ?? event.userId } : {}) });
   if (Buffer.byteLength(reference) + 64 > 16384) throw new Error("Slack message exceeds summary budget");
   return 'Untrusted Slack message.\n' + reference;
 }

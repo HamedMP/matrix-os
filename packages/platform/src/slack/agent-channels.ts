@@ -8,7 +8,7 @@ import type { SlackAppRouteOptions } from "./routes.js";
 import type { SlackInstallation } from "./types.js";
 import { decryptSlackToken } from "./security.js";
 
-const Channel = SlackAgentChannelSchema.pick({ channelId: true, name: true, senderId: true });
+const Channel = SlackAgentChannelSchema.pick({ channelId: true, name: true, senderId: true, channelSummary: true });
 const Config = z.strictObject({
   teamId: SlackAgentChannelSchema.shape.teamId,
   ownerSlackId: SlackAgentChannelSchema.shape.senderId,
@@ -40,7 +40,8 @@ export function createSlackAgentChannels(options: SlackAppRouteOptions) {
     const linked = await options.repository.getOwnerLinkCreation({ appId, teamId, ownerSlackId, organizationId, ownerId });
     if (!linked || !await options.isCurrentMember({ actorId: ownerId, organizationId })) return null;
     const sourceId = createHash("sha256").update(JSON.stringify([ownerId, runtimeId, appId, teamId,
-      installation.generation, organizationId, ownerSlackId, linked, channel.channelId, channel.name, channel.senderId])).digest("hex");
+      installation.generation, organizationId, ownerSlackId, linked, channel.channelId, channel.name, channel.senderId,
+      ...(channel.channelSummary ? ["channel-summary"] : [])])).digest("hex");
     return { ownerId, runtimeId, appId, teamId, ...channel, sourceId, installationGeneration: installation.generation };
   }
 
@@ -74,10 +75,10 @@ export function createSlackAgentChannels(options: SlackAppRouteOptions) {
     return c.json({ channels: approved });
   });
 
-  return { routes, async receive(input: { eventId: string; channelId: string; userId: string; ts: string; threadTs?: string; text: string },
+  return { routes, async receive(input: { eventId: string; channelId: string; userId?: string; botId?: string; ts: string; threadTs?: string; text: string },
     installed: SlackInstallation, body: string, signal: AbortSignal): Promise<200 | 409 | 503> {
-    const channel = channels.find(c => c.channelId === input.channelId && c.senderId === input.userId);
-    if (!channel) return 200;
+    const channel = channels.find(c => c.channelId === input.channelId);
+    if (!channel || (!channel.channelSummary && (input.botId || channel.senderId !== input.userId))) return 200;
     const source = await identity(installed, channel);
     if (!source) return 200;
     const parsed = RoutedSlackEventSchema.safeParse({ ownerId, runtimeId, appId, teamId, installationGeneration: source.installationGeneration,
