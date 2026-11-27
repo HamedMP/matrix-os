@@ -445,7 +445,7 @@ describe("canonical send admission receipts", () => {
         refresh();
         await waitFor(() => expect(screen.queryByText("Message status is unconfirmed. You can retry safely.")).toBeNull());
         const expected = action === "observe" || action === "retry" || action === "busy retry"
-          ? [["chat:electron-preview-run", { chatId: snapshot.chat.id, runId: "run_receipt", requestKind: "verification", recipeSelection: "changed-only" }]] : [];
+          ? [["chat:electron-preview-run", { chatId: snapshot.chat.id, runId: "run_receipt", requestKind: "verification" }]] : [];
         if (expected.length) await screen.findByText("Mac verification returned to this Chat.");
         refresh();
         expect(ipc.mock.calls.filter(([channel]) => channel === "chat:electron-preview-run")).toEqual(expected);

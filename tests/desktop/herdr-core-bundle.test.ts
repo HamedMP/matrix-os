@@ -129,9 +129,7 @@ describe("pinned herdr-core", () => {
   it("is fetched before packaging and packed where the app looks for it, on macOS and Linux only", () => {
     const builder = parse(readFileSync(join(root, "desktop/electron-builder.yml"), "utf8"));
     const packed = [{ from: "build/herdr", to: "herdr" }];
-    expect(builder.mac.extraResources).toEqual([
-      ...packed, { from: "build/mac-verification-support", to: "mac-verification-support" },
-    ]);
+    expect(builder.mac.extraResources).toEqual(packed);
     expect(builder.linux.extraResources).toEqual(packed);
     expect(builder.extraResources).toBeUndefined();
     expect(builder.win.extraResources).toBeUndefined();

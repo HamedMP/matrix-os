@@ -20,7 +20,6 @@ export const PUBLISHED_CLI_COMMANDS = new Set([
   "update",
   "instance",
   "collaboration",
-  "mac",
   "completion",
 ]);
 

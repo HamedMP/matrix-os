@@ -1,4 +1,3 @@
-import { MacVerificationPreparationError } from "@desktop/main/chat-electron-preview/source-provider";
 import { describe, expect, it, vi } from "vitest";
 import type { MacActionPairing } from "@desktop/main/desktop-pairing/action";
 import { createChatElectronPreviewService } from "@desktop/main/chat-electron-preview/service";
@@ -35,13 +34,6 @@ function setup(acquireActionPairing?: MacActionPairing) {
 }
 
 describe("one-time Electron Desktop preview", () => {
-  it("returns a precise bounded preparation failure to the same Chat", async () => {
-    const { deps, service } = setup();
-    deps.execute.mockRejectedValue(new MacVerificationPreparationError("unsupported-version"));
-    expect(await service.run(identity)).toEqual({ status: "failed" });
-    expect(deps.returnResult).toHaveBeenCalledWith(request, { error: "unsupported-version" }, expect.any(AbortSignal));
-  });
-
   it("requires the paired key after consent before claiming or running the preview", async () => {
     const acquireActionPairing = vi.fn(async () => null);
     const { deps, activity, service } = setup(acquireActionPairing);

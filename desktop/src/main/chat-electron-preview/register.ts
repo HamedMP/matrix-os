@@ -1,4 +1,4 @@
-import type { BrowserWindow, IpcMain } from "electron";
+import { dialog, type BrowserWindow, type IpcMain, type OpenDialogOptions } from "electron";
 import { isAbsolute, join } from "node:path";
 import type { MacActionPairing, MacActionPairingLease } from "../desktop-pairing/action";
 import type { AuthService } from "../auth/auth-service";
@@ -9,7 +9,7 @@ import { createChatElectronPreviewClaims } from "./claims";
 import { runChatElectronPreview } from "./executor";
 import { createChatElectronPreviewService } from "./service";
 import type { ChatElectronPreviewBackgroundBinding, ChatElectronPreviewRequest, createChatElectronPreviewTransport } from "./transport";
-import { createMacVerificationSourceProvider, MacVerificationPreparationError } from "./source-provider";
+import { createMacVerificationSetup, resolveVerificationSource } from "./verification-setup";
 
 interface RegistrationOptions {
   auth: AuthService;
@@ -20,7 +20,6 @@ interface RegistrationOptions {
   macVerificationAllowed?: boolean;
   checkout?: string;
   userData: string;
-  resourcesPath?: string;
   electronPath: string;
   window(): BrowserWindow | null;
   isTrustedSender(event: unknown): boolean;
@@ -43,25 +42,29 @@ export function registerChatElectronPreview(ipc: Pick<IpcMain, "handle">, option
     current?.controller.abort("revoked");
   }
   const legacySource = options.allowed && checkout && isAbsolute(checkout) ? { checkout, electronPath } : null;
-  const sourceProvider = options.macVerificationAllowed ? createMacVerificationSourceProvider({
-    resourcesPath: options.resourcesPath ?? process.resourcesPath, userData,
+  // The legacy development environment is separate from a user-enabled
+  // installed client's native settings.
+  const setup = options.macVerificationAllowed ? createMacVerificationSetup({
+    getStatus: () => auth.getStatus(),
+    resolveSource: resolveVerificationSource,
+    async pickDirectory() {
+      const win = options.window();
+      const request: OpenDialogOptions = { title: "Choose a trusted Matrix OS checkout", properties: ["openDirectory"] };
+      const response = win && !win.isDestroyed()
+        ? await dialog.showOpenDialog(win, request) : await dialog.showOpenDialog(request);
+      return response.canceled ? null : response.filePaths[0] ?? null;
+    },
+    async prompt(prompt) {
+      return (await showMacActivityDialog(options.window(), { ...prompt, title: "Matrix" })).response;
+    },
+    stop(reason) { void service.cancel(reason); },
   }) : null;
-  async function verificationBase() {
-    try { return await sourceProvider?.baseSha(); }
-    catch (error: unknown) {
-      if (error instanceof MacVerificationPreparationError && error.code === "support-unavailable") return undefined;
-      throw error;
-    }
-  }
   function verificationAvailable() {
-    return Boolean(sourceProvider || legacySource);
-  }
-  function isAutomatic(request: ChatElectronPreviewRequest) {
-    return request.requestKind === "verification" && Boolean(sourceProvider);
+    return Boolean(setup?.enabled() || legacySource);
   }
   function resolveSource(request: ChatElectronPreviewRequest, signal: AbortSignal) {
-    signal.throwIfAborted();
-    return legacySource;
+    return request.requestKind === "verification" && setup?.enabled()
+      ? setup.resolveActiveSource(signal) : legacySource;
   }
   // The service admits only one action at a time. Match the selected local
   // source against the one shown during approval after the cloud reread.
@@ -71,15 +74,12 @@ export function registerChatElectronPreview(ipc: Pick<IpcMain, "handle">, option
     beginActivity: options.beginActivity,
     acquireActionPairing: options.acquireActionPairing,
     ...createChatElectronPreviewClaims(join(userData, "chat-electron-preview-claims")),
-    enabled: verificationAvailable(),
-    ...(sourceProvider ? { async hasCompatibleSource(request: ChatElectronPreviewRequest) {
-      return !isAutomatic(request) || request.baseSha === await verificationBase();
-    } } : {}),
+    enabled: Boolean(legacySource || setup),
     async approve(request, signal) {
       approvedSource = null;
-      const source = isAutomatic(request) ? null : await resolveSource(request, signal);
+      const source = await resolveSource(request, signal);
       signal.throwIfAborted();
-      if (!source && !isAutomatic(request)) return false;
+      if (!source) return false;
       const window = options.window();
       const parent = window && !window.isDestroyed() ? window : null;
       if (!parent && !request.backgroundTargetId) return false;
@@ -91,11 +91,10 @@ export function registerChatElectronPreview(ipc: Pick<IpcMain, "handle">, option
           `Chat ${request.chatId}`,
           `Run ${request.runId}`,
           `Worktree ${request.worktreeId}`,
-          source ? `Mac checkout ${source.checkout}` : "Prepare matching source and install pinned dependencies in a private cache on this Mac.",
+          `Mac checkout ${source.checkout}`,
           `Commit ${request.baseSha}`,
           `Source SHA-256 ${request.sourceSha256}`,
-          request.recipe === "files-trash" ? "Verify right-click Move to Trash and Undo with disposable files."
-            : request.requestKind === "verification" ? `Sign-in label: ${request.label}` : `New sign-in label: ${request.label}`,
+          request.requestKind === "verification" ? `Sign-in label: ${request.label}` : `New sign-in label: ${request.label}`,
           ...(request.operation ? ["Check that Sign in shows a recoverable connection error in the isolated preview."] : []),
         ].join("\n"),
         buttons: ["Cancel", "Approve Once"],
@@ -109,21 +108,6 @@ export function registerChatElectronPreview(ipc: Pick<IpcMain, "handle">, option
       return true;
     },
     async execute(request, signal) {
-      if (isAutomatic(request) && sourceProvider) {
-        // The service checks local consent, an active lease and source again before preparation.
-        const source = await sourceProvider.prepare(request.baseSha, signal);
-        try {
-          signal.throwIfAborted();
-          if (!await source.check(signal)) throw new Error("preview support changed");
-          const result = await runChatElectronPreview({
-            checkout: source.checkout, electronPath: source.electronPath, toolchain: source.toolchain,
-            baseSha: request.baseSha, sourceSha256: request.sourceSha256, label: request.label,
-            operation: request.operation, requestKind: request.requestKind, recipe: request.recipe, signal,
-          });
-          if (!await source.check(signal)) throw new Error("preview support changed");
-          return result;
-        } finally { await source.release(); }
-      }
       const source = await resolveSource(request, signal);
       signal.throwIfAborted();
       const identity = source && "identity" in source ? source.identity : undefined;
@@ -133,7 +117,7 @@ export function registerChatElectronPreview(ipc: Pick<IpcMain, "handle">, option
       return runChatElectronPreview({
         checkout: source.checkout, electronPath: source.electronPath, baseSha: request.baseSha,
         sourceSha256: request.sourceSha256, label: request.label, operation: request.operation,
-        requestKind: request.requestKind, recipe: request.recipe, signal,
+        requestKind: request.requestKind, signal,
       });
     },
     reportError(error) {
@@ -144,26 +128,12 @@ export function registerChatElectronPreview(ipc: Pick<IpcMain, "handle">, option
   const check = "chat:electron-preview-available";
   ipc.handle(check, (event, raw) => {
     if (!options.isTrustedSender(event)) throw new Error("invalid request");
-    const { target } = CHAT_ELECTRON_PREVIEW_INVOKE[check].request.parse(raw);
+    CHAT_ELECTRON_PREVIEW_INVOKE[check].request.parse(raw);
     const status = auth.getStatus();
-    const response = {
+    return {
       available: Boolean(legacySource && status.signedIn),
       verificationAvailable: verificationAvailable() && status.signedIn && status.runtimeSlot === "primary",
-      ...(verificationAvailable() && status.signedIn && status.runtimeSlot === "primary" ? { terminalRequests: true } : {}),
     };
-    if (!target || !sourceProvider || !response.verificationAvailable) return response;
-    return verificationBase().then(async baseSha => ({
-      ...response,
-      verificationAvailable: Boolean(baseSha && baseSha === await transport.readVerificationBase(target) && options.isTrustedSender(event)),
-    }));
-  });
-  const terminalIntent = "chat:mac-verification-terminal-intent";
-  ipc.handle(terminalIntent, async (event, raw) => {
-    if (!options.isTrustedSender(event)) throw new Error("invalid request");
-    const ref = CHAT_ELECTRON_PREVIEW_INVOKE[terminalIntent].request.parse(raw);
-    if (!verificationAvailable()) return { digest: null };
-    const digest = await transport.probeTerminalIntent(ref);
-    return { digest: verificationAvailable() && options.isTrustedSender(event) ? digest : null };
   });
   const select = "chat:mac-verification-selection";
   ipc.handle(select, (event, raw) => {
@@ -174,7 +144,7 @@ export function registerChatElectronPreview(ipc: Pick<IpcMain, "handle">, option
       return { accepted: true };
     }
     clearFullAccessSelection();
-    if (!verificationAvailable()) return { accepted: false };
+    if (!setup?.enabled()) return { accepted: false };
     selection = {
       viewId, scope, controller: new AbortController(), isTrusted: () => options.isTrustedSender(event),
     };
@@ -196,17 +166,15 @@ export function registerChatElectronPreview(ipc: Pick<IpcMain, "handle">, option
           return !signal.aborted;
         }
         if (!requireCurrent()) return null;
+        const source = await setup?.resolveActiveSource(signal);
+        if (!requireCurrent()) return null;
+        if (!source) return null;
         const lease = await acquireFullAccessPairing(operation, signal);
         if (!requireCurrent()) {
           lease?.close();
           return null;
         }
         if (!lease) return null;
-        const source = isAutomatic(request) ? null : await resolveSource(request, signal);
-        if (!requireCurrent() || (!source && !isAutomatic(request))) {
-          lease.close();
-          return null;
-        }
         approvedSource = source;
         return {
           close: lease.close,
@@ -214,11 +182,8 @@ export function registerChatElectronPreview(ipc: Pick<IpcMain, "handle">, option
             if (!isCurrent()) operation.abort("revoked");
             if (boundarySignal?.aborted || operation.signal.aborted
               || !await lease.check(boundarySignal, retryBadGateway)) return false;
-            if (source) {
-              const verified = await resolveSource(request, boundarySignal ?? operation.signal);
-              if (!verified || ("identity" in verified ? verified.identity : undefined) !== ("identity" in source ? source.identity : undefined)) operation.abort("revoked");
-            }
-            if (!isCurrent()) operation.abort("revoked");
+            const verified = await setup?.resolveActiveSource(boundarySignal ?? operation.signal);
+            if (!isCurrent() || verified?.identity !== source.identity) operation.abort("revoked");
             return !operation.signal.aborted && !boundarySignal?.aborted;
           },
         };
@@ -232,8 +197,7 @@ export function registerChatElectronPreview(ipc: Pick<IpcMain, "handle">, option
     const request = CHAT_ELECTRON_PREVIEW_INVOKE[run].request.safeParse(raw);
     if (!request.success) throw new Error("invalid request");
     const { fullAccessViewId, ...target } = request.data;
-    if ((target.terminalIntentDigest && !verificationAvailable())
-      || (target.requestKind === "verification" ? !verificationAvailable() : !legacySource)) {
+    if (target.requestKind === "verification" ? !verificationAvailable() : !legacySource) {
       return { status: "unavailable" };
     }
     // A renderer may lose its selection between acknowledging the mode and
@@ -248,17 +212,12 @@ export function registerChatElectronPreview(ipc: Pick<IpcMain, "handle">, option
   });
   let lastHandled: { targetId: string; runId: string } | undefined;
   return {
-    openVerification: sourceProvider ? async () => {
-      await showMacActivityDialog(options.window(), {
-        title: "Matrix", type: "info", message: "Mac Verification is prepared automatically.",
-        detail: "Pair this Mac once, then use /mac-verification in your private worktree Chat. When the worktree revision matches this signed Desktop build, Matrix prepares temporary source, installs pinned dependencies in a private cache, and returns the check result to that Chat. Manage Chat Full Access or disconnect in Mac Pairing.",
-        buttons: ["Done"],
-      });
-    } : undefined,
+    openVerification: setup?.open,
     clearFullAccessSelection,
     async cancel(reason: "stopped" | "revoked" = "revoked") {
       if (reason === "revoked") {
         clearFullAccessSelection();
+        setup?.clearSetup();
       }
       await service.cancel(reason);
     },

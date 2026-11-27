@@ -2,8 +2,7 @@
 // app consumes (specs/094-electron-macos-shell/contracts/gateway-contract.md).
 // Device auth approves instantly; one project with tasks; one fake zellij echo
 // session with sequence-numbered output; scripted kernel stream.
-import { randomUUID } from "node:crypto";
-import { createServer, type IncomingMessage, type RequestListener, type Server, type ServerResponse } from "node:http";
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { WebSocketServer, WebSocket } from "ws";
 import { resolve } from "node:path";
 import { readBuildSource } from "../../../../scripts/release/build-source.mjs";
@@ -49,8 +48,6 @@ export interface StubGateway {
 }
 
 export interface StubGatewayOptions {
-  /** Serve real Files endpoints behind the isolated fixture's bearer check. */
-  ownerFiles?: RequestListener;
   appSharing?: {
     appId: string;
     organizationId: string;
@@ -669,8 +666,7 @@ export async function startStubGateway(options: StubGatewayOptions = {}): Promis
     deletedConversationIds: [],
     kernelConnections: 0,
   };
-  const initialToken = options.ownerFiles ? randomUUID() : TOKEN;
-  let currentToken = initialToken;
+  let currentToken = TOKEN;
   const organizationManagement = options.organizationManagement ? structuredClone(options.organizationManagement) : null;
   let appReadinessChecked = false;
   let appShareActive = false;
@@ -678,7 +674,7 @@ export async function startStubGateway(options: StubGatewayOptions = {}): Promis
   const terminalOutputSequences: Record<string, number> = {};
   let createdHermesConversation = false;
   const hermesConversationContexts = new Map<string, Map<string, string>>([
-    [initialToken, new Map()],
+    [TOKEN, new Map()],
     [REVIEW_TOKEN, new Map()],
   ]);
   const busyHermesConversations = new Set<string>();
@@ -721,7 +717,7 @@ export async function startStubGateway(options: StubGatewayOptions = {}): Promis
       state.tokenRequests += 1;
       await readBody(req);
       json(res, 200, {
-        accessToken: initialToken,
+        accessToken: TOKEN,
         expiresAt: Date.now() + 3_600_000,
         userId: options.identity?.userId ?? "user-1",
         handle: options.identity?.handle ?? "neo",
@@ -756,11 +752,6 @@ export async function startStubGateway(options: StubGatewayOptions = {}): Promis
     const syntheticOrganizationRoute = organizationManagement && path.startsWith("/api/organizations");
     if (req.headers.authorization !== `Bearer ${currentToken}` && !syntheticOrganizationRoute) {
       json(res, 401, { error: "unauthorized" });
-      return;
-    }
-
-    if (options.ownerFiles && path.startsWith("/api/files/")) {
-      options.ownerFiles(req, res);
       return;
     }
 

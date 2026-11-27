@@ -30,7 +30,7 @@ function acceptVerificationDraft(
   run: CanonicalChatDetailResponse["runs"][number],
 ) {
   act(() => {
-    const submission = draft?.beginSubmission(run.id, "Verify the current worktree changes on my Mac.", false);
+    const submission = draft?.beginSubmission(run.id);
     if (!submission || submission === "draft-changed") throw new Error("Expected the current verification draft to submit");
     submission.accept(run);
     submission.finish();
@@ -81,7 +81,6 @@ function previewBridge(firstStatus = "returned") {
 
 afterEach(() => {
   cleanup();
-  vi.useRealTimers();
   vi.unstubAllGlobals();
   initialProps.onDraft.mockClear();
 });
@@ -168,124 +167,6 @@ describe("Electron Chat preview", () => {
 });
 
 describe("Mac Verification", () => {
-  function terminalBridge(reply: () => { status: string } | Promise<{ status: string }>, digest: string | null = "d".repeat(64), accepted = true) {
-    const invoke = vi.fn(async (channel: string, _payload?: unknown) => {
-      if (channel === "chat:electron-preview-available") return { available: false, verificationAvailable: true, terminalRequests: Boolean(digest) };
-      if (channel === "chat:mac-verification-selection") return { accepted };
-      if (channel === "chat:mac-verification-terminal-intent") return { digest };
-      return reply();
-    });
-    vi.stubGlobal("operator", { invoke });
-    return invoke;
-  }
-
-  it.each(["unavailable", "busy"])("keeps a %s Terminal check idle until the owner retries", async initialStatus => {
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-    let paired = false;
-    const invoke = terminalBridge(() => ({ status: paired ? "returned" : initialStatus }));
-    await act(async () => {
-      render(<StrictMode><ChatElectronPreview {...initialProps} permissionMode="full_access" detail={verificationDetail()} /></StrictMode>);
-    });
-    const dispatches = () => invoke.mock.calls.filter(([channel]) => channel === "chat:electron-preview-run");
-    expect(dispatches()).toHaveLength(1);
-    await act(async () => { await vi.advanceTimersByTimeAsync(9_000); });
-    expect(dispatches()).toHaveLength(1);
-    paired = true;
-    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Retry Mac verification" })); });
-    expect(screen.getByText("Mac verification returned to this Chat.")).toBeTruthy();
-    expect(dispatches()).toHaveLength(2);
-    expect(dispatches()[1]).toEqual(dispatches()[0]);
-    expect(screen.queryByRole("button", { name: "Retry Mac verification" })).toBeNull();
-  });
-
-  it.each(["returned", "declined", "failed", "already-handled"])("does not retry a terminal request after %s", async status => {
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-    const invoke = terminalBridge(() => ({ status }));
-    await act(async () => {
-      render(<ChatElectronPreview {...initialProps} permissionMode="full_access" detail={verificationDetail()} />);
-    });
-    expect(screen.queryByRole("button", { name: "Retry Mac verification" })).toBeNull();
-    await act(async () => { await vi.advanceTimersByTimeAsync(9_000); });
-    expect(invoke.mock.calls.filter(([channel]) => channel === "chat:electron-preview-run")).toHaveLength(1);
-  });
-
-  it("does not automatically redispatch an unknown IPC outcome", async () => {
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-    const invoke = terminalBridge(() => { throw new Error("reply lost after native dispatch"); });
-    await act(async () => {
-      render(<ChatElectronPreview {...initialProps} permissionMode="full_access" detail={verificationDetail()} />);
-    });
-    expect(screen.getByRole("button", { name: "Retry Mac verification" })).toBeTruthy();
-    await act(async () => { await vi.advanceTimersByTimeAsync(9_000); });
-    expect(invoke.mock.calls.filter(([channel]) => channel === "chat:electron-preview-run")).toHaveLength(1);
-  });
-
-  it("fences duplicate retry clicks and settles a claimed native request without polling replay", async () => {
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-    let settleRetry!: (reply: { status: string }) => void;
-    let dispatches = 0;
-    terminalBridge(() => {
-      if (++dispatches === 1) return { status: "unavailable" };
-      return new Promise<{ status: string }>(resolve => { settleRetry = resolve; });
-    });
-    await act(async () => { render(<ChatElectronPreview {...initialProps} permissionMode="full_access" detail={verificationDetail()} />); });
-    const retry = screen.getByRole("button", { name: "Retry Mac verification" });
-    await act(async () => { fireEvent.click(retry); fireEvent.click(retry); });
-    expect(dispatches).toBe(2);
-    await act(async () => { settleRetry({ status: "already-handled" }); });
-    expect(screen.getByText("This Mac verification was already handled.")).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Retry Mac verification" })).toBeNull();
-    await act(async () => { await vi.advanceTimersByTimeAsync(9_000); });
-    expect(dispatches).toBe(2);
-  });
-
-  it.each(["run", "worktree", "navigation", "permission", "permission-upgrade", "permission-cycle", "expiry"] as const)("rejects a late retry after %s changes", async reason => {
-    vi.useFakeTimers();
-    const invoke = terminalBridge(() => ({ status: "unavailable" }));
-    const detail = verificationDetail();
-    const initialMode = reason === "permission-upgrade" ? "supervised" : "full_access";
-    let hook!: ReturnType<typeof renderHook<ReturnType<typeof useChatElectronPreview>, Parameters<typeof useChatElectronPreview>[0]>>;
-    await act(async () => {
-      hook = renderHook(useChatElectronPreview, { initialProps: { ...initialProps, permissionMode: initialMode, detail } });
-    });
-    const children = React.Children.toArray(hook.result.current.verificationFeedback?.props.children);
-    const button = children.find(child => React.isValidElement<{ children: React.ReactNode; onClick: () => void }>(child)
-      && child.type === "button" && child.props.children === "Retry Mac verification");
-    if (!React.isValidElement<{ onClick: () => void }>(button)) throw new Error("missing retry action");
-    const retry = button.props.onClick;
-    if (reason === "expiry") vi.setSystemTime(Date.now() + CHAT_ELECTRON_PREVIEW_MAX_AGE_MS + 1);
-    else {
-      const changed = { ...detail, runs: [...detail.runs] };
-      if (reason === "run") changed.runs = [{ ...detail.runs[0]!, id: "run_replaced" }];
-      if (reason === "worktree") changed.runs = [{ ...detail.runs[0]!, executionRoot: {
-        kind: "worktree", projectId: project!.projectId, worktreeId: "wt_00000000000b",
-      } }];
-      await act(async () => {
-        hook.rerender({ ...initialProps, active: reason !== "navigation", permissionMode: reason === "permission" || reason === "permission-cycle" ? "supervised" : "full_access", detail: changed });
-      });
-    }
-    if (reason === "permission-cycle") await act(async () => {
-      hook.rerender({ ...initialProps, permissionMode: "full_access", detail });
-    });
-    const before = invoke.mock.calls.filter(([channel]) => channel === "chat:electron-preview-run").length;
-    await act(async () => { retry(); });
-    expect(invoke.mock.calls.filter(([channel]) => channel === "chat:electron-preview-run")).toHaveLength(before);
-  });
-
-  it("dispatches a Terminal intent once through the same Full Access view", async () => {
-    const digest = "d".repeat(64);
-    const invoke = terminalBridge(() => ({ status: "returned" }), digest);
-    const props = { ...initialProps, permissionMode: "full_access", detail: detailWithPreview() };
-    const { rerender } = render(<StrictMode><ChatElectronPreview {...props} /></StrictMode>);
-    expect(await screen.findByText("Mac verification returned to this Chat.")).toBeTruthy();
-    rerender(<StrictMode><ChatElectronPreview {...props} /></StrictMode>);
-    const calls = invoke.mock.calls.filter(([channel]) => channel === "chat:electron-preview-run");
-    expect(calls).toEqual([["chat:electron-preview-run", expect.objectContaining({
-      chatId: chat.id, runId: selectedRun.id, requestKind: "verification",
-      fullAccessViewId: expect.any(String), terminalIntentDigest: digest,
-    })]]);
-  });
-
   function verificationDetail() {
     const detail = detailWithPreview({ parts: [{ type: "text", text: "Worktree changes are ready." }] });
     const run = detail.runs[0]!;
@@ -293,40 +174,70 @@ describe("Mac Verification", () => {
     return detail;
   }
 
-  it("stages a fresh agent workflow instead of verifying a historical run", async () => {
-    const invoke = terminalBridge(() => ({ status: "returned" }), null);
-    const hook = renderHook(useChatElectronPreview, { initialProps: { ...initialProps, detail: verificationDetail() } });
-    await waitFor(() => expect(hook.result.current.verificationAction).toBeDefined());
-    act(() => hook.result.current.verificationAction?.select("/mac-verification", ""));
-    expect(hook.result.current.verificationDraft).toBeDefined();
+  it("verifies the selected worktree directly with no generated prompt or provider marker", async () => {
+    const invoke = vi.fn(async (channel: string) => channel === "chat:electron-preview-available"
+      ? { available: false, verificationAvailable: true }
+      : { status: "returned" });
+    vi.stubGlobal("operator", { invoke });
+    const { rerender } = render(<StrictMode><ChatElectronPreview {...initialProps} detail={verificationDetail()} /></StrictMode>);
+
+    const action = await screen.findByRole("button", { name: "Mac Verification" });
+    expect(invoke.mock.calls.some(([channel]) => channel === "chat:electron-preview-run")).toBe(false);
+    fireEvent.click(action);
+    fireEvent.click(action);
+    expect(await screen.findByText("Mac verification returned to this Chat.")).toBeTruthy();
+    rerender(<StrictMode><ChatElectronPreview {...initialProps} detail={verificationDetail()} /></StrictMode>);
+
+    expect(initialProps.onDraft).not.toHaveBeenCalled();
+    expect(invoke.mock.calls.filter(([channel]) => channel === "chat:electron-preview-run")).toEqual([
+      ["chat:electron-preview-run", { chatId: chat.id, runId: selectedRun.id, requestKind: "verification" }],
+    ]);
+  });
+
+  it("binds the current Full Access selection, verifies the previously completed run, and releases on downgrade", async () => {
+    const invoke = vi.fn(async (channel: string, _payload: unknown) => {
+      if (channel === "chat:electron-preview-available") return { available: false, verificationAvailable: true };
+      if (channel === "chat:mac-verification-selection") return { accepted: true };
+      return { status: "returned" };
+    });
+    vi.stubGlobal("operator", { invoke });
+    const detail = verificationDetail();
+    const { rerender } = render(<ChatElectronPreview {...initialProps} detail={detail} permissionMode="supervised" />);
+    await screen.findByRole("button", { name: "Mac Verification" });
+    expect(invoke.mock.calls).toHaveLength(1);
+
+    rerender(<ChatElectronPreview {...initialProps} detail={detail} permissionMode="full_access" />);
+    fireEvent.click(screen.getByRole("button", { name: "Mac Verification" }));
+    expect(await screen.findByText("Mac verification returned to this Chat.")).toBeTruthy();
+    const viewId = (invoke.mock.calls[1]?.[1] as { viewId: string }).viewId;
+    expect(viewId).toEqual(expect.any(String));
+    expect(invoke.mock.calls.slice(1)).toEqual([
+      ["chat:mac-verification-selection", { viewId, scope: {
+        chatId: chat.id, projectId: project!.projectId, worktreeId: "wt_00000000000a",
+      } }],
+      ["chat:electron-preview-run", { chatId: chat.id, runId: selectedRun.id, requestKind: "verification", fullAccessViewId: viewId }],
+    ]);
+    rerender(<ChatElectronPreview {...initialProps} detail={detail} permissionMode="supervised" />);
+    expect(invoke).toHaveBeenLastCalledWith("chat:mac-verification-selection", {
+      viewId,
+      scope: null,
+    });
+  });
+
+  it("does not send a verification after the native process declines the Full Access selection", async () => {
+    const invoke = vi.fn(async (channel: string) => channel === "chat:electron-preview-available"
+      ? { available: false, verificationAvailable: true } : { accepted: false });
+    vi.stubGlobal("operator", { invoke });
+    render(<ChatElectronPreview {...initialProps} detail={verificationDetail()} permissionMode="full_access" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Mac Verification" }));
+    expect(await screen.findByText(/Check Mac Pairing/)).toBeTruthy();
     expect(invoke.mock.calls.some(([channel]) => channel === "chat:electron-preview-run")).toBe(false);
   });
 
-  it.each([true, false])("requires native Full Access selection for the completed workflow (accepted: %s)", async accepted => {
-    const invoke = terminalBridge(() => ({ status: "returned" }), null, accepted);
-    const detail = verificationDetail();
-    const hook = renderHook(useChatElectronPreview, { initialProps: { ...initialProps, detail, permissionMode: "full_access" } });
-    await waitFor(() => expect(hook.result.current.verificationAction).toBeDefined());
-    act(() => hook.result.current.verificationAction?.select("/mac-verification", ""));
-    const run = { ...detail.runs[0]!, id: "run_fresh_mac_check" };
-    acceptVerificationDraft(hook.result.current.verificationDraft, run);
-    hook.rerender({ ...initialProps, detail: { ...detail, runs: [...detail.runs, run] }, permissionMode: "full_access" });
-    if (!accepted) {
-      await waitFor(() => expect(hook.result.current.verificationFeedback?.props.children[0].props.children).toContain("Check Mac Pairing"));
-      expect(invoke.mock.calls.some(([channel]) => channel === "chat:electron-preview-run")).toBe(false);
-      return;
-    }
-    await waitFor(() => expect(invoke.mock.calls.some(([channel]) => channel === "chat:electron-preview-run")).toBe(true));
-    const viewId = (invoke.mock.calls.find(([channel]) => channel === "chat:mac-verification-selection")?.[1] as { viewId: string }).viewId;
-    expect(invoke).toHaveBeenCalledWith("chat:electron-preview-run", {
-      chatId: chat.id, runId: run.id, requestKind: "verification", fullAccessViewId: viewId,
-    });
-    hook.rerender({ ...initialProps, detail, permissionMode: "supervised" });
-    expect(invoke).toHaveBeenLastCalledWith("chat:mac-verification-selection", { viewId, scope: null });
-  });
-
   it("cancels an edit's waiting Mac verification when the owner changes permission mode", async () => {
-    const invoke = terminalBridge(() => ({ status: "returned" }), null);
+    const invoke = vi.fn(async (channel: string) => channel === "chat:electron-preview-available"
+      ? { available: false, verificationAvailable: true } : { accepted: true });
+    vi.stubGlobal("operator", { invoke });
     const detail = verificationDetail();
     const hook = renderHook(useChatElectronPreview, {
       initialProps: { ...initialProps, detail, permissionMode: "full_access" },
@@ -358,32 +269,20 @@ describe("Mac Verification", () => {
     expect(isMacVerificationReceiptRun(detail, receipt.id)).toBe(false);
   });
 
-  it("explains missing native capability instead of hiding the Skill", async () => {
+  it("does not use the legacy preview capability to expose Mac Verification", async () => {
     vi.stubGlobal("operator", { invoke: vi.fn(async () => ({ available: true })) });
     render(<ChatElectronPreview {...initialProps} detail={verificationDetail()} />);
     await screen.findByRole("button", { name: "Request Electron preview" });
-    fireEvent.click(await screen.findByRole("button", { name: "Mac Verification" }));
-    expect(await screen.findByText(/check Mac Pairing/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Mac Verification" })).toBeNull();
   });
 
-  it("shows the workflow without a prior worktree and explains the missing binding", async () => {
-    const invoke = vi.fn(async () => ({ available: false, verificationAvailable: true }));
-    vi.stubGlobal("operator", { invoke });
-    const detail = verificationDetail();
-    detail.runs = [];
-    render(<ChatElectronPreview {...initialProps} detail={detail} />);
-    fireEvent.click(await screen.findByRole("button", { name: "Mac Verification" }));
-    expect(await screen.findByText(/Ask the agent to prepare an isolated worktree/)).toBeTruthy();
-    expect(invoke.mock.calls.some(([channel]) => channel === "chat:electron-preview-run")).toBe(false);
-  });
-
-  it("keeps the Skill visible for an expired run so a fresh task can be submitted", async () => {
+  it("does not expose Mac Verification for an expired worktree run", async () => {
     const invoke = vi.fn(async () => ({ available: true, verificationAvailable: true }));
     vi.stubGlobal("operator", { invoke });
     const detail = verificationDetail();
     detail.runs[0]!.completedAt = new Date(Date.now() - CHAT_ELECTRON_PREVIEW_MAX_AGE_MS - 1000).toISOString();
     render(<ChatElectronPreview {...initialProps} detail={detail} />);
     await screen.findByRole("button", { name: "Request Electron preview" });
-    expect(await screen.findByRole("button", { name: "Mac Verification" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Mac Verification" })).toBeNull();
   });
 });

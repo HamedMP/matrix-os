@@ -192,20 +192,14 @@ describe("CanonicalChatWorkspace", () => {
   });
 
   it.each([
-    ["alone", "/mac-verification", "completed"],
     ["mention", "@mac", "completed"],
     ["slash", "/mac-verification", "completed"],
-    ["files", "/mac-verification", "completed"],
-    ["custom", "@mac", "recipe-required"],
     ["failed run", "@mac", "failed"],
-    ["incompatible build", "@mac", "incompatible"],
   ] as const)("uses Mac Verification with an optional change request and binds the result to the accepted run (%s)", async (_mode, trigger, outcome) => {
     useConnection.setState({ status: "signed-in", userId: snapshot.chat.ownerScope.ownerId });
-    const ipc = vi.fn(async (channel: string, payload?: unknown) => {
-      if (channel === "chat:electron-preview-available") return {
-        available: false, verificationAvailable: !(outcome === "incompatible" && payload && "target" in Object(payload)),
-      };
-      if (channel === "chat:electron-preview-run") return { status: outcome === "recipe-required" ? "unavailable" : "returned" };
+    const ipc = vi.fn(async (channel: string) => {
+      if (channel === "chat:electron-preview-available") return { available: false, verificationAvailable: true };
+      if (channel === "chat:electron-preview-run") return { status: "returned" };
       return { available: false };
     });
     window.operator = { ...window.operator, invoke: ipc };
@@ -215,8 +209,7 @@ describe("CanonicalChatWorkspace", () => {
       ...snapshot.runs[0]!, status: "completed" as const, completedAt: new Date().toISOString(),
       executionRoot,
     };
-    const updatedRun = { ...run, id: "run_mac_verification_updated", turnId: "cturn_mac_verification_updated",
-      status: outcome === "failed" ? outcome : "completed" as const };
+    const updatedRun = { ...run, id: "run_mac_verification_updated", turnId: "cturn_mac_verification_updated", status: outcome };
     const admittedRecord = { ...record, chat: { ...record.chat, revision: record.chat.revision + 1 } };
     vi.mocked(routeClient.getDetail).mockResolvedValue({
       record, messages: snapshot.messages, turns: snapshot.turns, runs: [run], activities: [],
@@ -230,38 +223,24 @@ describe("CanonicalChatWorkspace", () => {
       initialView="conversation" active catalog={providerCatalog} />);
 
     const editor = await screen.findByRole("textbox", { name: "Reply to chat" });
-    const request = _mode === "alone" ? "Verify the current worktree changes on my Mac."
-      : _mode === "files" || _mode === "custom" ? "Verify right-click Move to Trash and Undo in Files." : "Shorten the sign-in label.";
-    await setSharedComposerText(editor, _mode === "alone" ? trigger : `${request} ${trigger}`);
+    await setSharedComposerText(editor, `Shorten the sign-in label. ${trigger}`);
     fireEvent.click(await screen.findByRole("option", { name: "Mac Verification", exact: true }));
     expect(await screen.findByText("Mac verification will run after this message.")).toBeTruthy();
-    if (_mode === "files") fireEvent.click(screen.getByRole("button", { name: "Files Trash/Undo" }));
-    await waitFor(() => expect(editor.textContent?.trim()).toBe(request));
+    await waitFor(() => expect(editor.textContent?.trim()).toBe("Shorten the sign-in label."));
     expect(routeClient.admitTurn).not.toHaveBeenCalled();
     expect(ipc.mock.calls.some(([channel]) => channel === "chat:electron-preview-run")).toBe(false);
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
-    if (outcome === "incompatible") {
-      expect(await screen.findByText(/Install a signed Matrix Desktop build that matches this worktree/)).toBeTruthy();
-      expect(routeClient.admitTurn).not.toHaveBeenCalled();
-      expect(editor.textContent?.trim()).toBe(request);
-      return;
-    }
     await waitFor(() => expect(routeClient.admitTurn).toHaveBeenCalledWith(snapshot.chat.id,
-      expect.objectContaining({ executionRoot, parts: [
-        { type: "text", text: request },
-        { type: "text", text: expect.stringContaining("# Mac Verification") },
-      ] }),
+      expect.objectContaining({ executionRoot, parts: [{ type: "text", text: "Shorten the sign-in label." }] }),
       { chatScope: "project" }));
     if (outcome === "failed") {
       expect(await screen.findByText("Mac verification skipped because the requested worktree run did not finish as expected.")).toBeTruthy();
       expect(ipc.mock.calls.some(([channel]) => channel === "chat:electron-preview-run")).toBe(false);
       return;
     }
-    expect(await screen.findByText(outcome === "recipe-required"
-      ? /choose Files Trash\/Undo/ : "Mac verification returned to this Chat.")).toBeTruthy();
+    expect(await screen.findByText("Mac verification returned to this Chat.")).toBeTruthy();
     expect(ipc.mock.calls.filter(([channel]) => channel === "chat:electron-preview-run")).toEqual([
-      ["chat:electron-preview-run", { chatId: snapshot.chat.id, runId: updatedRun.id, requestKind: "verification",
-        ...(_mode === "alone" ? {} : { recipeSelection: _mode === "files" ? "files-trash" : "changed-only" }) }],
+      ["chat:electron-preview-run", { chatId: snapshot.chat.id, runId: updatedRun.id, requestKind: "verification" }],
     ]);
   });
 
@@ -318,7 +297,7 @@ describe("CanonicalChatWorkspace", () => {
       await act(async () => listeners.forEach(listener => listener({ type: "chat.full_refresh", cursor: 3 })));
       expect(await screen.findByText("Mac verification returned to this Chat.")).toBeTruthy();
       expect(ipc.mock.calls.filter(([channel]) => channel === "chat:electron-preview-run")).toEqual([
-        ["chat:electron-preview-run", { chatId: snapshot.chat.id, runId: running.id, requestKind: "verification", recipeSelection: "changed-only" }],
+        ["chat:electron-preview-run", { chatId: snapshot.chat.id, runId: running.id, requestKind: "verification" }],
       ]);
       return;
     }
