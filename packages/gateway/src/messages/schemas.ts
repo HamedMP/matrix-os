@@ -11,7 +11,7 @@ import {
   WHATSAPP_RELINK_AFTER_STALE_RESTORE_MS,
 } from "./constants.js";
 
-export const MessagingNetworkSlugSchema = z.enum(["telegram", "whatsapp"]);
+export const MessagingNetworkSlugSchema = z.enum(["telegram", "whatsapp", "linkedin"]);
 export type MessagingNetworkSlug = z.infer<typeof MessagingNetworkSlugSchema>;
 
 export const MessagingAccountIdSchema = z.string().trim().regex(/^acct_[A-Za-z0-9_-]{12,96}$/);
