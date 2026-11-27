@@ -22,6 +22,7 @@ import { type ClipboardCell, type ParsedTable, clipMarkOf, newClipMark, readClip
 import { cellLook } from "./cell-look";
 import type { GridContext } from "./context";
 import { adjustFormula } from "./fill";
+import { MERGED_CELLS, coveredIn } from "./merge-guard";
 import { planMove } from "./move-cells";
 import { activeRange, isSingleCell, rangeCols, rangeRows } from "./selection";
 import { contiguous, hiddenIn, hiddenRows, visibleRowsFrom, visibleRowsIn } from "./visible-rows";
@@ -215,6 +216,40 @@ function pasteTiles(ctx: GridContext, height: number, width: number): Tile[] | n
   return null;
 }
 
+/**
+ * True, after a notice, when a filled cell of the block would land under a
+ * merged cell, where it would be stored but never shown. Checked before
+ * anything is written.
+ */
+function landsUnderMerge(ctx: GridContext, tiles: readonly Tile[], width: number, filled: (r: number, c: number) => boolean): boolean {
+  const first = tiles[0] as Tile;
+  const last = tiles[tiles.length - 1] as Tile;
+  let left = first.col;
+  let right = first.col;
+  for (const tile of tiles) {
+    left = Math.min(left, tile.col);
+    right = Math.max(right, tile.col);
+  }
+  const area: CellRange = {
+    start: { row: first.rows[0] as number, col: left },
+    end: { row: last.rows[last.rows.length - 1] as number, col: right + width - 1 },
+  };
+  const covered = coveredIn(ctx.info().mergedRanges, area);
+  for (const tile of tiles) {
+    for (let r = 0; r < tile.rows.length; r++) {
+      for (let c = 0; c < width; c++) {
+        if (filled(r, c) && covered(tile.rows[r] as number, tile.col + c)) {
+          ctx.notice(MERGED_CELLS);
+          return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
+const blankRaw = (cell: RawCell | undefined): boolean => cell === undefined || (cell.formula === null && cell.value === null);
+
 function pasteCopy(ctx: GridContext, clip: InternalClip): boolean {
   const session = ctx.session;
   const sheet = ctx.sheet;
@@ -228,6 +263,7 @@ function pasteCopy(ctx: GridContext, clip: InternalClip): boolean {
     for (let c = 0; c < width; c++) cells.push(session.raw(clip.sheet, row, clip.range.start.col + c));
     return cells;
   });
+  if (landsUnderMerge(ctx, placed, width, (r, c) => !blankRaw(source[r]?.[c]))) return false;
   const ok = report(
     ctx,
     session.transact("Paste", (tx) => {
@@ -294,6 +330,7 @@ function pasteMove(ctx: GridContext, clip: InternalClip): boolean {
     for (let c = 0; c < width; c++) cells.push(session.raw(clip.sheet, clip.range.start.row + r, clip.range.start.col + c));
     source.push(cells);
   }
+  if (landsUnderMerge(ctx, [tile], width, (r, c) => !blankRaw(source[r]?.[c]))) return false;
   const ok = report(
     ctx,
     session.transact("Cut and paste", (tx) => {
@@ -326,6 +363,7 @@ function pasteExternal(ctx: GridContext, table: ParsedTable): boolean {
   // Every field must land on the sheet: applyInputs would leave out the ones past its edge without a word.
   const placed = pasteTiles(ctx, height, width);
   if (placed === null) return false;
+  if (landsUnderMerge(ctx, placed, width, (r, c) => (table.rows[r]?.[c] ?? "") !== "" || (table.formulas[r]?.[c] ?? null) !== null)) return false;
   const ok = report(
     ctx,
     ctx.session.transact("Paste", (tx) => {

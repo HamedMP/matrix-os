@@ -4,6 +4,7 @@
  * undo step and refuses, with a reason, what it cannot do safely.
  */
 import type { SheetGridController } from "../../grid";
+import { MERGED_CELLS, coveredIn, crossesMerge } from "../../grid/merge-guard";
 import { type CellValue, MAX_COLS } from "../../session/engine";
 
 export type DataResult = { ok: true; message: string } | { ok: false; message: string };
@@ -38,6 +39,8 @@ export function removeDuplicateRows(controller: SheetGridController): DataResult
   const height = end.row - start.row + 1;
   if (height < 2) return { ok: false, message: "Select at least two rows to look for duplicates." };
   if (tooLarge(height, width)) return { ok: false, message: "The selection is too large. Select fewer rows or columns." };
+  // Rows move up but merges stay put: a moved value would land under a merged cell.
+  if (crossesMerge(session.workbook.getSheet(sheet).mergedRanges, { start, end })) return { ok: false, message: MERGED_CELLS };
   const kept: CellValue[][] = [];
   const seen = new Set<string>();
   for (let row = start.row; row <= end.row; row++) {
@@ -78,6 +81,8 @@ export function splitTextToColumns(controller: SheetGridController, delimiterId:
   if (delimiter === undefined) return { ok: false, message: "Choose a delimiter." };
   if (start.col !== end.col) return { ok: false, message: "Select one column to split." };
   if (tooLarge(end.row - start.row + 1, 1)) return { ok: false, message: "The selection is too large. Select fewer rows." };
+  // A part written under a merged cell would be stored but never shown.
+  const covered = coveredIn(session.workbook.getSheet(sheet).mergedRanges, { start, end: { row: end.row, col: MAX_COLS - 1 } });
   const rows: string[][] = [];
   let split = 0;
   for (let row = start.row; row <= end.row; row++) {
@@ -91,6 +96,7 @@ export function splitTextToColumns(controller: SheetGridController, delimiterId:
     if (start.col + parts.length > MAX_COLS) return { ok: false, message: "The split would go past the last column of the sheet. Move the text further left, then split." };
     for (let offset = 1; offset < parts.length; offset++) {
       if (!session.isBlank(sheet, row, start.col + offset)) return { ok: false, message: "The cells to the right are not empty. Insert columns first, then split." };
+      if (covered(row, start.col + offset)) return { ok: false, message: MERGED_CELLS };
     }
     // Text that looks like a formula stays text; numbers and dates are read as typed.
     rows.push(parts.map((part) => (part.trim().startsWith("=") ? `'${part.trim()}` : part.trim())));

@@ -22,6 +22,7 @@ import type { EditResult } from "../session/types";
 import { CELL_PADDING_PX, cellLook, textWidth } from "./cell-look";
 import type { GridContext } from "./context";
 import { type FillDirection, type FillSource, fillFromEdge, fillTarget, planFill } from "./fill";
+import { MERGED_CELLS, coveredIn, crossesMerge } from "./merge-guard";
 import { MIN_COLUMN_PX, MIN_ROW_PX, pxToColumnWidth, pxToRowHeight } from "./geometry";
 import { activeRange, columnFullySelected, rangeCols, rangeRows, rowFullySelected, selectCell } from "./selection";
 import { type FilterSpec, type SortKey, filterHiddenRows, planSort } from "./sort-filter";
@@ -134,6 +135,12 @@ function applyFill(ctx: GridContext, source: CellRange, target: CellRange, direc
   // A filled cell in a row the filter hides would change out of sight: those rows keep their content.
   const hidden = hiddenRows(ctx);
   const edits = planFill(source, target, direction, fillReader(ctx), series).filter((edit) => hidden === null || !hidden.has(edit.row));
+  // A value written under a merged cell is never shown: the fill is refused rather than losing it.
+  const covered = coveredIn(ctx.info().mergedRanges, target);
+  if (edits.some((edit) => (edit.formula !== undefined || (edit.value ?? null) !== null) && covered(edit.row, edit.col))) {
+    ctx.notice(MERGED_CELLS);
+    return false;
+  }
   const sources = new Map<string, StyleId>();
   for (const edit of edits) {
     const key = `${edit.from.row},${edit.from.col}`;
@@ -428,6 +435,11 @@ export function looksLikeHeader(ctx: GridContext, range: CellRange): boolean {
 export function sortRange(ctx: GridContext, range: CellRange, keys: readonly SortKey[], hasHeader?: boolean): boolean {
   const sheet = ctx.sheet;
   const session = ctx.session;
+  // Rows move but merges stay put: a moved value would land under a merged cell, or a merged one would split.
+  if (crossesMerge(ctx.info().mergedRanges, range)) {
+    ctx.notice(MERGED_CELLS);
+    return false;
+  }
   const header = hasHeader ?? looksLikeHeader(ctx, range);
   const plan = planSort(range, keys, header, (row, col) => session.raw(sheet, row, col));
   if (plan === null) {
