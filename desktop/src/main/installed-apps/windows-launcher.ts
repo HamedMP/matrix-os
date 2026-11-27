@@ -6,7 +6,6 @@
 import { randomBytes } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import type { ShortcutDetails } from "electron";
 import { bundleDisplayName } from "./mac-bundle";
 import { linkExclusive, removeOwnedFile, removeTemp } from "./launcher-files";
 import { InstallIdSchema } from "./record";
@@ -96,7 +95,7 @@ export interface WindowsLauncherOptions {
   baseArgs: readonly string[];
   scheme: string;
   /** `shell.writeShortcutLink`. */
-  writeShortcutLink(path: string, operation: "create", details: ShortcutDetails): boolean;
+  writeShortcutLink(path: string, operation: "create", details: Electron.ShortcutDetails): boolean;
 }
 
 export function createWindowsLauncher(options: WindowsLauncherOptions) {
@@ -108,7 +107,7 @@ export function createWindowsLauncher(options: WindowsLauncherOptions) {
     /** Writes the shortcut under a temp name, then claims the first free `<Name>.lnk`; never overwrites. */
     async write(input: { installId: string; name: string; iconPath: string | null }): Promise<string> {
       await mkdir(folder, { recursive: true });
-      const details: ShortcutDetails = {
+      const details: Electron.ShortcutDetails = {
         target: options.exePath,
         args: launchArgs({ ...options, installId: input.installId }),
         appUserModelId: windowsAppUserModelId(input.installId),

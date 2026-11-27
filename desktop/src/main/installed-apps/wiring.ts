@@ -1,7 +1,7 @@
 // Startup wiring for installed apps (spec 2711). Called once after auth
 // restore and the main window, so index.ts only forwards events. Order:
 // records → (macOS) sweep, prune and the shim server → held deep link → reopen.
-import { screen } from "electron";
+import { screen, shell } from "electron";
 import type { NativeAppBridge } from "../embeds/native-app-bridge";
 import { createNativeAppOpenResolver } from "../embeds/native-app-open";
 import { fetchAppLaunchToken, resolveAppLaunchUrl } from "../embeds/app-launch";
@@ -18,6 +18,9 @@ import { createMacInstalledApps } from "./mac-wiring";
 import { createInstalledAppStore } from "./record-store";
 import { createInstalledAppReopen, reopenEach } from "./reopen";
 import { createInstalledAppsService } from "./service";
+import { InstalledAppsUnavailableError, type InstalledAppsControl } from "./install-ipc";
+import { createPlatformLaunchers } from "./launcher-wiring";
+import type { NativeAppOpenRequest } from "../../shared/native-app-open";
 
 export interface InstalledAppsWiringOptions {
   userData: string;
@@ -35,8 +38,12 @@ export interface InstalledAppsWiringOptions {
   /** Routes a link opened with an app shim like any other Matrix deep link. */
   openUrl(url: string): void;
   channel: DesktopReleaseChannel;
+  /** This channel's deep-link scheme, which Windows and Linux launchers run. */
+  scheme: string;
   /** A preview pair's handle: its shims get their own server. */
   previewHandle?: string;
+  /** Installs changed; the main window refreshes its list. */
+  onChanged(): void;
 }
 
 function logFailure(label: string, error: unknown): void {
@@ -47,6 +54,10 @@ export function installInstalledApps(options: InstalledAppsWiringOptions) {
   const { auth, appBridge } = options;
   const records = createInstalledAppStore({ dir: options.userData });
   const resolveApp = createNativeAppOpenResolver({ getGatewayOrigin: () => auth.getGatewayOrigin(), getToken: () => auth.getToken() });
+  const forgetWindowState = (installId: string) => options.store.setInstalledAppWindowBounds(installId, null);
+  const launchers = createPlatformLaunchers({
+    platform: process.platform, userData: options.userData, records, scheme: options.scheme, auth, forgetWindowState,
+  });
 
   const service = createInstalledAppsService({
     records,
@@ -61,6 +72,7 @@ export function installInstalledApps(options: InstalledAppsWiringOptions) {
       record,
       bounds,
       ...(context.appShim ? { appShim: context.appShim as Electron.AppShimHost } : {}),
+      appDetails: launchers?.appDetails(record),
       getStatus: () => auth.getStatus(),
       resolveApp,
       focusMain: options.focusMain,
@@ -95,10 +107,9 @@ export function installInstalledApps(options: InstalledAppsWiringOptions) {
     }),
   });
 
-  const forgetWindowState = (installId: string) => options.store.setInstalledAppWindowBounds(installId, null);
   const mac = process.platform === "darwin" ? createMacInstalledApps({
     records, channel: options.channel, ...(options.previewHandle ? { previewHandle: options.previewHandle } : {}),
-    service, auth, forgetWindowState, focusMain: options.focusMain, openUrl: options.openUrl,
+    service, auth, forgetWindowState, focusMain: options.focusMain, openUrl: options.openUrl, onChanged: options.onChanged,
   }) : null;
   const reopen = createInstalledAppReopen({ store: {
     get: () => options.store.get("installedAppsReopen"),
@@ -112,8 +123,44 @@ export function installInstalledApps(options: InstalledAppsWiringOptions) {
     await service.open(installId);
   }
 
+  /** What the Install and Uninstall UI may do (spec 2711, layer 4). */
+  const control: InstalledAppsControl = {
+    platform: () => (mac ? (mac.available() ? "mac" : null) : launchers?.platform ?? null),
+    list: () => records.list(),
+    async install(request: NativeAppOpenRequest) {
+      const status = auth.getStatus();
+      const target = await resolveApp(request);
+      const input = { appIdentity: target.appIdentity, slug: target.slug, runtimeSlot: status.runtimeSlot, name: target.name };
+      const record = mac ? await mac.install(input) : launchers ? await launchers.installer.install(input) : null;
+      if (!record) throw new InstalledAppsUnavailableError();
+      options.onChanged();
+      void launch(record.installId).catch((error: unknown) => logFailure("could not open the new app", error));
+      return record;
+    },
+    async uninstall(installId: string) {
+      if (mac) return mac.uninstall(installId);
+      if (!launchers) throw new InstalledAppsUnavailableError();
+      service.close(installId);
+      const removed = await launchers.installer.uninstall(installId);
+      if (removed) options.onChanged();
+      return removed;
+    },
+    open: (installId: string) => launch(installId),
+    async show(installId: string) {
+      const path = (await records.get(installId))?.bundlePath;
+      if (!path) return false;
+      shell.showItemInFolder(path);
+      return true;
+    },
+  };
+
   const started = (async () => {
     await mac?.start().catch((error: unknown) => logFailure("app shims unavailable", error));
+    const pruned = await launchers?.installer.prune().catch((error: unknown) => {
+      logFailure("install prune failed", error);
+      return [];
+    });
+    if (pruned?.length) options.onChanged();
     options.deepLinks.ready((installId) => { void launch(installId); });
     await reopenEach(await reopen.take(), (installId) => launch(installId, { background: true }));
   })();
@@ -122,8 +169,8 @@ export function installInstalledApps(options: InstalledAppsWiringOptions) {
     open: (installId: string) => service.open(installId),
     /** Resolves once records, shims, the held link and reopening are handled. */
     started,
-    /** macOS: install and uninstall shim bundles (the Install UI is a later layer). */
-    mac,
+    /** The Install and Uninstall UI's IPC surface. */
+    control,
     authChanged: (status: InstalledAppAuthSnapshot) => service.authChanged(status),
     /** Quit: remember open apps, stop taking links and shims, close app windows, and wait for their window state. */
     async dispose(): Promise<void> {

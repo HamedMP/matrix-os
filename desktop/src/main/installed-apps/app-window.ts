@@ -17,6 +17,8 @@ export interface InstalledAppBrowserWindowOptions extends Omit<InstalledAppHostO
   bounds: FittedWindowBounds;
   /** macOS: the native window lives in this shim (fixed at creation; no parent, modal or titleBarOverlay). */
   appShim?: AppShimHost;
+  /** Windows: the window's own AppUserModelID, icon and relaunch command (its own taskbar group). */
+  appDetails?: Electron.AppDetailsOptions | undefined;
   createView(
     window: BrowserWindow,
     target: NativeAppOpenTarget,
@@ -53,6 +55,7 @@ export function createInstalledAppBrowserWindow(options: InstalledAppBrowserWind
       disableWakeLocks: true,
     },
   });
+  if (options.appDetails && process.platform === "win32") win.setAppDetails(options.appDetails);
   const contents = win.webContents;
   denyAllPermissions(contents);
   contents.setWindowOpenHandler(() => ({ action: "deny" }));

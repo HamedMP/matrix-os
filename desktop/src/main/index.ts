@@ -107,6 +107,7 @@ import { registerSharedAppDeepLinkIpc } from "./shared-app-deep-link";
 import { createDesktopDeepLinkRouter } from "./deep-links/router";
 import { installInstalledApps } from "./installed-apps/wiring";
 import { createMainWindowActionGate } from "./installed-apps/main-window-actions";
+import { registerInstalledAppsIpc } from "./installed-apps/install-ipc";
 import { createSenderPolicy, senderRole } from "./ipc/sender-policy";
 import { createTerminalWindowController } from "./terminal-window/controller";
 import { createTerminalBrowserWindow } from "./terminal-window/window";
@@ -818,6 +819,11 @@ if (!gotLock) {
         clipboard,
         isTrustedSender: (event) => senderRole(windowSenders, event) !== null,
       });
+      // Wired before the main window loads; it reports "unavailable" until installed apps start.
+      registerInstalledAppsIpc(ipcMain, {
+        isMainWindowSender: (event) => senderRole(windowSenders, event) === "main",
+        control: () => installedApps?.control ?? null,
+      });
       registerSharedAppDeepLinkIpc(ipcMain, {
         isMainWindowSender: (event) => senderRole(windowSenders, event) === "main",
         take: () => deepLinks.sharedApps.take(),
@@ -1015,6 +1021,8 @@ if (!gotLock) {
         userData, store, auth, appBridge: nativeAppBridge, preloadPath: join(__dirname, "../preload/index.cjs"),
         focusMain: () => restoreMainWindowForDeepLink?.(), deepLinks: deepLinks.installedApps,
         openUrl: (url) => deepLinks.route(url), channel: channelIdentity.channel, previewHandle: previewContext?.handle,
+        scheme: channelIdentity.deepLinkSchemes[0] ?? "matrixos",
+        onChanged: () => sendEvent("installed-apps:changed", {}),
       });
       if (previewContext) reopenPreviewWindow = createPreviewWindowReopener({
         current: () => mainWindow, open: openMainWindow, focus: focusMainWindow,
