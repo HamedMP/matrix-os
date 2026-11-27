@@ -247,7 +247,10 @@ class MarkdownParser {
 
   private table(lines: readonly string[], start: number, alignments: Array<ParagraphAlignment | null>): number {
     this.closeList();
-    const columns = Math.min(alignments.length, MAX_TABLE_COLUMNS);
+    if (alignments.length > MAX_TABLE_COLUMNS) {
+      throw new OfficeError("limit_exceeded", "a Markdown table has too many columns", { details: { limit: MAX_TABLE_COLUMNS } });
+    }
+    const columns = alignments.length;
     const toRow = (line: string): NewRun[][] => {
       const cells = splitRow(line).slice(0, columns);
       while (cells.length < columns) cells.push("");
@@ -262,7 +265,7 @@ class MarkdownParser {
       rows.push(toRow(line));
       index++;
     }
-    this.push({ type: "table", rows, header: true, alignments: alignments.slice(0, columns) });
+    this.push({ type: "table", rows, header: true, alignments });
     return index;
   }
 

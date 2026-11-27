@@ -146,4 +146,21 @@ describe("createDocxFromMarkdown", () => {
       expect(isOfficeError(error) && error.code === "limit_exceeded").toBe(true);
     }
   });
+
+  it("refuses a table wider than the column limit instead of dropping columns", () => {
+    const table = (columns: number): string =>
+      [
+        `| ${Array.from({ length: columns }, (_, index) => `h${index}`).join(" | ")} |`,
+        `| ${Array.from({ length: columns }, () => "---").join(" | ")} |`,
+        `| ${Array.from({ length: columns }, (_, index) => `v${index}`).join(" | ")} |`,
+      ].join("\n");
+    const widest = parseMarkdown(table(63), 3).blocks[0];
+    expect(widest?.type === "table" && widest.rows[0]?.length).toBe(63);
+    try {
+      parseMarkdown(table(64), 3);
+      throw new Error("expected limit_exceeded");
+    } catch (error) {
+      expect(isOfficeError(error) && error.code === "limit_exceeded").toBe(true);
+    }
+  });
 });
