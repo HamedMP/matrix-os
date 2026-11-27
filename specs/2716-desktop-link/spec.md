@@ -561,6 +561,14 @@ the desktop without SSH or Tailscale.
   above, and that SSH, Tailscale and `hc machine add` are not the path to the
   owner's desktop.
 
+### Using a linked terminal from a private Codex Chat
+
+The owner can ask which computers are online, list one computer’s terminals, or search by name. The Chat queries current inventory and returns a short page. Device names and terminal titles help people choose. They can repeat, and do not grant control.
+
+In Desktop Chat, select **Control a Herdr terminal**, pick the computer and terminal, and write the task in your own words. A selected Full Access turn carries a terminal resource with its workspace, tab and process revision. The Mac still applies its device consent rules. Read, send and interrupt use that selection for the lifetime of the run. If the process ends, the pairing is revoked or the selected connection changes, select the terminal again. A reused address on another computer never takes over the selection.
+
+For acceptance, give a computer terminal and a linked desktop terminal the same address and title. Run a real test on one, read its output in Chat and check the other terminal independently. In an interactive shell, read the command’s exit status immediately after it finishes. The shell’s own lifetime and the MCP call’s success do not establish the test result.
+
 ## Revocation
 
 | Action | Effect | Bound |

@@ -5,7 +5,7 @@ import { z } from "zod/v4";
 import { HerdrSessionSchema, type HerdrSession } from "@matrix-os/contracts/herdr-terminals";
 import { desktopPairingRevisionTag } from "@matrix-os/contracts";
 import {
-  DESKTOP_LINK_CLIENT_TIMEOUT_MS, DesktopLinkMachineListSchema, desktopLinkWorkspaceId, type DesktopLinkMachine,
+  DESKTOP_LINK_CLIENT_TIMEOUT_MS, DesktopLinkDeviceIdSchema, DesktopLinkMachineListSchema, desktopLinkWorkspaceId, type DesktopLinkMachine,
 } from "@matrix-os/contracts/desktop-link";
 
 export const DESKTOP_LINK_API = "/api/desktop-link";
@@ -20,6 +20,8 @@ export type DesktopLinkRequest = (path: string, init: {
   headers?: Record<string, string>;
 }) => Promise<Response>;
 
+type DesktopReadRequest = (path: string, init: { method: "GET"; signal: AbortSignal }) => Promise<Response>;
+
 export type DesktopAgent = "claude" | "codex" | "opencode" | "pi";
 
 export class DesktopLinkRequestError extends Error {
@@ -33,6 +35,7 @@ export interface DesktopMachines { machineId: string | null; machines: DesktopLi
 export const NO_DESKTOPS: DesktopMachines = { machineId: null, machines: [] };
 
 const TerminalsSchema = z.object({
+  deviceId: DesktopLinkDeviceIdSchema.optional(),
   workspaceId: z.string().regex(/^tws_[0-9a-f]{32}$/),
   sessions: z.array(HerdrSessionSchema).max(500),
 });
@@ -57,20 +60,24 @@ function failure(response: Response, body: unknown): DesktopLinkRequestError {
 }
 
 /** The desktop paired with this computer, or none when the gateway cannot say (no desktops UI then). */
-export async function loadDesktopMachines(request: DesktopLinkRequest): Promise<DesktopMachines> {
+export async function loadDesktopMachines(request: DesktopReadRequest): Promise<DesktopMachines> {
   const response = await request(`${DESKTOP_LINK_API}/machines`, { method: "GET", signal: AbortSignal.timeout(TIMEOUT_MS) });
   if (!response.ok) return NO_DESKTOPS;
   const parsed = DesktopLinkMachineListSchema.safeParse(await readJson(response));
   return parsed.success ? parsed.data : NO_DESKTOPS;
 }
 
-export async function loadDesktopTerminals(request: DesktopLinkRequest, deviceId: string): Promise<DesktopTerminals> {
-  const response = await request(`${DESKTOP_LINK_API}/machines/${deviceId}/terminals`, { method: "GET", signal: AbortSignal.timeout(TIMEOUT_MS) });
+export async function loadDesktopTerminals(request: DesktopReadRequest, deviceId: string, view?: "chat-control"): Promise<DesktopTerminals> {
+  const suffix = view === "chat-control" ? "?view=chat-control" : "";
+  const response = await request(`${DESKTOP_LINK_API}/machines/${deviceId}/terminals${suffix}`, { method: "GET", signal: AbortSignal.timeout(TIMEOUT_MS) });
   const body = await readJson(response);
   if (!response.ok) throw failure(response, body);
   const parsed = TerminalsSchema.safeParse(body);
   if (!parsed.success) throw new DesktopLinkRequestError("failed");
-  return parsed.data;
+  if (view === "chat-control" && (parsed.data.deviceId !== deviceId || parsed.data.workspaceId !== desktopLinkWorkspaceId(deviceId))) {
+    throw new DesktopLinkRequestError("failed");
+  }
+  return { workspaceId: parsed.data.workspaceId, sessions: parsed.data.sessions };
 }
 
 export interface StartedDesktopTerminal { id: string; tabId: string }
