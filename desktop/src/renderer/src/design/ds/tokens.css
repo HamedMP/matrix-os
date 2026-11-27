@@ -1,0 +1,189 @@
+/*
+ * Matrix design-library semantics for the desktop renderer.
+ *
+ * The library (FinnaAI/matrix-os-design-library, styles/tokens.css) and the
+ * desktop disagree on names: desktop --accent is neutral-800 (the library's
+ * --primary) and the library --accent is neutral-100. Library names are
+ * exposed here with a `ds-` prefix so they can sit next to desktop tokens
+ * without changing what existing components read.
+ *
+ * Surfaces, text, border and primary follow the desktop theme variables, so
+ * every workspace theme keeps applying. In the default Matrix theme they
+ * resolve to the library values. Tints, ring and destructive come from the
+ * library; dark mode derives them from the theme's semantic colors.
+ */
+
+:root {
+  --ds-background: var(--bg-app);
+  --ds-foreground: var(--text-primary);
+  --ds-card: var(--bg-surface);
+  --ds-popover: var(--bg-overlay);
+  --ds-muted: #e1e0e0;
+  --ds-muted-foreground: var(--text-secondary);
+  --ds-accent: var(--bg-hover);
+  --ds-accent-strong: #e1e0e0;
+  --ds-border: var(--border-default);
+  --ds-border-strong: #a8a4a4;
+  --ds-input: var(--border-default);
+  --ds-ring: #e0aa52;
+
+  --ds-primary: var(--accent);
+  --ds-primary-hover: var(--accent-hover);
+  --ds-primary-foreground: var(--text-on-accent);
+  --ds-secondary: var(--bg-app);
+  --ds-secondary-hover: #f5f5f5;
+  --ds-ghost-hover: var(--ds-accent);
+
+  --ds-destructive: #ba5236;
+  --ds-destructive-hover: #8f432d;
+  --ds-destructive-foreground: #fafafa;
+  --ds-destructive-text: #8f432d;
+
+  --ds-success: var(--success);
+  --ds-warning: var(--warning);
+  --ds-info: var(--info);
+
+  --ds-tint-neutral-fill: #f3f2f2;
+  --ds-tint-neutral-border: #e1e0e0;
+  --ds-tint-neutral-text: #413e3e;
+  --ds-tint-success-fill: #eef7f2;
+  --ds-tint-success-border: #c9e8d9;
+  --ds-tint-success-text: #13492f;
+  --ds-tint-warning-fill: #fcf5e8;
+  --ds-tint-warning-border: #f6daac;
+  --ds-tint-warning-text: #775622;
+  --ds-tint-destructive-fill: #faeeeb;
+  --ds-tint-destructive-border: #e6b5a8;
+  --ds-tint-destructive-text: #8f432d;
+  --ds-tint-info-fill: #edf3f7;
+  --ds-tint-info-border: #c5d6e2;
+  --ds-tint-info-text: #254d6a;
+
+  --ds-shadow-color: 36 35 35;
+  --ds-elevation-xs: 0 1px 2px 0 rgb(var(--ds-shadow-color) / 0.05);
+  --ds-elevation-sm: 0 1px 2px 0 rgb(var(--ds-shadow-color) / 0.06), 0 1px 3px 0 rgb(var(--ds-shadow-color) / 0.1);
+  --ds-elevation-lg: 0 2px 2px -1px rgb(var(--ds-shadow-color) / 0.04), 0 4px 6px -2px rgb(var(--ds-shadow-color) / 0.03), 0 12px 16px -4px rgb(var(--ds-shadow-color) / 0.08);
+  --ds-elevation-xl: 0 3px 3px -1.5px rgb(var(--ds-shadow-color) / 0.04), 0 8px 8px -4px rgb(var(--ds-shadow-color) / 0.03), 0 20px 24px -4px rgb(var(--ds-shadow-color) / 0.08);
+
+  --ds-font-sans: Geist, var(--font-ui);
+  --ds-font-heading: "Bricolage Grotesque", Geist, var(--font-ui);
+  --ds-font-mono: "Geist Mono", var(--font-mono);
+}
+
+[data-theme="dark"] {
+  --ds-muted: color-mix(in srgb, var(--bg-surface) 70%, var(--text-primary) 12%);
+  --ds-accent-strong: color-mix(in srgb, var(--bg-hover) 80%, var(--text-primary) 12%);
+  --ds-border-strong: color-mix(in srgb, var(--border-default) 60%, var(--text-primary) 40%);
+  --ds-secondary-hover: var(--bg-hover);
+  --ds-destructive: #d06e53;
+  --ds-destructive-hover: #da9481;
+  --ds-destructive-foreground: #0d0c0c;
+  --ds-destructive-text: #e6b5a8;
+  --ds-shadow-color: 0 0 0;
+
+  --ds-tint-neutral-fill: color-mix(in srgb, var(--text-primary) 8%, var(--bg-app));
+  --ds-tint-neutral-border: color-mix(in srgb, var(--text-primary) 18%, var(--bg-app));
+  --ds-tint-neutral-text: var(--text-primary);
+  --ds-tint-success-fill: color-mix(in srgb, var(--success) 14%, var(--bg-app));
+  --ds-tint-success-border: color-mix(in srgb, var(--success) 35%, var(--bg-app));
+  --ds-tint-success-text: color-mix(in srgb, var(--success) 70%, var(--text-primary));
+  --ds-tint-warning-fill: color-mix(in srgb, var(--warning) 14%, var(--bg-app));
+  --ds-tint-warning-border: color-mix(in srgb, var(--warning) 35%, var(--bg-app));
+  --ds-tint-warning-text: color-mix(in srgb, var(--warning) 70%, var(--text-primary));
+  --ds-tint-destructive-fill: color-mix(in srgb, var(--danger) 14%, var(--bg-app));
+  --ds-tint-destructive-border: color-mix(in srgb, var(--danger) 35%, var(--bg-app));
+  --ds-tint-destructive-text: color-mix(in srgb, var(--danger) 70%, var(--text-primary));
+  --ds-tint-info-fill: color-mix(in srgb, var(--info) 14%, var(--bg-app));
+  --ds-tint-info-border: color-mix(in srgb, var(--info) 35%, var(--bg-app));
+  --ds-tint-info-text: color-mix(in srgb, var(--info) 70%, var(--text-primary));
+}
+
+@theme inline {
+  --color-ds-background: var(--ds-background);
+  --color-ds-foreground: var(--ds-foreground);
+  --color-ds-card: var(--ds-card);
+  --color-ds-popover: var(--ds-popover);
+  --color-ds-muted: var(--ds-muted);
+  --color-ds-muted-foreground: var(--ds-muted-foreground);
+  --color-ds-accent: var(--ds-accent);
+  --color-ds-accent-strong: var(--ds-accent-strong);
+  --color-ds-border: var(--ds-border);
+  --color-ds-border-strong: var(--ds-border-strong);
+  --color-ds-input: var(--ds-input);
+  --color-ds-ring: var(--ds-ring);
+  --color-ds-primary: var(--ds-primary);
+  --color-ds-primary-hover: var(--ds-primary-hover);
+  --color-ds-primary-foreground: var(--ds-primary-foreground);
+  --color-ds-secondary: var(--ds-secondary);
+  --color-ds-secondary-hover: var(--ds-secondary-hover);
+  --color-ds-ghost-hover: var(--ds-ghost-hover);
+  --color-ds-destructive: var(--ds-destructive);
+  --color-ds-destructive-hover: var(--ds-destructive-hover);
+  --color-ds-destructive-foreground: var(--ds-destructive-foreground);
+  --color-ds-destructive-text: var(--ds-destructive-text);
+  --color-ds-success: var(--ds-success);
+  --color-ds-warning: var(--ds-warning);
+  --color-ds-info: var(--ds-info);
+  --color-ds-tint-neutral-fill: var(--ds-tint-neutral-fill);
+  --color-ds-tint-neutral-border: var(--ds-tint-neutral-border);
+  --color-ds-tint-neutral-text: var(--ds-tint-neutral-text);
+  --color-ds-tint-success-fill: var(--ds-tint-success-fill);
+  --color-ds-tint-success-border: var(--ds-tint-success-border);
+  --color-ds-tint-success-text: var(--ds-tint-success-text);
+  --color-ds-tint-warning-fill: var(--ds-tint-warning-fill);
+  --color-ds-tint-warning-border: var(--ds-tint-warning-border);
+  --color-ds-tint-warning-text: var(--ds-tint-warning-text);
+  --color-ds-tint-destructive-fill: var(--ds-tint-destructive-fill);
+  --color-ds-tint-destructive-border: var(--ds-tint-destructive-border);
+  --color-ds-tint-destructive-text: var(--ds-tint-destructive-text);
+  --color-ds-tint-info-fill: var(--ds-tint-info-fill);
+  --color-ds-tint-info-border: var(--ds-tint-info-border);
+  --color-ds-tint-info-text: var(--ds-tint-info-text);
+
+  --text-ds-ui-lg: 17px;
+  --text-ds-ui-lg--line-height: 24px;
+  --text-ds-ui: 14px;
+  --text-ds-ui--line-height: 20px;
+  --text-ds-ui-sm: 13px;
+  --text-ds-ui-sm--line-height: 18px;
+  --text-ds-ui-xs: 12px;
+  --text-ds-ui-xs--line-height: 16px;
+  --text-ds-cap: 11px;
+  --text-ds-cap--line-height: 16px;
+
+  --shadow-ds-xs: var(--ds-elevation-xs);
+  --shadow-ds-sm: var(--ds-elevation-sm);
+  --shadow-ds-lg: var(--ds-elevation-lg);
+  --shadow-ds-xl: var(--ds-elevation-xl);
+
+  --font-ds-sans: var(--ds-font-sans);
+  --font-ds-heading: var(--ds-font-heading);
+  --font-ds-mono: var(--ds-font-mono);
+}
+
+/*
+ * One focus treatment for design-system controls: a 2px gold ring with a 2px
+ * offset. The global desktop :focus-visible rule is unlayered and also resets
+ * border-radius, so this rule restores the control's own radius from the
+ * utilities layer.
+ */
+.ds-focus:focus-visible {
+  box-shadow: none;
+  outline: 2px solid var(--ds-ring);
+  outline-offset: 2px;
+  border-radius: revert-layer;
+}
+
+.ds-focus-inset:focus-visible {
+  box-shadow: none;
+  outline: 2px solid var(--ds-ring);
+  outline-offset: -2px;
+  border-radius: revert-layer;
+}
+
+/* Menus take focus when they open; the desktop's global focus ring must not outline them. */
+.ds-menu-surface:focus-visible {
+  outline: none;
+  box-shadow: var(--ds-elevation-lg);
+  border-radius: revert-layer;
+}
