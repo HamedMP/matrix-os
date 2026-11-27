@@ -26,7 +26,7 @@ import {
   usageReservationLimit,
 } from "./ai-funded-metering-helpers.js";
 import { createFundedAuthorize } from "./ai-funded-authorization.js";
-import { FREE_MANAGED_MODEL_ID, grantFreeMonthlyAllowance, isFreeAllowanceEntryId, type FreeFundingConfig } from "./free-tier/funded-policy.js";
+import { FREE_MANAGED_MODEL_ID, grantFreeDailyAllowance, isFreeAllowanceEntryId, raiseEarlierFreeBudgetDefault, type FreeFundingConfig } from "./free-tier/funded-policy.js";
 import { isFreePrepaidHold } from "./free-tier/prepaid-unknown-usage.js";
 import { isFreeMetalRuntime } from "./free-tier/free-runtime.js";
 import {
@@ -138,7 +138,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
     const checkedAt = checked.toISOString();
     const currentPeriod = utcMonthStart(checked);
     await options.db.ready;
-    // A free metal runtime's read can grant the monthly allowance (ENG-520 P7), which takes the
+    // A free metal runtime's read can grant the daily allowance (ENG-520 P7), which takes the
     // account-deletion and billing owner locks; admission takes those before the funded owner lock,
     // so this read takes them first too. Paid reads keep their original single lock.
     const freeBeforeLock = await isFreeMetalRuntime(options.db.executor, identity.machineId);
@@ -161,7 +161,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
       const runtime = await trx.executor.selectFrom("ai_funded_runtime_policies")
         .select([
           "owner_id", "runtime_slot", "enabled", "allowed_model_ids", "monthly_budget_microusd",
-          "expires_at", "revision",
+          "expires_at", "revision", "uses_free_model_default",
         ])
         .where("machine_id", "=", identity.machineId).executeTakeFirst();
       const global = await trx.executor.selectFrom("ai_funded_global_policy")
@@ -187,7 +187,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
         && (runtime.expires_at === null || Date.parse(runtime.expires_at) > checked.getTime());
       // A free runtime reads its funding under the same model and allowance rules its admission uses. The
       // allowance is granted only while the runtime is fundable and its owner may start new work.
-      if (free && enabled && newWorkAllowed) await grantFreeMonthlyAllowance(trx, identity, checked, grantCreditInTransaction);
+      if (free && enabled && newWorkAllowed) await grantFreeDailyAllowance(trx, identity, checked, grantCreditInTransaction);
       await trx.executor.updateTable("ai_funded_runtime_balances").set({
         ...advanceMonthWindow(currentPeriod),
         updated_at: checkedAt,
@@ -195,7 +195,13 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
         .where("owner_id", "=", identity.ownerId)
         .where("runtime_slot", "=", identity.runtimeSlot).execute();
       const balance = await reconcileExpiredPromotionalCredit(trx.executor, identity, checkedAt);
-      const monthlyBudgetMicrousd = exactInteger(runtime.monthly_budget_microusd);
+      // Runtimes registered before the daily allowance may still hold an earlier default budget.
+      const runtimeBudget = free
+        ? await raiseEarlierFreeBudgetDefault(trx.executor, identity.machineId,
+          { budgetMicrousd: exactInteger(runtime.monthly_budget_microusd), revision: runtime.revision,
+            systemDefault: runtime.uses_free_model_default }, checkedAt)
+        : { budgetMicrousd: exactInteger(runtime.monthly_budget_microusd), revision: runtime.revision };
+      const monthlyBudgetMicrousd = runtimeBudget.budgetMicrousd;
       const allowedModelIds = enabled
         ? intersectModels(parseModels(global.allowed_model_ids), parseModels(runtime.allowed_model_ids))
           .filter((model) => !free || model === FREE_MANAGED_MODEL_ID)
@@ -229,7 +235,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
         policy: {
           enabled: enabled && allowedModelIds.length > 0,
           globalRevision: global.revision,
-          runtimeRevision: runtime.revision,
+          runtimeRevision: runtimeBudget.revision,
           allowedModelIds: enabled ? allowedModelIds : [],
           monthlyBudgetMicrousd,
           checkedAt,

@@ -1,5 +1,6 @@
 import { FundedAiSafeErrorSchema, MANAGED_WORKERS_AI_MODEL_IDS } from '@matrix-os/contracts';
 import { Hono } from 'hono';
+import { createHash } from 'node:crypto';
 import { sql } from 'kysely';
 import { createAiFundedRelayRoutes, createAiFundedRuntimeRoutes } from '../../packages/platform/src/ai-funded-policy-routes.js';
 import { buildPlatformRuntimeVerificationToken } from '../../packages/platform/src/platform-token.js';
@@ -17,11 +18,13 @@ import { insertFreeMetalRuntime } from './free-funded-test-helper.js';
 /**
  * Free Matrix AI on metal (spec 2691, ENG-520 Task P7; ported from PR #3437,
  * container fixtures swapped for metal). A free runtime pays from the starter
- * credit plus a $5 allowance each UTC month, on the managed GLM model only,
- * under a global daily spend ceiling answered as busy. Faults detected: a free
- * owner reaching other models, an allowance granted twice or not reset at the
- * month boundary, free spend passing the daily ceiling, a paid owner caught by
- * free limits, and a lock-order deadlock between a funding read and admission.
+ * credit plus a $5 allowance each UTC day, capped at $20 of allowance usage per
+ * UTC month, on the managed GLM model only, under a global daily spend ceiling
+ * answered as busy. Faults detected: a free owner reaching other models, an
+ * allowance granted twice, kept past its day, or not reset at the month
+ * boundary, allowance usage passing the monthly cap, free spend passing the
+ * daily ceiling, a paid owner caught by free limits, and a lock-order deadlock
+ * between a funding read and admission.
  */
 
 const NOV = new Date('2026-11-20T12:00:00.000Z');
@@ -96,7 +99,7 @@ describe('free funded policy', () => {
     await expect(free.authorize(credential, USD)).resolves.toMatchObject({ reservation: { reservedMicrousd: USD } });
   });
 
-  it('adds $5 each month on top of the starter credit and admits up to exactly that much', async () => {
+  it('adds $5 for the UTC day on top of the starter credit and admits up to exactly that much', async () => {
     const free = harness(db, 100 * USD, clock);
     const credential = await free.credential(await addRuntime(db, 1, 'free', NOV));
     await free.spend(credential, 6 * USD);
@@ -106,25 +109,89 @@ describe('free funded policy', () => {
     const grants = await db.executor.selectFrom('ai_funded_credit_ledger').select(['entry_id', 'amount_microusd'])
       .where('kind', '=', 'promotional_grant').orderBy('entry_id').execute();
     expect(grants.map((grant) => [grant.entry_id.split(':')[0], Number(grant.amount_microusd)]))
-      .toEqual([['free-monthly', 5 * USD], ['starter-lifetime', 5 * USD]]);
+      .toEqual([['free-daily', 5 * USD], ['starter-lifetime', 5 * USD]]);
   });
 
-  it('starts a new $5 allowance at the UTC month boundary and retires last month\'s remainder', async () => {
+  it('grants a new $5 each UTC day and retires the unused remainder when its day ends', async () => {
     const free = harness(db, 100 * USD, clock);
     const identity = await addRuntime(db, 1, 'free', NOV);
-    const credential = await free.credential(identity);
-    await free.spend(credential, 3 * USD);
-    clock.now = new Date('2026-11-30T23:59:00.000Z');
+    // The expiring day's allowance is spent before the starter credit, which never expires.
+    await free.spend(await free.credential(identity), 3 * USD);
+    clock.now = new Date('2026-11-20T23:59:00.000Z');
     await free.spend(await free.credential(identity), USD);
-    clock.now = new Date('2026-12-01T00:00:00.000Z');
-    const december = await free.credential(identity);
-    await expect(free.authorize(december, 10 * USD + 1)).rejects.toThrow();
-    await expect(free.authorize(december, 10 * USD)).resolves.toMatchObject({ reservation: { reservedMicrousd: 10 * USD } });
+    clock.now = new Date('2026-11-21T00:00:00.000Z');
+    const nextDay = await free.credential(identity);
+    // Yesterday's unspent $1 is gone: the untouched starter credit plus today's $5 remain.
+    await expect(free.authorize(nextDay, 10 * USD + 1)).rejects.toThrow(refusal('insufficient_credit'));
+    await expect(free.authorize(nextDay, 10 * USD)).resolves.toMatchObject({ reservation: { reservedMicrousd: 10 * USD } });
     const allowances = await db.executor.selectFrom('ai_funded_promotional_grant_balances')
-      .select(['grant_entry_id', 'remaining_microusd']).where('grant_entry_id', 'like', 'free-monthly:%')
+      .select(['grant_entry_id', 'remaining_microusd', 'expires_at']).where('grant_entry_id', 'like', 'free-daily:%')
       .orderBy('grant_entry_id').execute();
-    expect(allowances.map((row) => [row.grant_entry_id.slice(-7), Number(row.remaining_microusd)]))
-      .toEqual([['2026-11', 0], ['2026-12', 5 * USD]]);
+    expect(allowances.map((row) => [row.grant_entry_id.slice(-10), Number(row.remaining_microusd), row.expires_at])).toEqual([
+      ['2026-11-20', 0, '2026-11-21T00:00:00.000Z'],
+      ['2026-11-21', 5 * USD, '2026-11-22T00:00:00.000Z'],
+    ]);
+    const expiry = await db.executor.selectFrom('ai_funded_credit_ledger').select('amount_microusd')
+      .where('kind', '=', 'promotional_expiry').execute();
+    expect(expiry.map((row) => Number(row.amount_microusd))).toEqual([-USD]);
+  });
+
+  it('caps a month\'s allowance usage at $20: the crossing day gets only the remainder, later days nothing, a new month resets', async () => {
+    const free = harness(db, 100 * USD, clock);
+    const identity = await addRuntime(db, 1, 'free', NOV);
+    const at = (iso: string) => { clock.now = new Date(iso); };
+    // Nov 20: the starter credit and the day's $5 are both spent.
+    await free.spend(await free.credential(identity), 10 * USD);
+    at('2026-11-21T12:00:00.000Z');
+    await free.spend(await free.credential(identity), 5 * USD);
+    // Nov 22: $1 is left unspent; Nov 23's admission retires it before granting the day.
+    at('2026-11-22T12:00:00.000Z');
+    await free.spend(await free.credential(identity), 4 * USD);
+    // Nov 23: $3 settles, $1 is still held when the next day is granted, and $1 is left unspent.
+    at('2026-11-23T12:00:00.000Z');
+    await free.spend(await free.credential(identity), 3 * USD);
+    at('2026-11-23T23:59:50.000Z');
+    const late = await free.credential(identity);
+    const held = await free.authorize(late, USD);
+    const heldIds = { reservationId: held.reservation.reservationId, tokenId: late.tokenId };
+    await free.repo.startReservation(heldIds);
+    at('2026-11-24T00:00:00.000Z');
+    // $5 + $5 + $4 + ($3 settled + $1 held) = $18 of allowance used, so Nov 24 gets $2. This
+    // funding read grants before it retires Nov 23's unspent $1, which therefore must not count.
+    await free.repo.getRuntimeFundingSummary(identity);
+    await free.repo.settleReservation({ ...heldIds, actualCostMicrousd: USD });
+    await free.spend(late, 2 * USD);
+    // The runtime's monthly budget (starter plus the $20 cap) also runs out here; the grants below are the check.
+    await expect(free.authorize(late, 1)).rejects.toThrow();
+    at('2026-11-25T12:00:00.000Z');
+    await expect(free.authorize(await free.credential(identity), 1)).rejects.toThrow();
+    const daily = () => db.executor.selectFrom('ai_funded_credit_ledger').select(['entry_id', 'amount_microusd'])
+      .where('entry_id', 'like', 'free-daily:%').orderBy('entry_id').execute();
+    expect((await daily()).map((row) => [row.entry_id.slice(-10), Number(row.amount_microusd)])).toEqual([
+      ['2026-11-20', 5 * USD], ['2026-11-21', 5 * USD], ['2026-11-22', 5 * USD], ['2026-11-23', 5 * USD], ['2026-11-24', 2 * USD],
+    ]);
+    at('2026-12-01T00:00:00.000Z');
+    const december = await free.credential(identity);
+    await expect(free.authorize(december, 5 * USD + 1)).rejects.toThrow(refusal('insufficient_credit'));
+    await expect(free.authorize(december, 5 * USD)).resolves.toMatchObject({
+      reservation: { reservedMicrousd: 5 * USD, periodStart: '2026-12-01T00:00:00.000Z' },
+    });
+    expect(Number((await daily()).at(-1)!.amount_microusd)).toBe(5 * USD);
+    expect((await daily()).at(-1)!.entry_id.slice(-10)).toBe('2026-12-01');
+  });
+
+  it('creates one daily grant when an owner\'s first requests of a new UTC day arrive together', async () => {
+    const free = harness(db, 100 * USD, clock);
+    const identity = await addRuntime(db, 1, 'free', NOV);
+    await free.spend(await free.credential(identity), 10 * USD);
+    clock.now = new Date('2026-11-21T00:00:00.000Z');
+    const credential = await free.credential(identity);
+    const results = await Promise.allSettled([
+      free.authorize(credential, 2 * USD), free.authorize(credential, 2 * USD), free.repo.getRuntimeFundingSummary(identity),
+    ]);
+    expect(results.map((result) => result.status)).toEqual(['fulfilled', 'fulfilled', 'fulfilled']);
+    expect(await db.executor.selectFrom('ai_funded_credit_ledger').select('entry_id')
+      .where('entry_id', 'like', 'free-daily:%:2026-11-21').execute()).toHaveLength(1);
   });
 
   it('refuses new free funded work as busy over the daily ceiling, and admits again the next UTC day', async () => {
@@ -243,7 +310,7 @@ describe('free funded policy', () => {
     const first = await addRuntime(db, 1, 'free', NOV);
     await free.spend(await free.credential(first), 2 * USD);
     const allowance = () => db.executor.selectFrom('ai_funded_promotional_grant_balances')
-      .select(['machine_id', 'remaining_microusd']).where('grant_entry_id', 'like', 'free-monthly:%').execute();
+      .select(['machine_id', 'remaining_microusd']).where('grant_entry_id', 'like', 'free-daily:%').execute();
     const [before] = await allowance();
     const unspent = Number(before!.remaining_microusd);
     expect(unspent).toBeGreaterThan(0);
@@ -260,7 +327,94 @@ describe('free funded policy', () => {
     expect((await allowance()).map((row) => [row.machine_id, Number(row.remaining_microusd)]))
       .toEqual([[replacement.machineId, unspent]]);
     expect(await db.executor.selectFrom('ai_funded_credit_ledger').select('entry_id')
-      .where('entry_id', 'like', 'free-monthly:%').execute()).toHaveLength(1);
+      .where('entry_id', 'like', 'free-daily:%').execute()).toHaveLength(1);
+  });
+
+  it('moves an unspent legacy monthly allowance to a replacement VM, still counting it toward the cap', async () => {
+    const free = harness(db, 100 * USD, clock);
+    const first = await addRuntime(db, 1, 'free', NOV);
+    // A $5 monthly allowance granted this month, before daily allowances replaced it.
+    const legacyId = `free-monthly:${createHash('sha256').update(first.ownerId).digest('hex')}:2026-11`;
+    await free.repo.grantCredit({
+      entryId: legacyId, identity: first, kind: 'promotional_grant', amountMicrousd: 5 * USD,
+      sourceReference: 'matrix-free-monthly-allowance', expiresAt: '2026-12-01T00:00:00.000Z',
+    });
+    await db.executor.updateTable('user_machines').set({ status: 'deleted', deleted_at: NOV.toISOString() })
+      .where('machine_id', '=', first.machineId).execute();
+    const replacement = { ownerId: first.ownerId, machineId: 'free-1-replacement', runtimeSlot: 'primary' };
+    await insertFreeMetalRuntime(db, { machineId: replacement.machineId, clerkUserId: first.ownerId, handle: 'free1r', at: NOV });
+    await db.transaction((trx) => initializeCustomerFundedStarterPolicy(trx, replacement.machineId, { now: NOV.toISOString(), env: ENV }));
+
+    const credential = await free.credential(replacement);
+    // The legacy $5 moves with the owner, and today's $5 is granted beside it.
+    await expect(free.authorize(credential, 10 * USD + 1)).rejects.toThrow(refusal('insufficient_credit'));
+    await expect(free.authorize(credential, 10 * USD)).resolves.toBeDefined();
+    const legacy = await db.executor.selectFrom('ai_funded_promotional_grant_balances').select(['machine_id', 'remaining_microusd'])
+      .where('grant_entry_id', '=', legacyId).executeTakeFirstOrThrow();
+    expect([legacy.machine_id, Number(legacy.remaining_microusd)]).toEqual([replacement.machineId, 5 * USD]);
+    expect(await db.executor.selectFrom('ai_funded_credit_ledger').select('entry_id')
+      .where('entry_id', '=', legacyId).execute()).toHaveLength(1);
+  });
+
+  it.each([
+    { before: 5 * USD, after: 25 * USD }, { before: 10 * USD, after: 25 * USD }, { before: 7 * USD, after: 7 * USD },
+  ])('raises an already-registered free runtime from an earlier default budget on its funding path ($before)', async ({ before, after }) => {
+    const free = harness(db, 100 * USD, clock);
+    const identity = await addRuntime(db, 1, 'free', NOV);
+    const budget = () => db.executor.selectFrom('ai_funded_runtime_policies').select('monthly_budget_microusd')
+      .where('machine_id', '=', identity.machineId).executeTakeFirstOrThrow().then((row) => Number(row.monthly_budget_microusd));
+    await db.executor.updateTable('ai_funded_runtime_policies').set({ monthly_budget_microusd: before })
+      .where('machine_id', '=', identity.machineId).execute();
+    expect((await free.repo.getRuntimeFundingSummary(identity)).policy.monthlyBudgetMicrousd).toBe(after);
+    expect(await budget()).toBe(after);
+    // Admission applies the raise in the same request.
+    await db.executor.updateTable('ai_funded_runtime_policies').set({ monthly_budget_microusd: before })
+      .where('machine_id', '=', identity.machineId).execute();
+    const admitted = free.authorize(await free.credential(identity), Math.min(before, 5 * USD) + 1);
+    if (after > before) await expect(admitted).resolves.toMatchObject({ policy: { monthlyBudgetMicrousd: after } });
+    else await expect(admitted).resolves.toBeDefined();
+    expect(await budget()).toBe(after);
+  });
+
+  it('never raises a limit an operator saved, even one equal to an earlier default', async () => {
+    const free = harness(db, 100 * USD, clock);
+    const identity = await addRuntime(db, 1, 'free', NOV);
+    const budget = () => db.executor.selectFrom('ai_funded_runtime_policies').select(['monthly_budget_microusd', 'revision'])
+      .where('machine_id', '=', identity.machineId).executeTakeFirstOrThrow()
+      .then((row) => ({ budget: Number(row.monthly_budget_microusd), revision: row.revision }));
+    const save = async (monthlyBudgetMicrousd: number) => free.repo.setRuntimePolicy({
+      identity, expectedRevision: (await budget()).revision, enabled: true, expiresAt: null,
+      allowedModelIds: [FREE_MANAGED_MODEL_ID], monthlyBudgetMicrousd,
+    });
+    // An operator saves $10 after the rollout: funding reads, admission and re-registration keep it.
+    await save(10 * USD);
+    expect((await free.repo.getRuntimeFundingSummary(identity)).policy.monthlyBudgetMicrousd).toBe(10 * USD);
+    await expect(free.authorize(await free.credential(identity), USD)).resolves.toMatchObject({ policy: { monthlyBudgetMicrousd: 10 * USD } });
+    await db.transaction((trx) => initializeCustomerFundedStarterPolicy(trx, identity.machineId, { now: NOV.toISOString(), env: ENV }));
+    expect((await budget()).budget).toBe(10 * USD);
+  });
+
+  it('respects an operator change made after a default budget was raised', async () => {
+    const free = harness(db, 100 * USD, clock);
+    const identity = await addRuntime(db, 1, 'free', NOV);
+    await db.executor.updateTable('ai_funded_runtime_policies').set({ monthly_budget_microusd: 10 * USD })
+      .where('machine_id', '=', identity.machineId).execute();
+    const raised = await free.repo.getRuntimeFundingSummary(identity);
+    expect(raised.policy.monthlyBudgetMicrousd).toBe(25 * USD);
+    await free.repo.setRuntimePolicy({
+      identity, expectedRevision: raised.policy.runtimeRevision, enabled: true, expiresAt: null,
+      allowedModelIds: [FREE_MANAGED_MODEL_ID], monthlyBudgetMicrousd: 5 * USD,
+    });
+    expect((await free.repo.getRuntimeFundingSummary(identity)).policy.monthlyBudgetMicrousd).toBe(5 * USD);
+    await expect(free.authorize(await free.credential(identity), USD)).resolves.toMatchObject({ policy: { monthlyBudgetMicrousd: 5 * USD } });
+  });
+
+  it('keeps a paid runtime\'s budget even when it equals an earlier free default', async () => {
+    const free = harness(db, 100 * USD, clock);
+    const paid = await addRuntime(db, 1, 'customer', NOV);
+    await db.executor.updateTable('ai_funded_runtime_policies').set({ monthly_budget_microusd: 10 * USD })
+      .where('machine_id', '=', paid.machineId).execute();
+    expect((await free.repo.getRuntimeFundingSummary(paid)).policy.monthlyBudgetMicrousd).toBe(10 * USD);
   });
 
   it('grants no monthly allowance on a funding read while the free runtime is disabled', async () => {
@@ -270,7 +424,7 @@ describe('free funded policy', () => {
       .where('machine_id', '=', identity.machineId).execute();
     await free.repo.getRuntimeFundingSummary(identity);
     expect(await db.executor.selectFrom('ai_funded_credit_ledger').select('entry_id')
-      .where('entry_id', 'like', 'free-monthly:%').execute()).toEqual([]);
+      .where('entry_id', 'like', 'free-daily:%').execute()).toEqual([]);
   });
 
   it('never applies the free ceiling, allowance, or model limit to a paid owner', async () => {
@@ -362,9 +516,9 @@ describe.skipIf(!freeTierPostgresUrl)('free funded policy races against real Pos
   });
 
   it.each([
-    { before: '2026-11-20T23:59:59.900Z', after: '2026-11-21T00:00:00.100Z', monthChanges: false },
-    { before: '2026-11-30T23:59:59.900Z', after: '2026-12-01T00:00:00.100Z', monthChanges: true },
-  ])('accounts for authorization after waiting across midnight ($after)', async ({ before, after, monthChanges }) => {
+    { before: '2026-11-20T23:59:59.900Z', after: '2026-11-21T00:00:00.100Z', periodStart: '2026-11-01T00:00:00.000Z' },
+    { before: '2026-11-30T23:59:59.900Z', after: '2026-12-01T00:00:00.100Z', periodStart: '2026-12-01T00:00:00.000Z' },
+  ])('refuses as busy, for a retry on the new day\'s allowance, an authorization that waited across midnight ($after)', async ({ before, after, periodStart }) => {
     const [a, b] = scoped.pools as [PlatformDB, PlatformDB];
     const clock = { now: new Date(before) };
     const free = harness(b, USD, clock);
@@ -393,16 +547,65 @@ describe.skipIf(!freeTierPostgresUrl)('free funded policy races against real Pos
       await blocker;
     }
     const [result] = await authorization;
-    if (monthChanges) {
-      expect(result).toMatchObject({ status: 'rejected', reason: { code: 'busy' } });
-      await expect(free.authorize(first, USD)).resolves.toMatchObject({ reservation: { periodStart: '2026-12-01T00:00:00.000Z' } });
-    } else {
-      expect(result.status).toBe('fulfilled');
-    }
+    // The hold would draw on the day's allowance that just expired.
+    expect(result).toMatchObject({ status: 'rejected', reason: { code: 'busy' } });
+    await expect(free.authorize(first, USD)).resolves.toMatchObject({ reservation: { periodStart } });
     const reservation = await a.executor.selectFrom('ai_funded_usage_reservations').select('created_at')
       .where('machine_id', '=', 'free-200').executeTakeFirstOrThrow();
     expect(reservation.created_at).toBe(after);
     await expect(free.authorize(second, USD)).rejects.toThrow(refusal('busy'));
+  });
+
+  it('creates one daily grant when an owner\'s first requests of a new UTC day race across connections', async () => {
+    const [a, b] = scoped.pools as [PlatformDB, PlatformDB];
+    const clock = { now: NOV };
+    const apps = [harness(a, 100 * USD, clock), harness(b, 100 * USD, clock)];
+    const identity = await addRuntime(a, 300, 'free', NOV);
+    await apps[0]!.spend(await apps[0]!.credential(identity), 10 * USD);
+    clock.now = new Date('2026-11-21T00:00:00.000Z');
+    const credential = await apps[0]!.credential(identity);
+    const results = await Promise.allSettled(Array.from({ length: 8 }, (_, index) => index % 3 === 2
+      ? apps[index % 2]!.repo.getRuntimeFundingSummary(identity)
+      : apps[index % 2]!.authorize(credential, USD)));
+    for (const result of results) {
+      if (result.status === 'rejected') expect(result.reason).toBeInstanceOf(AiFundedPolicyError);
+    }
+    const grants = await a.executor.selectFrom('ai_funded_credit_ledger').select('amount_microusd')
+      .where('entry_id', 'like', 'free-daily:%:2026-11-21').execute();
+    expect(grants.map((row) => Number(row.amount_microusd))).toEqual([5 * USD]);
+    const balance = await a.executor.selectFrom('ai_funded_runtime_balances').selectAll()
+      .where('machine_id', '=', identity.machineId).executeTakeFirstOrThrow();
+    expect(Number(balance.reserved_microusd)).toBeLessThanOrEqual(5 * USD);
+  });
+
+  it('holds the monthly cap when settlements race the next day\'s grant', async () => {
+    const [a, b] = scoped.pools as [PlatformDB, PlatformDB];
+    const clock = { now: NOV };
+    const apps = [harness(a, 100 * USD, clock), harness(b, 100 * USD, clock)];
+    const identity = await addRuntime(a, 301, 'free', NOV);
+    await apps[0]!.spend(await apps[0]!.credential(identity), 10 * USD);
+    for (const day of ['21', '22']) {
+      clock.now = new Date(`2026-11-${day}T12:00:00.000Z`);
+      await apps[0]!.spend(await apps[0]!.credential(identity), 5 * USD);
+    }
+    clock.now = new Date('2026-11-23T23:59:50.000Z');
+    const late = await apps[0]!.credential(identity);
+    const holds = [];
+    for (let index = 0; index < 4; index += 1) {
+      const held = await apps[0]!.authorize(late, USD);
+      const ids = { reservationId: held.reservation.reservationId, tokenId: late.tokenId };
+      await apps[0]!.repo.startReservation(ids);
+      holds.push(ids);
+    }
+    clock.now = new Date('2026-11-24T00:00:00.000Z');
+    // $15 used and $4 held: settlements race the funding read that grants Nov 24.
+    await Promise.all([
+      ...holds.map((ids, index) => apps[index % 2]!.repo.settleReservation({ ...ids, actualCostMicrousd: USD })),
+      apps[1]!.repo.getRuntimeFundingSummary(identity),
+    ]);
+    const grants = await a.executor.selectFrom('ai_funded_credit_ledger').select('amount_microusd')
+      .where('entry_id', 'like', 'free-daily:%:2026-11-24').execute();
+    expect(grants.map((row) => Number(row.amount_microusd))).toEqual([USD]);
   });
 
   it('admits free owners racing at the daily ceiling only up to the ceiling', async () => {

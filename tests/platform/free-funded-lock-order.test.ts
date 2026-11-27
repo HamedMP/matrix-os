@@ -73,7 +73,7 @@ describe('free funded admission lock order with account deletion configured', ()
     expect(order[0]).toBe('exclusive');
     expect(order).not.toContain('shared');
     expect(await db.executor.selectFrom('ai_funded_credit_ledger').select('entry_id')
-      .where('entry_id', 'like', 'free-monthly:%').execute()).toHaveLength(1);
+      .where('entry_id', 'like', 'free-daily:%').execute()).toHaveLength(1);
   });
 
   it('keeps the shared funding fence for a paid authorize', async () => {
@@ -102,7 +102,7 @@ describe('free funded admission lock order with account deletion configured', ()
     await insertFreeMetalRuntime(db, { machineId: identity.machineId, clerkUserId: identity.ownerId, handle: 'upgrade', at: NOV });
     await authorizeOnce(identity, FREE_MANAGED_MODEL_ID, () => switchPlanOnLock('exclusive', 'stripe'));
     expect(await db.executor.selectFrom('ai_funded_credit_ledger').select('entry_id')
-      .where('entry_id', 'like', 'free-monthly:%').execute()).toHaveLength(0);
+      .where('entry_id', 'like', 'free-daily:%').execute()).toHaveLength(0);
     expect(await db.executor.selectFrom('ai_funded_usage_reservations').select('free_funded').execute())
       .toEqual([{ free_funded: false }]);
   });
@@ -124,6 +124,6 @@ describe('free funded admission lock order with account deletion configured', ()
     switchPlanOnLock('exclusive', 'stripe');
     await repo.getRuntimeFundingSummary(identity);
     expect(await db.executor.selectFrom('ai_funded_credit_ledger').select('entry_id')
-      .where('entry_id', 'like', 'free-monthly:%').execute()).toHaveLength(0);
+      .where('entry_id', 'like', 'free-daily:%').execute()).toHaveLength(0);
   });
 });
