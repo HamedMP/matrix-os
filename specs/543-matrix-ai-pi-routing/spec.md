@@ -526,6 +526,10 @@ makes that slot reusable while preserving the old immutable audit. The sum bound
 is enforced under the owner advisory lock; it does not bound later live inference
 or establish actual testing spend. Other live executions prevent recovery.
 Ordinary authorization/start cannot replay an audited request into another dispatch.
+For a new start, sample Platform time after acquiring the owner and reservation
+locks. Reject a reservation that expires while waiting; capture `startedAt` and
+the in-flight expiry from that locked instant. Replaying the same execution ID
+retains its original start receipt and cannot extend the execution lifetime.
 
 The durable `idx_ai_funded_usage_active_owner` index retains its name and excludes
 only audited execution releases. A transactional replacement preserves uniqueness
