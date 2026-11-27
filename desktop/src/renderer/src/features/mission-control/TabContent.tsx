@@ -9,7 +9,7 @@ import HomeTab from "./HomeTab";
 import AppLauncher from "../embeds/AppLauncher";
 import TerminalsTab from "../terminal/TerminalsTab";
 import EmbedHost from "../embeds/EmbedHost";
-import FilesWorkspace from "../files/FilesWorkspace";
+import FilesSurface from "../files/FilesSurface";
 import WorkTab from "../work/WorkTab";
 import BrowserTab from "../browser/BrowserTab";
 import DesktopEditorWorkspace from "../editor/DesktopEditorWorkspace";
@@ -86,7 +86,7 @@ export function TabPane({
     case "terminals":
       return <TerminalsTab active={active} visible={visible} visualScale={visualScale} />;
     case "files":
-      return <FilesWorkspace />;
+      return <FilesSurface />;
     case "editor":
       return <DesktopEditorWorkspace />;
     case "vscode":
