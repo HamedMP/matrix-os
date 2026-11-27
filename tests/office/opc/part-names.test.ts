@@ -59,6 +59,11 @@ describe("part name normalisation", () => {
     expect(partExtension("/word/document.xml.rels")).toBe("rels");
     expect(partExtension("/word.v2/noextension")).toBe("");
     expect(partExtension("/_rels/.rels")).toBe("rels");
+    // The same spelling rules as part lookup: unreserved escapes decode, other escapes stay.
+    expect(partExtension("/word/document.%78ml")).toBe("xml");
+    expect(partExtension("/word/document.%58ML")).toBe("xml");
+    expect(partExtension("/word/document%2Expm")).toBe("xpm");
+    expect(partExtension("/word/media/a.x%2fy")).toBe("x%2fy");
     expect(partDirectory("/word/media/image1.png")).toBe("/word/media/");
     expect(partDirectory("/top.xml")).toBe("/");
   });

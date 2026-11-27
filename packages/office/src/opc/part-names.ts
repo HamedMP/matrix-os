@@ -122,9 +122,13 @@ export function entryNameToPartName(entryName: string): string {
   return normalizePartName(entryName);
 }
 
-/** Lower-cased extension without the dot, or an empty string. */
+/**
+ * Lower-cased extension without the dot, or an empty string. Read from the
+ * same spelling part lookup compares, so `document.%78ml` has extension `xml`.
+ */
 export function partExtension(partName: string): string {
-  const base = partName.slice(partName.lastIndexOf("/") + 1);
+  const name = canonicalSpelling(partName);
+  const base = name.slice(name.lastIndexOf("/") + 1);
   const dot = base.lastIndexOf(".");
   return dot < 0 ? "" : base.slice(dot + 1).toLowerCase();
 }

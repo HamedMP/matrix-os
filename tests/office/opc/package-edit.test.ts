@@ -493,3 +493,15 @@ describe("edits that a saved package could not reopen", () => {
     expect(reopened.getRelationshipsByType("/word/document.xml", IMAGE_REL)).toHaveLength(1);
   });
 });
+
+describe("escaped part names and Default content types", () => {
+  it("resolves the Default of an extension spelled with unreserved escapes", async () => {
+    const pkg = createPackage();
+    pkg.setPart("/word/document.%78ml", "<d/>");
+    expect(pkg.getContentType("/word/document.%78ml")).toBe("application/xml");
+    expect(pkg.getContentType("/word/document.xml")).toBe("application/xml");
+    const reopened = await openPackage(await pkg.save());
+    expect(reopened.getContentType("/word/document.xml")).toBe("application/xml");
+    expect(reopened.getContentTypes().overrides).toEqual([]);
+  });
+});
