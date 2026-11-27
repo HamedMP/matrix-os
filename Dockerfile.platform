@@ -58,7 +58,9 @@ ENV MATRIX_PLATFORM_AUTH_SHELL=1
 RUN pnpm --filter '@matrix-os/observability' build
 RUN pnpm --filter '@matrix-os/brand' build
 RUN pnpm --filter '@matrix-os/kernel' build
-RUN pnpm --filter '@matrix-os/gateway' build
+# Gateway's connected TypeScript graph is close to V8's default ~2 GiB heap.
+# Scope the larger heap to this build step so it never enters the runtime image.
+RUN NODE_OPTIONS=--max-old-space-size=4096 pnpm --filter '@matrix-os/gateway' build
 RUN pnpm --filter '@matrix-os/platform' build
 RUN pnpm --dir shell exec next build --webpack
 

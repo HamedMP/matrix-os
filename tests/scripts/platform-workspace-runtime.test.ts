@@ -1,10 +1,12 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { parse } from "yaml";
 
 const root = process.cwd();
 const dockerfile = readFileSync(join(root, "Dockerfile.platform"), "utf8");
 const dockerignore = readFileSync(join(root, ".dockerignore"), "utf8");
+const cloudBuild = parse(readFileSync(join(root, "cloudbuild.platform.yaml"), "utf8"));
 const previewWorkflow = readFileSync(join(root, ".github/workflows/preview-platform.yml"), "utf8");
 const gateway = JSON.parse(readFileSync(join(root, "packages/gateway/package.json"), "utf8"));
 const workspaces = readdirSync(join(root, "packages"), { withFileTypes: true })
@@ -12,6 +14,18 @@ const workspaces = readdirSync(join(root, "packages"), { withFileTypes: true })
   .map((entry) => ({ path: `packages/${entry.name}`, manifest: JSON.parse(readFileSync(join(root, "packages", entry.name, "package.json"), "utf8")) }));
 
 describe("Platform image workspace closure", () => {
+  it("keeps the Gateway compiler below build memory limits without changing runtime memory", () => {
+    const builder = dockerfile.split("FROM deps AS builder")[1]!.split("FROM base AS prod-deps")[0]!;
+    const runtime = dockerfile.split("FROM node:24-alpine AS runtime")[1]!;
+
+    expect(builder).toContain(
+      "RUN NODE_OPTIONS=--max-old-space-size=4096 pnpm --filter '@matrix-os/gateway' build",
+    );
+    expect(dockerfile).not.toContain("ENV NODE_OPTIONS");
+    expect(runtime).not.toContain("NODE_OPTIONS");
+    expect(cloudBuild.options?.machineType).toBe("E2_HIGHCPU_8");
+  });
+
   it("keeps shell E2E sources out of the production image build context", () => {
     const ignoredPaths = dockerignore
       .split(/\r?\n/u)

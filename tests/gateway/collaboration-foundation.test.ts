@@ -103,6 +103,7 @@ const ROUTE_BASELINE: ReadonlyArray<readonly [string, string]> = [
   ["POST", "/api/collaboration/scopes/:scopeId/files/actions"],
   ["GET", "/api/collaboration/scopes/:scopeId/apps/:appId"],
   ["POST", "/api/collaboration/scopes/:scopeId/apps/:appId/view"],
+  ["GET", "/api/collaboration/scopes/:scopeId/apps/:appId/data"],
   ["GET", "/api/collaboration/scopes/:scopeId/apps/:appId/assets/:assetPath{.+}"],
   ["POST", "/api/collaboration/scopes/:scopeId/apps/:appId/actions"],
   ["PUT", "/api/collaboration/scopes/:scopeId/drive"],

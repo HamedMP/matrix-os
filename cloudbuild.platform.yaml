@@ -50,3 +50,7 @@ steps:
 images:
   - ${_IMAGE}
   - ${_CACHE_IMAGE}
+
+# Back the Gateway compiler's scoped 4 GiB heap with sufficient worker RAM.
+options:
+  machineType: E2_HIGHCPU_8

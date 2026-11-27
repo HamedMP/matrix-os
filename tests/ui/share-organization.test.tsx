@@ -6,9 +6,13 @@ import { SharePanel, ShareTriggerLabel, useShareController, useShareOrganization
 import { HANDOFF_POLL_MS } from "../../packages/ui/src/share/use-collaborative-handoff";
 
 // Outcome: an owner shares a live app with one org from the Organization tab.
-// Faults detected: sharing without a passing readiness result, a completion
-// event creating a share by itself, the wrong org/request in the Chats
-// handoff, and a stale completion re-sharing after Stop sharing.
+// ENG-579: any app shares after a completed readiness check (view-only until it
+// is collaborative); "Make it collaborative" is an optional suggestion with a
+// green tick once the build is collaborative.
+// Faults detected: sharing without a completed readiness result, blocking a
+// share on collaboration, a completion event sharing a non-collaborative app,
+// the wrong org/request in the Chats handoff, and a stale completion
+// re-sharing after Stop sharing.
 
 const ORG = "org_finna_team";
 const ORG2 = "org_northwind";
@@ -21,9 +25,9 @@ const build = {
   bridgeContractVersion: "matrix-app-bridge-v1", runtimeAbi: "matrix-runtime-v1",
 };
 const codes = ["declaration", "exact_build", "owner_postgres", "recipient_launch", "participant_identity", "idempotent_retry", "conflict_write", "change_signal", "provider_safety", "cleanup"];
-const readiness = (status: "ready" | "blocked", revision = "2") => ({
+const readiness = (status: "ready" | "blocked" | "failed", revision = "2") => ({
   readinessId: "40000000-0000-4000-8000-000000000001", build, status, revision,
-  checks: codes.map((code) => status === "ready" || code !== "owner_postgres" ? { code, status: "passed" } : { code, status: "blocked", action: "Use shared owner-backed reads in the built app and recheck." }),
+  checks: codes.map((code) => status === "ready" || code !== "owner_postgres" ? { code, status: "passed" } : { code, status, action: "Use shared owner-backed reads in the built app and recheck." }),
   ...(status === "ready" ? { verifiedAt: "2026-11-05T10:00:00.000Z" } : {}),
 });
 const share = (state: "active" | "stopped" = "active") => ({
@@ -33,8 +37,8 @@ const share = (state: "active" | "stopped" = "active") => ({
   createdAt: "2026-11-05T10:00:00.000Z", updatedAt: "2026-11-05T10:00:00.000Z",
 });
 
-function collaboration(checkResults: Array<"ready" | "blocked">, options: { initialShare?: unknown; preflightGate?: Promise<void>; shareGate?: Promise<void>; shareReadFailures?: number } = {}) {
-  let current: unknown = null;
+function collaboration(checkResults: Array<"ready" | "blocked" | "failed">, options: { initialShare?: unknown; initialReadiness?: "ready" | "blocked"; preflightGate?: Promise<void>; shareGate?: Promise<void>; shareReadFailures?: number; checkGate?: Promise<void>; readinessReadFails?: boolean } = {}) {
+  let current: unknown = options.initialReadiness ? readiness(options.initialReadiness) : null;
   let currentShare: unknown = options.initialShare ?? null;
   let shareReadFailures = options.shareReadFailures ?? 0;
   const results = [...checkResults];
@@ -46,10 +50,11 @@ function collaboration(checkResults: Array<"ready" | "blocked">, options: { init
         if (shareReadFailures > 0) { shareReadFailures -= 1; throw new Error("share read failed"); }
         return currentShare;
       }
+      if (options.readinessReadFails) throw new Error("readiness read failed");
       return current;
     }),
     post: vi.fn(async (path: string, _body: unknown) => {
-      if (path.endsWith("/readiness/check")) { checkCount += 1; current = readiness(results.shift() ?? "blocked", String(checkCount + 1)); return current; }
+      if (path.endsWith("/readiness/check")) { await options.checkGate; checkCount += 1; current = readiness(results.shift() ?? "blocked", String(checkCount + 1)); return current; }
       if (path.endsWith("/share/preflight")) await options.preflightGate;
       if (path.endsWith("/share/preflight")) return { eligible: true, catalogId: build.catalogId, resourceRevision: "0", readinessId: "40000000-0000-4000-8000-000000000001", buildId: build.buildId, confirmationToken: "token_payload.signature_value" };
       if (path.endsWith("/share")) { currentShare = share(); await options.shareGate; return currentShare; }
@@ -59,12 +64,15 @@ function collaboration(checkResults: Array<"ready" | "blocked">, options: { init
   };
 }
 
-function files(initial: unknown = null) {
+function files(initial: unknown = null, options: { firstPutGate?: Promise<void> } = {}) {
   let stored: unknown = initial;
+  let gate = options.firstPutGate;
   return {
     get: vi.fn(async () => { if (stored === null) throw Object.assign(new Error("missing"), { category: "notFound" }); return stored; }),
     // Mirrors the gateway blob route: replacing an existing file needs force=true.
     put: vi.fn(async (path: string, body: unknown) => {
+      const waiting = gate; gate = undefined;
+      if (waiting) await waiting;
       if (stored !== null && !path.includes("force=true")) throw Object.assign(new Error("file_exists"), { status: 409 });
       stored = body; return { ok: true };
     }),
@@ -178,28 +186,44 @@ describe("Organization tab", () => {
     expect(screen.getByRole("group", { name: "Share in Finna" })).toBeTruthy();
   });
 
-  it("asks for the two-step collaborative flow when readiness is blocked and never shares", async () => {
+  it("shares an app that isn't collaborative as view-only and keeps the collaborative suggestion", async () => {
     const api = collaboration(["blocked"]);
     render(<Host organizations={[finna]} api={api} fileApi={files()} />);
     await openOrganizationTab();
+    const suggestion = await screen.findByRole("region", { name: "Make it collaborative" });
+    expect(within(suggestion).getByRole("button", { name: /Start in Chats/ })).toBeTruthy();
     fireEvent.click(await screen.findByRole("button", { name: "Share with Finna" }));
-    const steps = await screen.findByRole("list", { name: "Two steps to share" });
-    expect(within(steps).getByText("Make it collaborative")).toBeTruthy();
-    expect(within(steps).getByText("Claude sets it up in a new chat.")).toBeTruthy();
-    expect(within(steps).getByText("Share")).toBeTruthy();
-    expect(screen.queryByText("Turns on by itself when step 1 is done.")).toBeNull();
+    await screen.findByRole("button", { name: "Copy Finna link" });
+    expect(screen.getByText("Shared · View only")).toBeTruthy();
+    expect(api.post).toHaveBeenCalledWith("/api/collaboration/apps/sales-crm/share", expect.objectContaining({ organizationId: ORG }));
+    expect(within(screen.getByRole("region", { name: "Make it collaborative" })).getByText(/Teammates can view but not edit/)).toBeTruthy();
+    expect(screen.queryByRole("list", { name: "Two steps to share" })).toBeNull();
+  });
+
+  it("shows a green tick, not the suggestion, once the app is collaborative", async () => {
+    render(<Host organizations={[finna]} api={collaboration([], { initialReadiness: "ready" })} fileApi={files()} />);
+    await openOrganizationTab();
+    const suggestion = await screen.findByRole("region", { name: "Make it collaborative" });
+    expect(await within(suggestion).findByRole("img", { name: "Done" })).toBeTruthy();
+    expect(within(suggestion).getByText("Collaborative")).toBeTruthy();
+    expect(within(suggestion).queryByRole("button", { name: /Start in Chats/ })).toBeNull();
+  });
+
+  it("does not share when the readiness check itself fails", async () => {
+    const api = collaboration(["failed"]);
+    render(<Host organizations={[finna]} api={api} fileApi={files()} />);
+    await openOrganizationTab();
+    fireEvent.click(await screen.findByRole("button", { name: "Share with Finna" }));
+    expect(await screen.findByText("Couldn’t check this app right now. Try again.")).toBeTruthy();
     expect(api.post).not.toHaveBeenCalledWith("/api/collaboration/apps/sales-crm/share", expect.anything());
-    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-    expect(await screen.findByRole("button", { name: "Share with Finna" })).toBeTruthy();
   });
 
   it("starts a new chat with the app, skill, org and request id, then applies the share only after a ready recheck", async () => {
-    const api = collaboration(["blocked", "ready"]);
+    const api = collaboration(["ready"]);
     const fileApi = files();
     const startChat = vi.fn(async () => true);
     render(<Host organizations={[finna]} api={api} fileApi={fileApi} startChat={startChat} />);
     await openOrganizationTab();
-    fireEvent.click(await screen.findByRole("button", { name: "Share with Finna" }));
     vi.useFakeTimers({ shouldAdvanceTime: true });
     fireEvent.click(await screen.findByRole("button", { name: /Start in Chats/ }));
     await waitFor(() => expect(startChat).toHaveBeenCalledTimes(1));
@@ -218,22 +242,21 @@ describe("Organization tab", () => {
     expect(await screen.findByText("Collaborative and shared")).toBeTruthy();
     expect(screen.queryByText("Everyone at Finna sees the same, live data.")).toBeNull();
     const checks = api.post.mock.calls.filter(([path]) => path.endsWith("/readiness/check"));
-    expect(checks).toHaveLength(2);
+    expect(checks).toHaveLength(1);
     expect(fileApi.current()).toMatchObject({ state: "applied" });
   });
 
-  it("keeps sharing off when the skill completes but readiness still fails", async () => {
-    const api = collaboration(["blocked", "blocked"]);
+  it("keeps sharing off when the skill completes but the app still isn't collaborative", async () => {
+    const api = collaboration(["blocked"]);
     const fileApi = files();
     render(<Host organizations={[finna]} api={api} fileApi={fileApi} />);
     await openOrganizationTab();
-    fireEvent.click(await screen.findByRole("button", { name: "Share with Finna" }));
     vi.useFakeTimers({ shouldAdvanceTime: true });
     fireEvent.click(await screen.findByRole("button", { name: /Start in Chats/ }));
     await screen.findByText("Setting up…");
     fileApi.skillWrites({ state: "completed" });
     await vi.advanceTimersByTimeAsync(HANDOFF_POLL_MS + 10);
-    expect(await screen.findByText("Claude finished, but the app isn’t ready to share yet. Open the chat to keep going.")).toBeTruthy();
+    expect(await screen.findByText("Claude finished, but the app isn’t collaborative yet. Open the chat to keep going.")).toBeTruthy();
     expect(api.post).not.toHaveBeenCalledWith("/api/collaboration/apps/sales-crm/share", expect.anything());
     expect(screen.queryByRole("button", { name: "Copy Finna link" })).toBeNull();
   });
@@ -253,11 +276,10 @@ describe("Organization tab review fixes", () => {
   const completedRecord = { version: 1, event: "collaborative_app.preparation", requestId: "50000000-0000-4000-8000-000000000001", appSlug: "sales-crm", organizationId: ORG, state: "completed", updatedAt: "2026-11-15T12:00:00.000Z" };
 
   it("replaces the handoff record on every transition and marks it applied", async () => {
-    const api = collaboration(["blocked", "ready"]);
+    const api = collaboration(["ready"]);
     const fileApi = files();
     render(<Host organizations={[finna]} api={api} fileApi={fileApi} />);
     await openOrganizationTab();
-    fireEvent.click(await screen.findByRole("button", { name: "Share with Finna" }));
     vi.useFakeTimers({ shouldAdvanceTime: true });
     fireEvent.click(await screen.findByRole("button", { name: /Start in Chats/ }));
     await screen.findByText("Setting up…");
@@ -322,5 +344,63 @@ describe("Organization tab review fixes", () => {
     await openOrganizationTab();
     expect(await screen.findByText("Collaborative and shared")).toBeTruthy();
     expect(api.post).toHaveBeenCalledWith("/api/collaboration/apps/sales-crm/share", expect.anything());
+  });
+});
+
+// Review fixes (ENG-579): an already-shared app's completion only refreshes readiness, never hides a
+// failed check, never overwrites a newer chat; and "View only" is shown only when confirmed.
+describe("Organization tab view-only refresh", () => {
+  const completed = { version: 1, event: "collaborative_app.preparation", requestId: "50000000-0000-4000-8000-000000000009", appSlug: "sales-crm", organizationId: ORG, state: "completed", updatedAt: "2026-11-25T12:00:00.000Z" };
+
+  it("keeps a completion saved and says so when the refresh check fails", async () => {
+    const fileApi = files(completed);
+    render(<Host organizations={[finna]} api={collaboration(["failed"], { initialShare: share() })} fileApi={fileApi} />);
+    await openOrganizationTab();
+    expect(await screen.findByText("Couldn’t check this app right now. Try again.")).toBeTruthy();
+    expect(fileApi.current()).toMatchObject({ state: "completed", requestId: completed.requestId });
+  });
+
+  it("never overwrites a newer chat request with the older completion", async () => {
+    let release!: () => void;
+    const api = collaboration(["ready"], { initialShare: share(), checkGate: new Promise((resolve) => { release = resolve; }) });
+    const fileApi = files(completed);
+    render(<Host organizations={[finna]} api={api} fileApi={fileApi} />);
+    await openOrganizationTab();
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/collaboration/apps/sales-crm/readiness/check", expect.anything()));
+    fireEvent.click(await screen.findByRole("button", { name: /Start in Chats/ }));
+    await waitFor(() => expect(fileApi.current()).toMatchObject({ state: "running" }));
+    const newer = fileApi.current()!.requestId;
+    release();
+    await waitFor(() => expect(screen.getByRole("img", { name: "Done" })).toBeTruthy());
+    expect(fileApi.current()).toMatchObject({ state: "running", requestId: newer });
+  });
+
+  it("labels a share view-only only when its bound readiness is confirmed blocked", async () => {
+    const { unmount } = render(<Host organizations={[finna]} api={collaboration([], { initialShare: share(), readinessReadFails: true })} fileApi={files()} />);
+    await openOrganizationTab();
+    await screen.findByRole("button", { name: "Copy Finna link" });
+    expect(within(screen.getByRole("group", { name: "Share in Finna" })).getByText("Shared")).toBeTruthy();
+    expect(screen.queryByText("Shared · View only")).toBeNull();
+    unmount();
+    render(<Host organizations={[finna]} api={collaboration([], { initialShare: share(), initialReadiness: "blocked" })} fileApi={files()} />);
+    await openOrganizationTab();
+    expect(await screen.findByText("Shared · View only")).toBeTruthy();
+  });
+
+  // Fault: an older "applied" write still in flight landed after a newer Start in Chats record,
+  // replacing it on disk and in the UI and stopping completion tracking.
+  it("keeps a newer chat request when an older applied write lands late", async () => {
+    let release!: () => void;
+    const fileApi = files(completed, { firstPutGate: new Promise((resolve) => { release = resolve; }) });
+    const api = collaboration(["blocked"], { initialShare: share() });
+    render(<Host organizations={[finna]} api={api} fileApi={fileApi} />);
+    await openOrganizationTab();
+    await waitFor(() => expect(fileApi.put).toHaveBeenCalledTimes(1));
+    fireEvent.click(await screen.findByRole("button", { name: /Start in Chats/ }));
+    release();
+    await waitFor(() => expect(fileApi.put).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(fileApi.current()).toMatchObject({ state: "running" }));
+    expect(fileApi.current()!.requestId).not.toBe(completed.requestId);
+    expect(await screen.findByText("Setting up…")).toBeTruthy();
   });
 });
