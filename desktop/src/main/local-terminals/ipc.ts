@@ -38,7 +38,7 @@ export function registerLocalTerminalIpc(
   authorizeSender: (event: unknown, channel: string) => boolean,
   streams: Pick<LocalTerminalStreams, "open" | "release">,
 ): void {
-  if (typeof host?.list !== "function" || typeof authorizeSender !== "function" || typeof streams?.open !== "function") {
+  if (typeof host?.list !== "function" || typeof host.standaloneMachines !== "function" || typeof authorizeSender !== "function" || typeof streams?.open !== "function") {
     throw new Error("local terminal service unavailable");
   }
   // A failure while the host is otherwise healthy is still "unavailable".
@@ -70,8 +70,14 @@ export function registerLocalTerminalIpc(
       catch (error: unknown) { logFailure("local-terminal:kill", error); return { ok: false }; }
     },
     "local-terminal:machines": async () => {
-      try { return { status: "ready", machines: await host.machines() }; }
-      catch (error: unknown) { logFailure("local-terminal:machines", error); return unavailable(); }
+      const [privateInventory, standalone] = await Promise.all([
+        host.machines().then(machines => ({ status: "ready" as const, machines }), (error: unknown) => {
+          logFailure("local-terminal:machines", error);
+          return unavailable();
+        }),
+        host.standaloneMachines(),
+      ]);
+      return { ...privateInventory, standalone };
     },
     "local-terminal:machine-add": async ({ target, name, ssh }) => {
       try { return await host.addMachine({ target, ...(name ? { name } : {}), ...(ssh ? { ssh } : {}) }); }

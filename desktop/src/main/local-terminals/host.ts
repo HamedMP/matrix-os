@@ -6,8 +6,9 @@ import { lstat, mkdir, realpath, stat } from "node:fs/promises";
 import { join, sep } from "node:path";
 import { z } from "zod/v4";
 import {
-  LOCAL_TERMINAL_PREVIEW_MAX_CHARS, SshTargetSchema, type LocalMachine, type LocalTerminalAgent, type LocalTerminalFact, type SshOptions,
+  LOCAL_MACHINES_MAX, LOCAL_TERMINAL_PREVIEW_MAX_CHARS, SshTargetSchema, type StandaloneMachine, type LocalMachine, type LocalTerminalAgent, type LocalTerminalFact, type SshOptions,
 } from "../../shared/local-terminals";
+import { readCoreInventory, standardHerdrSocket } from "../desktop-link/herdr-inventory";
 import { installVia, sshLoginArgv, sshVia } from "./ssh-command";
 import { createMachineSshStore, machineSshMatches } from "./machine-ssh-store";
 import { findTailscale, tailscalePeers, type TailscalePeersResult } from "./tailscale";
@@ -444,6 +445,19 @@ export function createLocalTerminalHost(options: LocalTerminalHostOptions, sink:
 
     /** Machines this core reaches over ssh, with their line state now and how the app added them. */
     machines: shownMachines,
+    async standaloneMachines(): Promise<StandaloneMachine[]> {
+      const path = standardHerdrSocket(options.env, options.home);
+      if (!path || path === socketPath) return [];
+      try {
+        const { machines } = await readCoreInventory(path);
+        return machines.slice(0, LOCAL_MACHINES_MAX).map(({ name, state }) => ({ name, state }));
+      } catch (error: unknown) {
+        if (!NO_CORE_CODES.has((error as NodeJS.ErrnoException)?.code ?? "")) {
+          console.warn("[local-terminals] standalone inventory unavailable:", describeError(error));
+        }
+        return [];
+      }
+    },
 
     /** Open in terminal for an added machine, the way it was added. Null when the core does not know it. */
     async machineLogin(name: string, size: { cols: number; rows: number }): Promise<string | null> {

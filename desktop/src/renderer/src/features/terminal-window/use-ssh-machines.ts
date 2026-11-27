@@ -3,7 +3,7 @@
 // and every few seconds while a machine is still connecting.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke, onEvent } from "../../lib/operator";
-import type { LocalMachine, LocalMachineAddFailure, SshOptions, TailscalePeer } from "../../../../shared/local-terminals";
+import type { LocalMachine, LocalMachineAddFailure, StandaloneMachine, SshOptions, TailscalePeer } from "../../../../shared/local-terminals";
 
 const SETTLING_REFRESH_MS = 5_000;
 // A connected machine can drop, and an unreachable one come back, without anything here noticing.
@@ -18,6 +18,7 @@ export type TailscalePeersState =
 
 export function useSshMachines() {
   const [state, setState] = useState<SshMachinesState>({ status: "loading" });
+  const [standalone, setStandalone] = useState<StandaloneMachine[]>([]);
   const generation = useRef(0);
 
   const refresh = useCallback(async () => {
@@ -25,11 +26,13 @@ export function useSshMachines() {
     try {
       const result = await invoke("local-terminal:machines", {});
       if (current !== generation.current) return;
+      setStandalone(result.standalone ?? []);
       // A failed look keeps the last list (and the timer that looks again) instead of hiding the machines.
       setState((previous) => (result.status === "ready" ? { status: "ready", machines: result.machines }
         : previous.status === "ready" ? previous : { status: "unavailable" }));
     } catch (error: unknown) {
       if (current !== generation.current) return;
+      setStandalone([]);
       console.warn("[terminal-window] machines unavailable:", error instanceof Error ? error.name : "UnknownError");
       setState((previous) => (previous.status === "ready" ? previous : { status: "unavailable" }));
     }
@@ -43,7 +46,7 @@ export function useSshMachines() {
 
   // A machine still dialling settles soon; others change rarely. Only while the window is visible.
   const settling = state.status === "ready" && state.machines.some((machine) => machine.state === "connecting");
-  const any = state.status === "ready" && state.machines.length > 0;
+  const any = standalone.length > 0 || (state.status === "ready" && state.machines.length > 0);
   useEffect(() => {
     if (!any) return;
     const timer = setInterval(() => {
@@ -162,5 +165,5 @@ export function useSshMachines() {
     ...(machine.coreId ? { coreId: machine.coreId } : {}), ...(machine.ssh ? { ssh: machine.ssh } : {}),
   })), [coreJob]);
 
-  return { state, refresh, add, remove, connect, sshLogin, machineLogin, tailscalePeers, install, update, coreBusy, coreFailed, coreChanged, coreUnsupported };
+  return { state, standalone, refresh, add, remove, connect, sshLogin, machineLogin, tailscalePeers, install, update, coreBusy, coreFailed, coreChanged, coreUnsupported };
 }

@@ -407,6 +407,7 @@ export default function TerminalWindowApp() {
       <div className="flex min-h-0 flex-1">
         <TerminalWindowSidebar
           machines={machines}
+          standalone={view.ssh.standalone}
           machinesStatus={<MatrixStatus state={view.machines.state} onRetry={view.machines.retry} />}
           expandedSpaces={prefs.expandedSpaces}
           onToggleSpaceExpanded={view.sidebar.toggleSpaceExpanded}

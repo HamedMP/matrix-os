@@ -8,7 +8,7 @@ import { ChevronDown, ChevronRight, ListTree, PanelLeftOpen, Plus, Rows3, Settin
 import {
   TerminalSidebarList, TerminalStatusSidebar, type TerminalSidebarRow, type TerminalSidebarView,
 } from "@matrix-os/ui/terminal-status-sidebar";
-import type { LocalTerminalAgent } from "../../../../shared/local-terminals";
+import type { LocalTerminalAgent, StandaloneMachine } from "../../../../shared/local-terminals";
 import { NewLocalTerminalMenu } from "./LocalTerminalActions";
 import { SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH, type SpaceStyle } from "./use-sidebar-prefs";
 import { AllSpacesRow, SpaceList, inOrder, orderedSpaces, spaceId, type SpaceEntry } from "./SidebarSpaces";
@@ -43,6 +43,7 @@ export interface SidebarFilter {
 
 export interface TerminalWindowSidebarProps {
   machines: readonly SidebarMachine[];
+  standalone: readonly StandaloneMachine[];
   /** Shown below the machines: the Matrix computers' loading, sign-in or error state. */
   machinesStatus?: ReactNode;
   /** Spaces whose terminals are listed inline under them. */
@@ -234,6 +235,15 @@ function MachinesList({ props }: { props: TerminalWindowSidebarProps }) {
         onStyle={props.onSpaceStyle} onReorder={props.onMachineOrder} />
       {/* Machines that cannot be used now wait, compact, under one fold at the end. */}
       <ul aria-label="Unavailable machines list"><UnavailableMachines machines={others.filter((machine) => machine.dormant)} /></ul>
+      {props.standalone.length > 0 && <div className="px-2 py-1 text-[12px]" style={secondaryText}>
+        <p className="font-medium">Standalone Herdr · View only</p>
+        <ul aria-label="Standalone Herdr">{props.standalone.map(machine => (
+          <li key={machine.name} className="flex items-center justify-between gap-2 py-0.5">
+            <span className="truncate">{machine.name}</span>
+            <span>{({ connected: "Connected", unreachable: "Unreachable", unknown: "Unknown" })[machine.state]}</span>
+          </li>
+        ))}</ul>
+      </div>}
       {props.machinesStatus ? <ul aria-label="Computers status">{props.machinesStatus}</ul> : null}
     </div>
   );
