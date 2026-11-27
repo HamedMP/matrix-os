@@ -1,3 +1,5 @@
+import { boundedProvenanceTransaction } from "../google-data/provenance/transaction.js";
+import { hasGoogleContextMarker, lockGoogleContexts } from "../google-data/runtime/contexts-schema.js";
 import { isRoutineDirectChatId } from "../bots/routine-direct-chat-identity.js";
 import { hasCompanyDriveMaterial } from "../chat/drive-sharing-guard.js";
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
@@ -97,7 +99,7 @@ export class CollaborationChatScopeService {
     const existingScope = existing?.organization_id === input.organizationId
       ? { existingScopeId: existing.id, existingLifecycle: existing.lifecycle }
       : {};
-    if (await hasCompanyDriveMaterial(this.db, input.chatId)) {
+    if (await hasGoogleContextMarker(this.db, input.ownerId, input.chatId) || await hasCompanyDriveMaterial(this.db, input.chatId)) {
       return { eligible: false, reason: "unsupported", chatRevision, ...existingScope };
     }
     if (await hasActiveWork(this.db, input.chatId)) {
@@ -131,7 +133,8 @@ export class CollaborationChatScopeService {
     if (isRoutineDirectChatId(input.chatId)) throw new CollaborationChatScopeError("not_found", "Chat not found");
     const now = this.now().toISOString();
     let committedChatEvent: ChatOutboxEvent | undefined;
-    const result = await this.withCapabilityTransition(() => this.db.transaction().execute(async (trx) => {
+    const result = await this.withCapabilityTransition(() => boundedProvenanceTransaction(this.db, async (trx) => {
+      await lockGoogleContexts(trx);
       const chat = await trx.selectFrom("chats")
         .selectAll()
         .where("id", "=", input.chatId)
@@ -141,7 +144,9 @@ export class CollaborationChatScopeService {
         .forUpdate()
         .executeTakeFirst();
       if (!chat) throw new CollaborationChatScopeError("not_found", "Chat not found");
-      if (await hasCompanyDriveMaterial(trx, input.chatId)) throw new CollaborationChatScopeError("conflict", "Chat audience policy is unavailable");
+      if (await hasGoogleContextMarker(trx, input.ownerId, input.chatId) || await hasCompanyDriveMaterial(trx, input.chatId)) {
+        throw new CollaborationChatScopeError("conflict", "Chat audience policy is unavailable");
+      }
       const existingBinding = parseBinding(chat.collaboration);
       if (existingBinding) {
         const existing = await selectScope(trx, existingBinding.scopeId);

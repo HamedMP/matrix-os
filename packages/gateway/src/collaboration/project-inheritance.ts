@@ -1,3 +1,5 @@
+import { boundedProvenanceTransaction } from "../google-data/provenance/transaction.js";
+import { hasGoogleContextMarker, lockGoogleContexts } from "../google-data/runtime/contexts-schema.js";
 import {hasCompanyDriveMaterial} from "../chat/drive-sharing-guard.js";
 import { randomUUID } from "node:crypto";
 import { sql, type Kysely, type Selectable, type Transaction } from "kysely";
@@ -276,6 +278,7 @@ export function createProjectInheritanceResolver(options: {
     raw: BindingInput,
   ): Promise<{ binding: ProjectResourceBinding; chatEvent: ChatOutboxEvent | null }> {
     const input = parseBindingInput(raw);
+    if (input.kind === "chat") await boundedProvenanceTransaction(trx, lockGoogleContexts);
     let chatEvent: ChatOutboxEvent | null = null;
     const project = await trx.selectFrom("collaboration_scopes").selectAll()
       .where("id", "=", input.projectScopeId).forUpdate().executeTakeFirst();
@@ -291,7 +294,9 @@ export function createProjectInheritanceResolver(options: {
     }
     if (input.kind === "chat") {
       await trx.selectFrom("chats").select("id").where("id", "=", input.resourceId).forUpdate().executeTakeFirst();
-      if (await hasCompanyDriveMaterial(trx, input.resourceId)) throw new ProjectInheritanceError("resource_blocked");
+      if (await hasGoogleContextMarker(trx, input.ownerId, input.resourceId) || await hasCompanyDriveMaterial(trx, input.resourceId)) {
+        throw new ProjectInheritanceError("resource_blocked");
+      }
     }
     const existing = await trx.selectFrom("collaboration_resource_bindings").selectAll()
       .where("project_scope_id", "=", input.projectScopeId)

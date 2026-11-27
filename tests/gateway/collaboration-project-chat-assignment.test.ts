@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { KyselyPlugin } from "kysely";
+import { createGoogleContextStore } from "../../packages/gateway/src/google-data/runtime/contexts.js";
 import { ChatRepository } from "../../packages/gateway/src/chat/repository.js";
 import { createCanonicalChatService } from "../../packages/gateway/src/chat/service.js";
 import { ChatConflictError, ChatNotFoundError } from "../../packages/gateway/src/chat/errors.js";
@@ -345,6 +346,26 @@ describe("shared project Chat assignment", () => {
     })).rejects.toMatchObject({ code: "unavailable" });
     expect(await fixture.db.selectFrom("chats").select("id")
       .where("create_request_id", "=", "req_atomic_failure").executeTakeFirst()).toBeUndefined();
+  });
+
+  it("leaves Gmail-marked Chat history private when moving it into a shared project is refused", async () => {
+    const chatService = service();
+    const created = await chatService.create(OWNER, { clientRequestId: "req_move_gmail_chat" });
+    const contexts = createGoogleContextStore(fixture.db);
+    await contexts.migrate();
+    const deadline = new Date(Date.now() + 60_000).toISOString();
+    await contexts.mark({ ownerId: OWNER_ID, chatId: created.chat.id,
+      googleAccountId: "10000000-0000-4000-8000-000000000001", consentId: "consent_project",
+      profileId: "profile_project", profileRevision: 1, purposeId: "assistant",
+      expiresAt: deadline, retentionDeadline: deadline });
+
+    await expect(chatService.updateProject(OWNER, created.chat.id, {
+      baseRevision: created.chat.revision, projectId: PROJECT_ID,
+    })).rejects.toMatchObject({ code: "resource_blocked" });
+
+    expect((await repository.get(OWNER, created.chat.id))?.projectId).toBeUndefined();
+    expect(await fixture.db.selectFrom("collaboration_resource_bindings").select("id")
+      .where("resource_id", "=", created.chat.id).execute()).toEqual([]);
   });
 
   it("binds a Chat moved in and ends its inherited scope when moved out", async () => {

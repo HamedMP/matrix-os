@@ -1,3 +1,4 @@
+import { hasGoogleContextMarker } from "../google-data/runtime/contexts-schema.js";
 import {hasCompanyDriveMaterial} from "../chat/drive-sharing-guard.js";
 import type { Transaction } from "kysely";
 import type { OwnerCollaborationDatabase } from "./database.js";
@@ -62,7 +63,8 @@ export async function revokeProjectSharedChatCredentials(
 /**
  * Replaces standalone Chat/terminal grants with the parent project's sole
  * membership authority. The caller already holds the project scope lock and
- * invokes this inside the same transaction as publication.
+ * invokes this inside the same transaction as publication. The production
+ * activation path takes the Google context lock before the project scope.
  */
 export async function reconcileProjectMembershipAtPublication(
   trx: CollaborationTransaction,
@@ -126,7 +128,9 @@ export async function reconcileProjectMembershipAtPublication(
       if (chat && (chat.owner_type !== input.ownerType || chat.owner_id !== input.ownerId)) {
         throw new ProjectMembershipTransitionError("conflict");
       }
-      if (await hasCompanyDriveMaterial(trx, child.resource_id)) throw new ProjectMembershipTransitionError("conflict");
+      if (await hasGoogleContextMarker(trx, input.ownerId, child.resource_id) || await hasCompanyDriveMaterial(trx, child.resource_id)) {
+        throw new ProjectMembershipTransitionError("conflict");
+      }
     }
 
     const members = await trx.selectFrom("collaboration_members")
