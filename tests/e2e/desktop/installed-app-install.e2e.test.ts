@@ -99,7 +99,9 @@ suite("Electron Desktop installs an app on Linux", () => {
       OPERATOR_GATEWAY_URL: gateway.url,
       OPERATOR_USER_DATA_DIR: join(home, "profile"),
     };
-    app = await _electron.launch({ executablePath, args: [join(root, "desktop/out/main/index.js"), "--use-mock-keychain"], env });
+    // Launch the app directory, like `electron .`: its app path then holds `build/`, which an
+    // unpackaged macOS install uses for the fallback shim icon (the stub gateway serves none).
+    app = await _electron.launch({ executablePath, args: [join(root, "desktop"), "--use-mock-keychain"], env });
     // Pick the main window by its page: an app window can open first.
     main = await (async () => {
       const deadline = Date.now() + 60_000;
