@@ -67,7 +67,18 @@ suite("Electron Desktop installed app windows", () => {
       args: [join(root, "desktop/out/main/index.js"), "--use-mock-keychain", `matrixos://app/${NOTES_ID}`],
       env: { ...process.env, OPERATOR_GATEWAY_URL: gateway.url, OPERATOR_USER_DATA_DIR: profile },
     });
-    main = await app.firstWindow();
+    // The cold-start link opens the app window as the main window comes up, and
+    // on macOS it can be created first. Pick the main window by its renderer
+    // page, never by creation order.
+    main = await (async () => {
+      const deadline = Date.now() + 60_000;
+      for (;;) {
+        const found = app.windows().find((page) => page.url().includes("/renderer/index.html"));
+        if (found) return found;
+        if (Date.now() > deadline) throw new Error("the main window never opened");
+        await new Promise((settle) => setTimeout(settle, 100));
+      }
+    })();
   }, 90_000);
 
   afterAll(async () => {
