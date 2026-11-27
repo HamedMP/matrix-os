@@ -4,7 +4,6 @@ export interface ComposerMentionAction {
   label: string;
   kind: "preview" | "terminal";
   keywords: string;
-  consumeTrigger?: true;
   select: (queryDraft: string) => void;
 }
 

@@ -5,11 +5,11 @@
 | Area | Existing code | Smallest remaining acceptance |
 | --- | --- | --- |
 | Device identity | Matrix login, key enrollment, and revision-bound action proofs for existing native Chat actions | Use a signed client and an isolated Matrix Computer with real device sign-in. Confirm local disconnect and remote revocation cancel an approved action. |
-| Existing terminal | A worktree Chat can [read a selected local terminal once](./existing-terminal.md) or [watch its visible screen locally](./live-terminal.md) after native consent. | Verify the same step with a signed client and a real Matrix account on an isolated Computer. |
+| Existing terminal | The Mac's private `herdr-core` host already lists and attaches to local sessions for the native Terminal. The Chat check creates its own PTY. | Let the owner select a running Terminal from the native client and give one worktree Chat a short, read-only attachment. Test that closing, replacing or choosing another terminal invalidates it. |
 | Interactive input | `hc` attach has flow control and bidirectional I/O. Hosted CLI support can address a known hosted terminal independently. | Add input only after the attachment check is proven. Allow one active writer, surface who holds input, and release it locally on Take Over or Stop. Prove that input queued under an old attachment cannot arrive after takeover or reconnect. |
-| Chat close and restart | The running Mac client polls the approved Chat and can retry a pending receipt with the same request key. Activity history is scoped to the account and Computer. | Verify that closing the Chat clears its watch and reopening requires a new approval. A Mac process restart keeps the pairing and history and revokes active grants. |
+| Chat close and restart | The running Mac client polls the approved Chat and can retry a pending receipt with the same request key. Activity history is scoped to the account and Computer. | Exercise close/reopen and reconnect with the existing terminal attachment. A Mac process restart keeps the pairing and history and revokes active grants. Preserve that behavior. |
 
-The existing device-bound actions keep short-lived native consent, owner/Computer/Chat/worktree checks, idempotent receipts and Stop. The selected-terminal snapshot uses the same authorization and an explicit Send from Chat. The local watch previews the current screen in Electron Desktop. Remote read delivery, terminal input and takeover need a scoped control session.
+The existing device-bound actions keep short-lived native consent, owner/Computer/Chat/worktree checks, idempotent receipts and Stop. Reuse these checks for a read-only existing Terminal attachment before adding live input.
 
 ## Local GUI
 

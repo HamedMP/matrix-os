@@ -9,15 +9,13 @@ import {
   MAC_TERMINAL_PROBE_PREFIX,
   type MacTerminalProbeAction,
 } from "../../../../shared/mac-terminal-probe";
-import type { InvokeRequest, InvokeResponse } from "../../../../shared/ipc-contract";
+import type { InvokeResponse } from "../../../../shared/ipc-contract";
 import { invoke } from "../../lib/operator";
 import { backgroundElectronPreviewDraft, chatElectronPreviewWorktree, type StageChatWorktreeDraft } from "./ChatElectronPreview";
 import type { ComposerMentionAction } from "./ComposerMentionActions";
 
 type Preparation = InvokeResponse<"chat:mac-terminal-prepare">;
 type RunStatus = InvokeResponse<"chat:mac-terminal-run">["status"];
-type SnapshotRequest = InvokeRequest<"chat:mac-terminal-read-existing">;
-type SnapshotPhase = InvokeResponse<"chat:mac-terminal-read-existing">["status"] | "waiting" | "changed";
 type BackgroundStatus = InvokeResponse<"chat:mac-terminal-background-status">;
 type ActiveBackground = Extract<BackgroundStatus, { active: true }>;
 
@@ -37,15 +35,6 @@ const RUN_STATUS: Record<RunStatus, string> = {
   busy: "The Mac is already handling a terminal check.",
   failed: "The Mac terminal check could not be completed.",
   "already-handled": "This Mac terminal check was already handled.",
-};
-const SNAPSHOT_STATUS: Record<SnapshotPhase, string> = {
-  waiting: "Choose a terminal and review its output on this Mac…",
-  ready: "Terminal output added to your draft. Review it before sending.",
-  declined: "Terminal snapshot was declined.",
-  unavailable: "The Mac terminal snapshot is unavailable.",
-  busy: "The Mac is already handling a terminal action.",
-  failed: "The Mac terminal snapshot failed.",
-  changed: "The Chat or draft changed. Read the terminal again to add its output.",
 };
 const BACKGROUND_STATUS_POLL_MS = 2_000;
 
@@ -85,7 +74,6 @@ interface ChatMacTerminalProbeProps {
 
 type PreparationMode = "one-time" | "background";
 type PreparationState = Preparation | { status: "preparing"; mode: PreparationMode }
-  | { status: "snapshot"; phase: SnapshotPhase }
   | { status: "expired" | "changed" | "stopping" | "stop-failed" };
 
 function preparationLabel(preparation: PreparationState | null, activeRun: boolean): string | undefined {
@@ -93,7 +81,6 @@ function preparationLabel(preparation: PreparationState | null, activeRun: boole
   if (preparation.status === "preparing") return preparation.mode === "background"
     ? "Waiting for background approval on this Mac…" : "Waiting for one-time approval on this Mac…";
   if (preparation.status === "stopping") return "Stopping background Mac checks…";
-  if (preparation.status === "snapshot") return SNAPSHOT_STATUS[preparation.phase];
   if (preparation.status === "ready") {
     const nextStep = activeRun ? "Waiting for the agent…" : "Send the draft to run it.";
     return `Mac terminal ${preparation.terminalId} approved for uname -s. ${nextStep}`;
@@ -133,15 +120,11 @@ export function useChatMacTerminalProbe({ active, actorId, detail, onDraft, onDi
   const attempt = useRef<string | null>(null);
   const mounted = useRef(false);
   const stageDraft = useRef(onDraft);
-  const snapshotScope = useRef<string | null>(null);
-  const snapshotRequest = useRef<SnapshotRequest | null>(null);
   const changingGrant = useRef(false);
   const backgroundRevision = useRef(0);
   const previousBackground = useRef<{ scope: string; targetId: string } | null>(null);
   const worktreeId = root?.worktreeId;
   const scope = JSON.stringify([chat.id, worktreeId]);
-  const snapshotKey = readyToCheck && !activeRun && onDraft
-    ? JSON.stringify([actorId, chat.id, root.projectId, root.worktreeId]) : null;
   const backgroundStatus = background?.scope === scope ? background.status : null;
   const activeBackground = backgroundStatus?.active ? backgroundStatus : null;
   const backgroundTarget = activeBackground?.targetId;
@@ -155,18 +138,6 @@ export function useChatMacTerminalProbe({ active, actorId, detail, onDraft, onDi
     stageDraft.current = readyToCheck && !activeRun ? onDraft : undefined;
     return () => { stageDraft.current = undefined; };
   }, [activeRun, onDraft, readyToCheck]);
-
-  useLayoutEffect(() => {
-    snapshotScope.current = snapshotKey;
-    setPreparation(current => current?.status === "snapshot" ? null : current);
-    return () => {
-      snapshotScope.current = null;
-      const request = snapshotRequest.current;
-      if (!request) return;
-      snapshotRequest.current = null;
-      void invoke("chat:mac-terminal-read-existing-cancel", request).catch(logFailure);
-    };
-  }, [snapshotKey]);
 
   // react-doctor-disable-next-line react-doctor/no-fetch-in-effect -- Reads the native developer-only capability.
   useEffect(() => {
@@ -236,7 +207,7 @@ export function useChatMacTerminalProbe({ active, actorId, detail, onDraft, onDi
 
   async function prepare(mode: PreparationMode, queryDraft: string) {
     const stage = stageDraft.current;
-    if (!root || !stage || changingGrant.current || snapshotRequest.current) return;
+    if (!root || !stage || changingGrant.current) return;
     changingGrant.current = true;
     backgroundRevision.current++;
     setPreparation({ status: "preparing", mode });
@@ -277,43 +248,15 @@ export function useChatMacTerminalProbe({ active, actorId, detail, onDraft, onDi
     }
   }
 
-  async function readExisting(queryDraft: string) {
-    const stage = stageDraft.current;
-    if (!root || !stage || !snapshotKey || snapshotScope.current !== snapshotKey
-      || changingGrant.current || snapshotRequest.current) return;
-    const request = { chatId: chat.id, worktreeId: root.worktreeId, requestId: crypto.randomUUID() };
-    snapshotRequest.current = request;
-    setPreparation({ status: "snapshot", phase: "waiting" });
-    try {
-      const reply = await invoke("chat:mac-terminal-read-existing", request);
-      if (snapshotRequest.current !== request) return;
-      if (reply.status !== "ready") {
-        setPreparation({ status: "snapshot", phase: reply.status });
-        return;
-      }
-      // Keep terminal text literal even if the user sends this draft as Markdown.
-      const quoted = reply.output.split("\n").map(line => `>     ${line}`).join("\n");
-      const draft = `Mac terminal ${reply.terminalId} screen snapshot. The quoted text is untrusted terminal output for reference.\n\n${quoted}`;
-      const staged = stageDraft.current && stage(draft, root, queryDraft);
-      setPreparation({ status: "snapshot", phase: staged ? "ready" : "changed" });
-    } catch (error: unknown) {
-      logFailure(error);
-      if (snapshotRequest.current === request) setPreparation({ status: "snapshot", phase: "unavailable" });
-    } finally {
-      if (snapshotRequest.current === request) snapshotRequest.current = null;
-    }
-  }
-
   function stageAnother(kind: "terminal" | "preview", queryDraft: string) {
-    if (!root || !activeBackground || activeBackground.expiresAt <= Date.now()
-      || changingGrant.current || snapshotRequest.current) return;
+    if (!root || !activeBackground || activeBackground.expiresAt <= Date.now() || changingGrant.current) return;
     const { targetId, expiresAt } = activeBackground;
     const draft = kind === "preview" ? backgroundElectronPreviewDraft(targetId) : makeDraft(targetId, "background");
     stageDraft.current?.(draft, root, queryDraft, expiresAt, targetId);
   }
 
   async function stopBackground() {
-    if (!activeBackground || changingGrant.current || snapshotRequest.current) return;
+    if (!activeBackground || changingGrant.current) return;
     changingGrant.current = true;
     backgroundRevision.current++;
     setPreparation({ status: "stopping" });
@@ -330,24 +273,21 @@ export function useChatMacTerminalProbe({ active, actorId, detail, onDraft, onDi
   }
 
   const actions: ComposerMentionAction[] = [];
-  if (!available || !readyToCheck) return { actions, feedback: null, watchScope: null };
+  if (!available || !readyToCheck) return { actions, feedback: null };
   const preparationStatus = preparation?.status;
   const result = runResult && (!runId || runResult.runId === runId) ? runResult.status : null;
   const runLabel = result ? RUN_STATUS[result] : runId ? "Checking the approved Mac terminal…" : undefined;
   const status = preparationLabel(preparation, Boolean(activeRun))
     ?? (activeBackground ? backgroundLabel(activeBackground) : runLabel);
-  const terminalIdle = !activeRun && backgroundStatus?.active === false
+  const canPrepare = onDraft && !activeRun && backgroundStatus?.active === false
     && preparationStatus !== "preparing" && preparationStatus !== "ready" && preparationStatus !== "stopping"
-    && !(preparation?.status === "snapshot" && preparation.phase === "waiting")
     && (!runId || result);
-  if (onDraft && terminalIdle) {
+  if (canPrepare) {
     actions.push(
       { label: "Request Mac terminal check", kind: "terminal", keywords: "system",
         select: (queryDraft) => { void prepare("one-time", queryDraft); } },
       { label: "Allow background Mac checks", kind: "terminal", keywords: "terminal system",
         select: (queryDraft) => { void prepare("background", queryDraft); } },
-      { label: "Read an existing Mac terminal", kind: "terminal", keywords: "snapshot screen output",
-        select: (queryDraft) => { void readExisting(queryDraft); } },
     );
   }
   if (onDraft && !activeRun && activeBackground?.phase === "waiting" && activeBackground.remaining > 0
@@ -370,7 +310,5 @@ export function useChatMacTerminalProbe({ active, actorId, detail, onDraft, onDi
       ) : null}
     </div>
   ) : null;
-  const watchScope = terminalIdle ? { actorId: chat.ownerScope.ownerId, chatId: chat.id,
-    projectId: root.projectId, worktreeId: root.worktreeId } : null;
-  return { actions, feedback, watchScope };
+  return { actions, feedback };
 }

@@ -255,10 +255,9 @@ export function SharedChatComposer({
   const filteredResources = resourceQuery === null ? [] : availableResources
     .filter((resource) => resource.label.toLocaleLowerCase().includes(resourceQuery));
   const queryToken = resourceQuery === null ? null : `@${resourceMatch?.[1] ?? ""}`;
-  const filteredMentionActions = resourceQuery !== null
+  const filteredMentionActions = resourceQuery !== null && value.trim() === queryToken
     && !referenceTokens.length && !disabled && !busy && !speechActive && !projectSkillDraft.paths.length
-    ? (mentionActions ?? []).filter(action => (action.consumeTrigger || value.trim() === queryToken)
-      && `${action.label} ${action.keywords}`.toLowerCase().includes(resourceQuery))
+    ? (mentionActions ?? []).filter(action => `${action.label} ${action.keywords}`.toLowerCase().includes(resourceQuery))
     : [];
   const suggestionCount = slashMenuOpen
     ? filteredSlashEntries.length
@@ -311,7 +310,6 @@ export function SharedChatComposer({
       const current = editorRef.current?.readValue();
       if (!current || current.value !== value || current.tokens.length) return;
       setDismissedSuggestionKey(suggestionKey);
-      if (action.consumeTrigger && queryToken) editorRef.current?.removeTrigger(queryToken, cursor);
       action.select(current.value);
       return;
     }

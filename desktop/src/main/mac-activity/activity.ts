@@ -31,7 +31,6 @@ const MAX_SHOWN = 12;
 const KIND_LABEL: Record<MacActivityKind, string> = {
   preview: "Electron preview",
   terminal: "Mac terminal check",
-  "terminal-watch": "Mac terminal watch",
   "background-checks": "Background Mac checks",
 };
 const PHASE_LABEL: Record<MacActivityPhase, string> = {
