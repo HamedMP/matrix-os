@@ -142,7 +142,7 @@ async function lockTransition<T>(
     .select("scope_id").where("id", "=", id).executeTakeFirst();
   if (!hint) throw new ProjectTransitionError("not_found");
   return db.transaction().execute(async (trx) => {
-    if (protectChatAudience) await boundedProvenanceTransaction(trx, lockGoogleContexts);
+    if (protectChatAudience) await boundedProvenanceTransaction<OwnerCollaborationDatabase, void>(trx, lockGoogleContexts<OwnerCollaborationDatabase>);
     const scope = await trx.selectFrom("collaboration_scopes").selectAll()
       .where("id", "=", hint.scope_id).forUpdate().executeTakeFirst();
     if (!scope) throw new ProjectTransitionError("not_found");

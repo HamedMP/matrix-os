@@ -181,7 +181,7 @@ export function createProjectChatAssignmentCoordinator(options: {
       .filter((projectId): projectId is string => typeof projectId === "string"))].sort();
     if (projectIds.length > 0) {
       // Take the Google context lock before project/scope/Chat row locks.
-      await boundedProvenanceTransaction(trx, lockGoogleContexts);
+      await boundedProvenanceTransaction<OwnerCollaborationDatabase, void>(trx, lockGoogleContexts<OwnerCollaborationDatabase>);
       await trx.selectFrom("collaboration_scopes").select("id")
         .where("owner_type", "=", owner.type)
         .where("owner_id", "=", owner.ownerId)

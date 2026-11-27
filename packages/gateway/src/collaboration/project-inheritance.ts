@@ -278,7 +278,7 @@ export function createProjectInheritanceResolver(options: {
     raw: BindingInput,
   ): Promise<{ binding: ProjectResourceBinding; chatEvent: ChatOutboxEvent | null }> {
     const input = parseBindingInput(raw);
-    if (input.kind === "chat") await boundedProvenanceTransaction(trx, lockGoogleContexts);
+    if (input.kind === "chat") await boundedProvenanceTransaction<OwnerCollaborationDatabase, void>(trx, lockGoogleContexts<OwnerCollaborationDatabase>);
     let chatEvent: ChatOutboxEvent | null = null;
     const project = await trx.selectFrom("collaboration_scopes").selectAll()
       .where("id", "=", input.projectScopeId).forUpdate().executeTakeFirst();
