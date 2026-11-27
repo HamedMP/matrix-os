@@ -31,6 +31,59 @@ function DialogAppIcon({ url, name }: { url: string | null; name: string }) {
   );
 }
 
+function dialogCopy(request: InstallAppDialogRequest, platform: InstalledAppPlatform, busy: boolean) {
+  if (request.mode === "install") {
+    return {
+      title: `Install ${request.name}?`,
+      detail: INSTALL_DESTINATION[platform],
+      confirm: busy ? "Installing…" : "Install",
+      variant: "primary" as const,
+    };
+  }
+  return {
+    title: `Uninstall ${request.name}?`,
+    detail: `This removes it from ${UNINSTALL_FROM[platform]}. Its files and data stay in Matrix.`,
+    confirm: busy ? "Uninstalling…" : "Uninstall",
+    variant: "danger" as const,
+  };
+}
+
+function DialogBody({ request, platform, busy, error, onCancel, onConfirm }: {
+  request: InstallAppDialogRequest;
+  platform: InstalledAppPlatform;
+  busy: boolean;
+  error: string | null;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const copy = dialogCopy(request, platform, busy);
+  return (
+    <div className="flex flex-col gap-4 p-5">
+      <div className="flex items-center gap-3">
+        <DialogAppIcon url={request.iconUrl} name={request.name} />
+        <div className="min-w-0">
+          <h2 className="truncate text-sm font-semibold" style={{ color: "var(--text-primary)" }}>{copy.title}</h2>
+          <p className="mt-1 text-sm" style={{ color: "var(--text-secondary)" }}>{copy.detail}</p>
+        </div>
+      </div>
+      {request.mode === "install" ? (
+        <p className="rounded-lg px-3 py-2 text-sm" style={{ background: "var(--bg-hover)", color: "var(--text-secondary)" }}>
+          Uses the same access it has inside Matrix.
+        </p>
+      ) : null}
+      {error ? (
+        <p role="alert" className="rounded-lg px-3 py-2 text-sm" style={{ background: "var(--danger-muted)", color: "var(--danger-text)" }}>
+          {error}
+        </p>
+      ) : null}
+      <div className="flex justify-end gap-2">
+        <Button variant="ghost" onClick={onCancel} disabled={busy}>Cancel</Button>
+        <Button variant={copy.variant} onClick={onConfirm} disabled={busy} aria-busy={busy}>{copy.confirm}</Button>
+      </div>
+    </div>
+  );
+}
+
 /** Confirms installing an app as a desktop app, or uninstalling it (spec 2711 "User Journey"). */
 export function InstallAppDialog({
   request,
@@ -47,48 +100,16 @@ export function InstallAppDialog({
   onCancel: () => void;
   onConfirm: () => void;
 }) {
-  const installing = request?.mode === "install";
-  const title = request ? `${installing ? "Install" : "Uninstall"} ${request.name}?` : "Install app";
   return (
     <Dialog
       open={request !== null}
       onClose={() => { if (!busy) onCancel(); }}
       width={400}
-      title={title}
-      role={installing ? "dialog" : "alertdialog"}
+      title={request ? dialogCopy(request, platform, busy).title : "Install app"}
+      role={request?.mode === "uninstall" ? "alertdialog" : "dialog"}
       placement="center"
     >
-      {request ? (
-        <div className="flex flex-col gap-4 p-5">
-          <div className="flex items-center gap-3">
-            <DialogAppIcon url={request.iconUrl} name={request.name} />
-            <div className="min-w-0">
-              <h2 className="truncate text-sm font-semibold" style={{ color: "var(--text-primary)" }}>{title}</h2>
-              <p className="mt-1 text-sm" style={{ color: "var(--text-secondary)" }}>
-                {installing
-                  ? INSTALL_DESTINATION[platform]
-                  : `This removes it from ${UNINSTALL_FROM[platform]}. Its files and data stay in Matrix.`}
-              </p>
-            </div>
-          </div>
-          {installing ? (
-            <p className="rounded-lg px-3 py-2 text-sm" style={{ background: "var(--bg-hover)", color: "var(--text-secondary)" }}>
-              Uses the same access it has inside Matrix.
-            </p>
-          ) : null}
-          {error ? (
-            <p role="alert" className="rounded-lg px-3 py-2 text-sm" style={{ background: "var(--danger-muted)", color: "var(--danger-text)" }}>
-              {error}
-            </p>
-          ) : null}
-          <div className="flex justify-end gap-2">
-            <Button variant="ghost" onClick={onCancel} disabled={busy}>Cancel</Button>
-            <Button variant={installing ? "primary" : "danger"} onClick={onConfirm} disabled={busy} aria-busy={busy}>
-              {installing ? (busy ? "Installing…" : "Install") : (busy ? "Uninstalling…" : "Uninstall")}
-            </Button>
-          </div>
-        </div>
-      ) : null}
+      {request ? <DialogBody request={request} platform={platform} busy={busy} error={error} onCancel={onCancel} onConfirm={onConfirm} /> : null}
     </Dialog>
   );
 }

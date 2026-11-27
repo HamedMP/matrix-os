@@ -93,9 +93,11 @@ export function createLauncherInstaller(options: LauncherInstallerOptions) {
     /** Start-up: forgets installs whose launcher the owner deleted. Returns their ids. */
     async prune(): Promise<string[]> {
       const pruned: string[] = [];
+      // One at a time: at most 64 records, and the store serializes removals anyway.
       for (const record of await records.list()) {
         if (!record.bundlePath) continue;
         try {
+          // react-doctor-disable-next-line react-doctor/async-await-in-loop -- sequential by design (see above)
           await lstat(record.bundlePath);
           continue;
         } catch (error: unknown) {
