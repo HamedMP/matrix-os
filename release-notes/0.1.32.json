@@ -3,9 +3,9 @@
   "channel": "stable",
   "date": "2026-11-27",
   "locale": "en",
-  "title": "Set up projects in Chat",
-  "shortTitle": "Projects in Chat",
-  "summary": "Your selected agent can now guide a project from its first questions to reviewed setup files, all inside Chat. Mac verification, clearer connections, and faster, steadier chats and terminals round out the release.",
+  "title": "Build projects, share your apps",
+  "shortTitle": "Projects and sharing",
+  "summary": "Your selected agent can guide a project from its first questions to reviewed setup files, all inside Chat. You can also share apps you create with your organization right away—view-only until they are collaborative—alongside smoother Mac verification, connections, chats, and terminals.",
   "highlights": [
     {
       "tag": "New",
@@ -27,13 +27,30 @@
     },
     {
       "tag": "New",
+      "title": "Share your apps right away",
+      "body": "Share an app you create with your organization even before it supports collaboration. Members can open it view-only, while Matrix helps you make it collaborative when everyone needs to edit.",
+      "surfaces": [
+        "web-desktop",
+        "web-canvas",
+        "electron-desktop"
+      ],
+      "art": "sync",
+      "tone": "teal",
+      "prs": [
+        3707,
+        3708,
+        3709
+      ]
+    },
+    {
+      "tag": "New",
       "title": "Verify work on your Mac from Chat",
       "body": "Run approved terminal checks or verify supported Electron changes from a private worktree Chat. Results return to the same conversation, and the Mac menu bar lets you follow or stop active work.",
       "surfaces": [
         "electron-desktop"
       ],
-      "art": "sync",
-      "tone": "teal",
+      "art": "terminal",
+      "tone": "ink",
       "prs": [
         3455,
         3457,
@@ -46,24 +63,13 @@
         3486,
         3489
       ]
-    },
-    {
-      "tag": "Improved",
-      "title": "Connect Apps, organized",
-      "body": "Connected tools, available connections and the app gallery now appear in clearer groups. Connect Apps is also available through Matrix Core when you need it in Chat.",
-      "surfaces": [
-        "web-desktop",
-        "electron-desktop"
-      ],
-      "art": "sparkle",
-      "tone": "sand",
-      "prs": [
-        3704,
-        3705
-      ]
     }
   ],
   "items": [
+    {
+      "kind": "improved",
+      "text": "Connect Apps is organized into clearer groups and is available through Matrix Core."
+    },
     {
       "kind": "improved",
       "text": "Sent Chat messages appear immediately, and the first reply stays visible when a new Chat opens."
@@ -87,6 +93,10 @@
     {
       "kind": "fixed",
       "text": "Managed Codex sessions can use code mode reliably."
+    },
+    {
+      "kind": "improved",
+      "text": "Coding-agent sign-in is clearer, and Codex can reuse an existing account on your computer."
     },
     {
       "kind": "fixed",
@@ -144,6 +154,10 @@
     3720,
     3761,
     3765,
-    3703
+    3703,
+    3706,
+    3774,
+    3787,
+    3792
   ]
 }
