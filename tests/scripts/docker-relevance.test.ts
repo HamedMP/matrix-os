@@ -24,6 +24,7 @@ describe("Docker CI relevance classifier", () => {
     ".github/workflows/docker-test.yml",
     "scripts/docker-test/fresh-install.sh",
     "scripts/build-default-apps.mjs",
+    "scripts/sync-office-engine.mjs",
     "scripts/branch-dev.sh",
     "scripts/ci/docker-relevance.mjs",
     "scripts/fix-node-pty-perms.mjs",
@@ -37,6 +38,8 @@ describe("Docker CI relevance classifier", () => {
     "packages/kernel/src/index.ts",
     "packages/mcp-browser/src/index.ts",
     "packages/observability/src/index.ts",
+    // The image build mirrors the office engine into home/apps/_shared/office-engine.
+    "packages/office/src/index.ts",
     "packages/ui/src/Button.tsx",
     "shell/app/page.tsx",
     "home/system/config.json",
