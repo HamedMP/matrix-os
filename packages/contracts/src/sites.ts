@@ -13,6 +13,12 @@ export const SITE_ACCESS_LINK_CLAIM_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 export const SITE_VIEWER_SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 export const SITE_MANAGEMENT_CONTRACT_VERSION_HEADER = "x-matrix-sites-contract-version";
 export const SITE_MANAGEMENT_CONTRACT_VERSION = "3";
+/**
+ * Sent only on the owner readiness read: this Gateway can show allowlist mode
+ * (`emailDelivery: "none"`). Ordinary Sites calls stay on contract 3 so a Platform
+ * that predates allowlist mode keeps accepting publish and metadata edits.
+ */
+export const SITE_ALLOWLIST_READINESS_VERSION = "4";
 /** Matrix.page top-level routes a friendly path can never claim. */
 export const SITE_RESERVED_SLUGS = ["api", "public", "assets", "frame", "forms", "preview", "admin", "auth", "health", "robots", "favicon", "index", "sites", "www"] as const;
 const reserved: ReadonlySet<string> = new Set(SITE_RESERVED_SLUGS);
@@ -131,7 +137,15 @@ export const SiteDeploymentSchema = z.object({
   .refine((d) => d.files.reduce((sum, f) => sum + f.body.length / 4 * 3 - (f.body.endsWith("==") ? 2 : f.body.endsWith("=") ? 1 : 0), 0) <= SITE_MAX_BUNDLE_BYTES, "App is too large");
 export type SiteDeployment = z.infer<typeof SiteDeploymentSchema>;
 export const SiteVersionSchema = z.object({ id: SiteIdSchema, createdAt: z.string().datetime() }).strict();
+/** Embedded in every SiteRecord; never add fields here (older strict parsers would reject all site records). */
 export const SiteEmailInvitationsCapabilitySchema = z.object({ privateEmailInvitations: z.boolean() }).strict();
+/**
+ * Owner readiness endpoint only. `emailDelivery: "none"` is allowlist mode (no email is sent).
+ * Bundles that predate it parse with the strict schema above and fail closed.
+ */
+export const SiteEmailInvitationReadinessSchema = z.object({
+  privateEmailInvitations: z.boolean(), emailDelivery: z.enum(["none"]).optional(),
+}).strict();
 export const SiteRecordSchema = z.object({
   id: SiteIdSchema, appSlug: SiteAppSlugSchema, title, description,
   slug: SiteSlugSchema.nullable(), url: SiteUrlSchema, revision: baseRevision,
@@ -230,6 +244,7 @@ export type SiteEmailInvitationSummary = z.infer<typeof SiteEmailInvitationSumma
 export type SiteEmailInvitationInputResult = z.infer<typeof SiteEmailInvitationInputResultSchema>;
 export type SiteEmailInvitationPage = z.infer<typeof SiteEmailInvitationPageSchema>;
 export type SiteEmailInvitationsCapability = z.infer<typeof SiteEmailInvitationsCapabilitySchema>;
+export type SiteEmailInvitationReadiness = z.infer<typeof SiteEmailInvitationReadinessSchema>;
 export const SiteInvitationAuditEventTypeSchema = z.enum([
   "invitation_created", "invitation_resent", "invitation_accepted", "invitation_revoked",
   "delivery_sent", "delivery_failed", "grant_revoked", "mode_changed", "unpublished",

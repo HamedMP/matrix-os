@@ -4,25 +4,57 @@ import { siteEmailViewerPage } from '../../packages/platform/src/sites/email-aut
 import { APP_CSP, PRIVATE_APP_CSP, siteAccessGate, siteEmailGate, siteFrame, sitePage } from '../../packages/platform/src/sites/renderer.js';
 import type { SiteRecord } from '@matrix-os/contracts';
 const site: SiteRecord = { id: 'a2fd72d0-0926-49d5-b45f-bbfb167e50d2', appSlug: 'launch', title: '<script>bad()</script>', description: '', slug: null, url: 'https://matrix.page/a2fd72d0-0926-49d5-b45f-bbfb167e50d2', revision: 1, status: 'published', accessMode: 'public', activeVersion: 'cd0a12e9-18a0-4b4e-9a10-269eb5697d4f', versions: [], config: { data: {}, forms: [] } };
-it('keeps the email Clerk component and exchange on the exact canonical app URL with a separate gate CSP', () => {
+it('signs in through Matrix as a Clerk satellite and returns only to the canonical app URL', () => {
  const gate=siteEmailGate(site.id,'pk_test_existing_matrix_instance');
+ const back=encodeURIComponent(`https://matrix.page/${site.id}`);
  expect(gate.html).toContain(`https://matrix.page/${site.id}`);
  expect(gate.html).toContain("canonical+'/access/email'");
- expect(gate.html).toContain('clerk.matrix-os.com');
- expect(gate.html).toContain('mountSignIn');
- expect(gate.html).toContain('mountSignUp');
  expect(gate.html).toContain('session.getToken');
- expect(gate.html).not.toMatch(/app\.matrix-os\.com|api\/auth\/app-session|billing|onboarding|provision-runtime/);
- expect(gate.csp).toContain('clerk.matrix-os.com');
+ const dom=new JSDOM(gate.html);
+ try{
+  const links=Array.from(dom.window.document.querySelectorAll('a.auth-link')).map(link=>link.getAttribute('href'));
+  expect(links).toEqual([`https://app.matrix-os.com/sign-up?redirect_url=${back}`,`https://app.matrix-os.com/sign-in?redirect_url=${back}`]);
+  const script=dom.window.document.getElementById('clerk-script');
+  expect(script?.getAttribute('src')).toBe('https://clerk.matrix.page/npm/@clerk/clerk-js@5/dist/clerk.browser.js');
+  expect(script?.getAttribute('data-clerk-domain')).toBe('matrix.page');
+ }finally{dom.window.close()}
+ // Production Clerk refuses matrix.page as an origin, so no inline components mount here.
+ expect(gate.html).not.toContain('mountSignIn');
+ expect(gate.html).not.toMatch(/api\/auth\/app-session|billing|onboarding|provision-runtime/);
+ expect(gate.csp).toMatch(/script-src [^;]*https:\/\/clerk\.matrix\.page/);
+ expect(gate.csp).toMatch(/connect-src [^;]*https:\/\/clerk\.matrix\.page/);
+ expect(gate.csp).not.toContain('clerk.matrix-os.com');
  expect(gate.csp).toMatch(/script-src [^;]*https:\/\/challenges\.cloudflare\.com/);
  expect(gate.csp).toMatch(/connect-src [^;]*https:\/\/challenges\.cloudflare\.com/);
  expect(gate.csp).toContain('frame-src https://challenges.cloudflare.com');
  expect(gate.csp).toContain("worker-src 'self' blob:");
- expect(APP_CSP).not.toContain('clerk.matrix-os.com');
- expect(PRIVATE_APP_CSP).not.toContain('clerk.matrix-os.com');
+ expect(APP_CSP).not.toContain('clerk.matrix');
+ expect(PRIVATE_APP_CSP).not.toContain('clerk.matrix');
  expect(APP_CSP).not.toContain('challenges.cloudflare.com');
  expect(PRIVATE_APP_CSP).not.toContain('challenges.cloudflare.com');
  expect(gate.html).not.toContain(site.title);
+});
+it('loads Clerk as the matrix.page satellite and hides sign-in links once a session exists', async () => {
+ const signedOut={load:vi.fn(async()=>{}),addListener:vi.fn(),session:null};
+ const dom=new JSDOM(siteEmailGate(site.id,'pk_test_existing_matrix_instance').html,{url:site.url,runScripts:'dangerously',beforeParse(window){
+  Object.defineProperty(window,'Clerk',{value:signedOut});Object.defineProperty(window,'AbortSignal',{value:AbortSignal});
+  Object.defineProperty(window,'fetch',{value:vi.fn()});
+ }});
+ try{
+  await vi.waitFor(()=>expect(signedOut.load).toHaveBeenCalledWith({isSatellite:true,
+   signInUrl:'https://app.matrix-os.com/sign-in',signUpUrl:'https://app.matrix-os.com/sign-up'}));
+  expect(Array.from(dom.window.document.querySelectorAll<HTMLElement>('a.auth-link')).every(link=>!link.hidden)).toBe(true);
+ }finally{dom.window.close()}
+ const signedIn={load:vi.fn(async()=>{}),addListener:vi.fn(),session:{id:'sess_existing',getToken:vi.fn(async()=> 'signed.clerk.token')}};
+ const denied=new JSDOM(siteEmailGate(site.id,'pk_test_existing_matrix_instance').html,{url:site.url,runScripts:'dangerously',beforeParse(window){
+  Object.defineProperty(window,'Clerk',{value:signedIn});Object.defineProperty(window,'AbortSignal',{value:AbortSignal});
+  Object.defineProperty(window,'fetch',{value:vi.fn(async()=>new Response('{}',{status:404}))});
+ }});
+ try{
+  await vi.waitFor(()=>expect(denied.window.document.querySelector('.error')?.textContent).toContain('does not have access'));
+  expect(Array.from(denied.window.document.querySelectorAll<HTMLElement>('a.auth-link')).every(link=>link.hidden)).toBe(true);
+  expect((denied.window.document.getElementById('switch-account') as HTMLButtonElement).hidden).toBe(false);
+ }finally{denied.window.close()}
 });
 it('reuses an existing Matrix Clerk session and exchanges only at that app URL', async () => {
  const exchange=vi.fn(async(_url:unknown,_init?:RequestInit)=>new Response('{}',{status:404}));
@@ -181,7 +213,7 @@ it('allows the app frame only in the authenticated parent and nonces every trust
   expect(scripts.length).toBeGreaterThan(1);
   expect(scripts.every(script=>script.nonce===nonce)).toBe(true);
   expect(dom.window.document.querySelector('iframe')?.getAttribute('sandbox')).not.toContain('allow-same-origin');
-  expect(PRIVATE_APP_CSP).not.toContain('clerk.matrix-os.com');
+  expect(PRIVATE_APP_CSP).not.toContain('clerk.matrix');
  }finally{dom.window.close()}
 });
 
@@ -203,6 +235,7 @@ it('revokes viewer authority before Clerk sign-out, removes the app frame, and p
   expect(fetch.mock.calls[0]).toEqual([`${site.url}/access/email/sign-out`,expect.objectContaining({method:'POST',body:'{}',redirect:'error',credentials:'same-origin'})]);
   expect(clerk.signOut).not.toHaveBeenCalled();
   expect(dom.window.document.querySelector('iframe')).not.toBeNull();
+  expect(clerk.load).toHaveBeenCalledWith(expect.objectContaining({isSatellite:true}));
   finishRevocation(new Response('{}',{status:200}));
   await vi.waitFor(()=>expect(clerk.signOut).toHaveBeenCalledWith({redirectUrl:site.url}));
   expect(dom.window.document.querySelector('iframe')).toBeNull();

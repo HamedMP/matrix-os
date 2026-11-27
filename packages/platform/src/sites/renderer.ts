@@ -1,20 +1,22 @@
 import type { SiteRecord } from '@matrix-os/contracts';
 import { desktopFonts, desktopPalette } from '@matrix-os/brand/tokens';
-import { emailAuthPageContext, EMAIL_SESSION_SCRIPT } from './email-auth-page.js';
+import { CLERK_SATELLITE_LOAD, emailAuthPageContext, EMAIL_SESSION_SCRIPT } from './email-auth-page.js';
 import { frameDataBridge, pageDataHandler } from './renderer-data-bridge.js';
 const escape = (text: string) => text.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
 const encoded = (value: unknown) => Buffer.from(JSON.stringify(value)).toString('base64');
 const SANDBOX = 'allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox';
 /** This page is intentionally independent of Matrix onboarding and runtime auth. */
 export function siteEmailGate(siteId: string, publishableKey: string): { html: string; csp: string } {
-    const { canonical, nonce, csp, clerkScript } = emailAuthPageContext(siteId, publishableKey);
+    const { canonical, nonce, csp, clerkScript, signInHref, signUpHref } = emailAuthPageContext(siteId, publishableKey);
     const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Open shared Matrix app</title><style>
-html,body{margin:0;min-height:100%;font-family:${desktopFonts.sans};background:${desktopPalette.canvas};color:${desktopPalette.forest}}body{display:grid;place-items:center;padding:24px;box-sizing:border-box}.card{width:min(100%,440px);border:1px solid ${desktopPalette.blue};border-radius:16px;background:${desktopPalette.paper};padding:28px;box-sizing:border-box;box-shadow:0 16px 48px rgba(14,52,34,.12)}h1{margin:0 0 10px;font-size:24px}p{line-height:1.5;color:${desktopPalette.textMuted}}button{border:0;border-radius:10px;background:${desktopPalette.forest};color:${desktopPalette.paper};padding:10px 14px;font:inherit;font-weight:600;cursor:pointer}.actions{display:flex;gap:8px;flex-wrap:wrap}.error{min-height:24px;color:${desktopPalette.danger};font-size:14px}
-</style></head><body><main class="card"><h1>Open shared Matrix app</h1><p>Sign in with the email address this app was shared with.</p><div id="auth" aria-live="polite"></div><p class="error" role="alert" aria-live="polite"></p><div class="actions"><button id="sign-up" type="button">Create account</button><button id="sign-in" type="button">Sign in</button><button id="switch-account" type="button" hidden>Use another account</button><button id="retry-access" type="button" hidden>Try again</button></div></main>
+html,body{margin:0;min-height:100%;font-family:${desktopFonts.sans};background:${desktopPalette.canvas};color:${desktopPalette.forest}}body{display:grid;place-items:center;padding:24px;box-sizing:border-box}.card{width:min(100%,440px);border:1px solid ${desktopPalette.blue};border-radius:16px;background:${desktopPalette.paper};padding:28px;box-sizing:border-box;box-shadow:0 16px 48px rgba(14,52,34,.12)}h1{margin:0 0 10px;font-size:24px}p{line-height:1.5;color:${desktopPalette.textMuted}}button,.auth-link{border:0;border-radius:10px;background:${desktopPalette.forest};color:${desktopPalette.paper};padding:10px 14px;font:inherit;font-weight:600;cursor:pointer;text-decoration:none}.auth-link[hidden]{display:none}.actions{display:flex;gap:8px;flex-wrap:wrap}.error{min-height:24px;color:${desktopPalette.danger};font-size:14px}
+</style></head><body><main class="card"><h1>Open shared Matrix app</h1><p>Sign in with the email address this app was shared with.</p><p class="error" role="alert" aria-live="polite"></p><div class="actions"><a class="auth-link" href="${signUpHref}">Create account</a><a class="auth-link" href="${signInHref}">Sign in</a><button id="switch-account" type="button" hidden>Use another account</button><button id="retry-access" type="button" hidden>Try again</button></div></main>
 ${clerkScript}
 <script nonce="${nonce}">
-const canonical=${JSON.stringify(canonical)};const auth=document.getElementById('auth');const error=document.querySelector('.error');const retry=document.getElementById('retry-access');
-let exchanging=false;let attemptedSession=null;let mode='sign-in';
+const canonical=${JSON.stringify(canonical)};const error=document.querySelector('.error');const retry=document.getElementById('retry-access');
+const authLinks=document.querySelectorAll('.auth-link');
+let exchanging=false;let attemptedSession=null;
+function signedIn(){authLinks.forEach(link=>{link.hidden=true});document.getElementById('switch-account').hidden=false}
 function showError(message){error.textContent=message}
 ${EMAIL_SESSION_SCRIPT}
 async function exchange(){
@@ -29,14 +31,10 @@ async function exchange(){
  }catch(failure){attemptedSession=null;retry.hidden=false;console.warn('[sites] email access failed',failure instanceof TypeError?'TypeError':failure instanceof Error?'Error':'UnknownError');showError('Unable to open this app right now.')}
  finally{exchanging=false}
 }
-function mount(next){mode=next;window.Clerk.unmountSignIn(auth);window.Clerk.unmountSignUp(auth);auth.replaceChildren();retry.hidden=true;showError('');const options={routing:'hash',forceRedirectUrl:canonical,fallbackRedirectUrl:canonical,signInForceRedirectUrl:canonical,signInFallbackRedirectUrl:canonical,signUpForceRedirectUrl:canonical,signUpFallbackRedirectUrl:canonical,signInUrl:canonical,signUpUrl:canonical};
- if(mode==='sign-up')window.Clerk.mountSignUp(auth,options);else window.Clerk.mountSignIn(auth,options)}
-async function init(){try{await withDeadline(window.Clerk.load({signInUrl:canonical,signUpUrl:canonical}));
- window.Clerk.addListener(()=>{if(window.Clerk.session){document.getElementById('switch-account').hidden=false;void exchange()}});
- if(window.Clerk.session){document.getElementById('switch-account').hidden=false;await exchange()}else mount('sign-in')
+async function init(){try{await withDeadline(window.Clerk.load(${CLERK_SATELLITE_LOAD}));
+ window.Clerk.addListener(()=>{if(window.Clerk.session){signedIn();void exchange()}});
+ if(window.Clerk.session){signedIn();await exchange()}
  }catch(failure){console.warn('[sites] Clerk gate unavailable',failure instanceof Error?'Error':'UnknownError');showError('Unable to sign in right now.')}}
-document.getElementById('sign-up').addEventListener('click',()=>{if(window.Clerk)mount('sign-up')});
-document.getElementById('sign-in').addEventListener('click',()=>{if(window.Clerk)mount('sign-in')});
 retry.addEventListener('click',()=>{attemptedSession=null;void exchange()});
 document.getElementById('switch-account').addEventListener('click',async()=>{
  if(!window.Clerk?.session||endingSession)return;endingSession=true;showError('');

@@ -11,18 +11,31 @@ import { createSiteSubmissionTransport } from './submission-transport.js';
 import { createSiteDataTransport } from './data-transport.js';
 import type { SiteTelemetryCapture } from './telemetry.js';
 import type { ClerkAuth } from '../clerk-auth.js';
+/** Allowlist mode (spec 2691 amendment): no mail delivery is part of readiness. */
 export interface SiteEmailReadiness {
     edgeExchange: boolean;
-    clerkInline: boolean;
+    clerkSatellite: boolean;
     lifecycleWebhook: boolean;
-    mailDelivery: boolean;
+}
+const CLERK_WEBHOOK_SECRET = /^whsec_[A-Za-z0-9+/]{16,}={0,2}$/;
+/**
+ * Edge and Clerk-satellite state live outside Platform (a hand-deployed Worker,
+ * Clerk dashboard + DNS), so an operator sets them after the documented checks.
+ * The lifecycle webhook is derived: a signing secret and the account-deletion
+ * runtime are both required for `/webhooks/clerk/users` to accept events.
+ */
+export function deriveSiteEmailReadiness(env: NodeJS.ProcessEnv, wiring: { accountDeletionWired: boolean }): SiteEmailReadiness {
+    return {
+        edgeExchange: env.MATRIX_PAGE_EMAIL_EDGE_VERIFIED === 'true',
+        clerkSatellite: env.MATRIX_PAGE_EMAIL_CLERK_SATELLITE_VERIFIED === 'true',
+        lifecycleWebhook: wiring.accountDeletionWired && CLERK_WEBHOOK_SECRET.test(env.CLERK_USER_WEBHOOK_SIGNING_SECRET ?? ''),
+    };
 }
 /** Schema is read from the authoritative migration marker, not an env claim. */
 export async function readSiteEmailCapability(db: PlatformDB, env: NodeJS.ProcessEnv, readiness: SiteEmailReadiness): Promise<boolean> {
     await db.ready;
     if (env.MATRIX_PAGE_EMAIL_INVITATIONS_ENABLED !== 'true'
-        || !readiness.edgeExchange || !readiness.clerkInline
-        || !readiness.lifecycleWebhook || !readiness.mailDelivery
+        || !readiness.edgeExchange || !readiness.clerkSatellite || !readiness.lifecycleWebhook
         || !env.SITES_EDGE_SECRET || env.SITES_EDGE_SECRET.length < 32
         || env.SITES_EDGE_SECRET.trim() !== env.SITES_EDGE_SECRET
         || !/^sk_(?:live|test)_[A-Za-z0-9_-]{8,512}$/.test(env.CLERK_SECRET_KEY ?? '')
@@ -48,7 +61,7 @@ export function registerSiteRoutes(app: Hono<any>, options: {
     if (!app || !options?.db || !options.platformSecret)
         throw new Error('Sites registration requires application, database, and platform secret');
     const emailCapability = () => readSiteEmailCapability(options.db, options.env ?? process.env,
-        options.emailReadiness ?? { edgeExchange: false, clerkInline: false, lifecycleWebhook: false, mailDelivery: false });
+        options.emailReadiness ?? { edgeExchange: false, clerkSatellite: false, lifecycleWebhook: false });
     const env = options.env ?? process.env;
     const service = createSitesService({ ...options, emailCapability,
         emailSessionSecret: env.ACCOUNT_DELETION_SECRET });

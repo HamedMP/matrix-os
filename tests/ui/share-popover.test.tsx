@@ -113,20 +113,20 @@ describe("Share popover shell", () => {
 });
 
 describe("Private tab · email invitations (stubbed adapter)", () => {
-  it("enables Invite only for a valid email, submits on Enter, and lists people with status, owner badge and revoke", async () => {
+  it("enables Add only for a valid email, submits on Enter, and lists people with status, owner badge and revoke", async () => {
     const emailInvites = createInMemoryEmailInvitations();
     renderPanel(client(), { emailInvites });
     await loaded();
     selectTab(/Private/);
     const input = screen.getByLabelText("Email address");
-    const invite = screen.getByRole("button", { name: "Invite" });
+    const invite = screen.getByRole("button", { name: "Add" });
     fireEvent.change(input, { target: { value: "sara@" } });
     expect(invite).toHaveProperty("disabled", true);
     fireEvent.change(input, { target: { value: "sara@finna.ai" } });
     expect(invite).toHaveProperty("disabled", false);
     fireEvent.keyDown(input, { key: "Enter" });
     expect(await screen.findByText("sara@finna.ai")).toBeTruthy();
-    expect(within(screen.getByRole("list", { name: "People with access" })).getByText("Pending")).toBeTruthy();
+    expect(within(screen.getByRole("list", { name: "People with access" })).getByText("Not opened yet")).toBeTruthy();
     expect(screen.getByText("You")).toBeTruthy();
     expect(screen.getByText("Owner")).toBeTruthy();
     // No Matrix.page record exists yet, so there is no permanent URL to copy.
@@ -135,11 +135,11 @@ describe("Private tab · email invitations (stubbed adapter)", () => {
     expect(screen.queryByRole("button", { name: "Stop sharing privately" })).toBeNull();
     expect(within(screen.getByRole("tab", { name: /Private/ })).getByRole("img", { name: "on" })).toBeTruthy();
     expect(emailInvites.active("sales-crm")).toBe(true);
-    fireEvent.click(screen.getByRole("button", { name: "Revoke invitation for sara@finna.ai" }));
+    fireEvent.click(screen.getByRole("button", { name: "Remove access for sara@finna.ai" }));
     await waitFor(() => expect(screen.queryByText("sara@finna.ai")).toBeNull());
   });
 
-  it("resends an expired invite from an icon button named for the person", async () => {
+  it("renews an expired entry from an icon button named for the person", async () => {
     const emailInvites = createInMemoryEmailInvitations();
     const resend = vi.spyOn(emailInvites, "resend");
     const list = emailInvites.list.bind(emailInvites);
@@ -151,8 +151,8 @@ describe("Private tab · email invitations (stubbed adapter)", () => {
     await loaded();
     selectTab(/Private/);
     fireEvent.change(screen.getByLabelText("Email address"), { target: { value: "sara@finna.ai" } });
-    fireEvent.click(screen.getByRole("button", { name: "Invite" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Resend invitation to sara@finna.ai" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Renew access for sara@finna.ai" }));
     await waitFor(() => expect(resend).toHaveBeenCalledWith("sales-crm", expect.any(String), expect.anything(), expect.any(AbortSignal)));
   });
 });
@@ -182,7 +182,7 @@ describe("Mode switch confirm", () => {
     await loaded();
     selectTab(/Private/);
     fireEvent.change(screen.getByLabelText("Email address"), { target: { value: "sara@finna.ai" } });
-    fireEvent.click(screen.getByRole("button", { name: "Invite" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
     const dialog = await screen.findByRole("dialog", { name: "Switch to invite-only?" });
     expect(within(dialog).getByText("The public link stops working for visitors. A Matrix.page app has one access mode at a time.")).toBeTruthy();
     fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
@@ -190,7 +190,7 @@ describe("Mode switch confirm", () => {
     expect(api.unpublish).not.toHaveBeenCalled();
     expect(emailInvites.active("sales-crm")).toBe(false);
 
-    fireEvent.click(screen.getByRole("button", { name: "Invite" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
     fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Make invite-only" }));
     await waitFor(() => expect(api.unpublish).toHaveBeenCalledWith("sales-crm", 3, expect.any(AbortSignal)));
     expect(await screen.findByText("sara@finna.ai")).toBeTruthy();
@@ -205,7 +205,7 @@ describe("Mode switch confirm", () => {
     selectTab(/Private/);
     for (const email of ["sara@finna.ai", "leo@northwind.studio"]) {
       fireEvent.change(screen.getByLabelText("Email address"), { target: { value: email } });
-      fireEvent.click(screen.getByRole("button", { name: "Invite" }));
+      fireEvent.click(screen.getByRole("button", { name: "Add" }));
       expect(await screen.findByText(email)).toBeTruthy();
     }
     selectTab(/Public/);
@@ -227,7 +227,7 @@ describe("Mode switch confirm", () => {
     renderPanel(api, { emailInvites });
     await loaded();
     fireEvent.change(screen.getByLabelText("Email address"), { target: { value: "sara@finna.ai" } });
-    fireEvent.click(screen.getByRole("button", { name: "Invite" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
     const dialog = await screen.findByRole("dialog", { name: "Switch to invite-only?" });
     expect(within(dialog).getByText(/Existing one-time links stop working\./)).toBeTruthy();
     fireEvent.click(within(dialog).getByRole("button", { name: "Make invite-only" }));
@@ -379,7 +379,7 @@ describe("review fixes: owner controls and stale state", () => {
 // offering new invites, resends, publish or detail edits, and a stray request
 // (stale button, script) creating a new publication for a default app.
 describe("Stop-only sharing for default apps", () => {
-  it("keeps Revoke on an invite-only default app but offers no new invites or resends", async () => {
+  it("keeps Remove on an invite-only default app but offers no new invites or renewals", async () => {
     const emailInvites = createInMemoryEmailInvitations();
     const signal = new AbortController().signal;
     await emailInvites.activate("sales-crm", signal);
@@ -390,9 +390,9 @@ describe("Stop-only sharing for default apps", () => {
     expect(await screen.findByText("sara@finna.ai")).toBeTruthy();
     expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Private"]);
     expect(screen.queryByLabelText("Email address")).toBeNull();
-    expect(screen.queryByRole("button", { name: "Invite" })).toBeNull();
-    expect(screen.queryByRole("button", { name: /Resend invitation/ })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Revoke invitation for sara@finna.ai" }));
+    expect(screen.queryByRole("button", { name: "Add" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Renew access/ })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Remove access for sara@finna.ai" }));
     await waitFor(() => expect(screen.queryByText("sara@finna.ai")).toBeNull());
   });
 
