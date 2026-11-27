@@ -9,12 +9,13 @@ import { createCodexSubagentRuntime } from "./codex-subagent-runtime.mjs";
 import { CodexExecutionTimeout, codexExecutionFailureReason, codexTerminalFailureReason } from "./codex-terminal-failure.mjs";
 import { extractCodexArtifactRecords } from "./codex-artifact-events.mjs";
 import { createCodexArtifactRoots } from "./codex-artifact-roots.mjs";
+import { codexArtifactAttachmentId, readCodexArtifactFile, storeCodexArtifactBytes } from "./codex-artifact-store.mjs";
 import { codexCommandPreview } from "./codex-command-preview.mjs";
 import { tryLoadToolOutputKey } from "./protected-tool-output.mjs";
 import { codexToolHasPrivateContext, codexToolOutput } from "./codex-tool-output.mjs";
 import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { chmod, lstat, mkdir, open, realpath, rm } from "node:fs/promises";
+import { chmod, lstat, mkdir, open, rm } from "node:fs/promises";
 import { createServer } from "node:net";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
 import { createInterface } from "node:readline";
@@ -56,7 +57,6 @@ const STEER_RPC_TIMEOUT_MS = 60 * 1000;
 const CONTROL_SOCKET_TIMEOUT_MS = 60 * 1000;
 const PROVIDER_STOP_TIMEOUT_MS = 5_000;
 const SHUTDOWN_REPLAY_GRACE_MS = 250;
-const MAX_CAPTURED_ARTIFACT_BYTES = 10 * 1024 * 1024;
 const TURN_FRAME_V1_PREFIX = "matrix-turn-v1:";
 const TURN_FRAME_V2_PREFIX = "matrix-turn-v2:";
 const UNSAFE_DISPLAY_TEXT = /(stack trace|\/home\/|\/tmp\/|\/var\/|\.ssh\/|id_rsa|bearer\s+[A-Za-z0-9._-]+|sk-[A-Za-z0-9_-]+)/i;
@@ -137,7 +137,6 @@ const routines = createCodexRoutineChannel({ enabled: config.routinePrivate, ini
   ownerWaitChanged: (callId, turnId, waiting) => executionWatchdog.setToolOwnerWait(itemIdentity(turnId, callId), waiting),
 });
 const artifactHomePath = resolve(dirname(eventPath), "../../..");
-const artifactStorageDirectory = join(artifactHomePath, "data", "chat-artifacts", "codex", "sha256");
 const artifactSessionId = basename(eventPath, extname(eventPath));
 const sendTiming = createCodexSendTiming(artifactSessionId, undefined, process.env.MATRIX_CODEX_SEND_TIMINGS === "1");
 sendTiming.runnerBoot();
@@ -577,85 +576,23 @@ async function handleInput(raw) {
 }
 
 async function stageArtifactCandidate(candidate, rootOptions) {
-  let bytes;
-  if (candidate.source.type === "inline_bytes") {
-    bytes = Buffer.from(candidate.source.base64, "base64");
-  } else {
-    let source;
-    try {
-      const resolved = await realpath(candidate.source.path);
-      if (!await artifactRoots.contains(resolved, rootOptions)) throw new Error("Codex artifact file is outside the run roots");
-      source = await open(candidate.source.path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
-      const before = await source.stat({ bigint: true });
-      if (!before.isFile() || before.size <= 0n || before.size > BigInt(MAX_CAPTURED_ARTIFACT_BYTES)) {
-        throw new Error("Codex artifact file is unavailable");
-      }
-      // The provider controls the path. A parent directory can change after
-      // realpath, so bind the opened descriptor to the checked path identity.
-      const openedPath = await realpath(candidate.source.path);
-      const current = await lstat(openedPath, { bigint: true });
-      if (!await artifactRoots.contains(openedPath, rootOptions) || before.dev !== current.dev || before.ino !== current.ino) {
-        throw new Error("Codex artifact file changed while being opened");
-      }
-      bytes = await source.readFile();
-      const after = await source.stat({ bigint: true });
-      if (after.size !== before.size || after.mtimeNs !== before.mtimeNs || after.ctimeNs !== before.ctimeNs) {
-        throw new Error("Codex artifact file changed while being captured");
-      }
-    } finally {
-      await source?.close();
-    }
-  }
-  if (bytes.length === 0 || bytes.length > MAX_CAPTURED_ARTIFACT_BYTES) {
-    throw new Error("Codex artifact bytes exceed the capture limit");
-  }
-  const rawExtension = extname(candidate.label).toLowerCase();
-  const extension = /^\.[a-z0-9]{1,10}$/.test(rawExtension) ? rawExtension : ".bin";
-  const digest = createHash("sha256").update(bytes).digest("hex");
-  await mkdir(artifactStorageDirectory, { recursive: true, mode: 0o700 });
-  const path = join(artifactStorageDirectory, `${digest}${extension}`);
-  let capturedExists = false;
-  try {
-    const info = await lstat(path);
-    if (info.isSymbolicLink() || !info.isFile() || info.size !== bytes.length) {
-      throw new Error("Codex artifact capture path is unsafe");
-    }
-    capturedExists = true;
-  } catch (error) {
-    if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
-  }
-  let handle;
-  let created = false;
-  try {
-    if (!capturedExists) {
-      handle = await open(path, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY, 0o600);
-      created = true;
-      await handle.writeFile(bytes);
-      await handle.sync();
-    }
-  } catch (error) {
-    if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) throw error;
-    const info = await lstat(path);
-    if (info.isSymbolicLink() || !info.isFile() || info.size !== bytes.length) {
-      throw new Error("Codex artifact capture collision");
-    }
-  } finally {
-    await handle?.close();
-    if (created) await chmod(path, 0o600);
-  }
-  const ownerReference = relative(artifactHomePath, path).split("\\").join("/");
+  const bytes = candidate.source.type === "inline_bytes"
+    ? Buffer.from(candidate.source.base64, "base64")
+    : await readCodexArtifactFile(candidate.source.path, (path) => artifactRoots.contains(path, rootOptions));
+  const stored = await storeCodexArtifactBytes({ homePath: artifactHomePath, bytes, label: candidate.label });
   return {
     type: candidate.type,
     providerItemId: candidate.providerItemId,
     outputIndex: candidate.outputIndex,
-    attachmentId: `attachment_codex_${createHash("sha256")
-      .update(`${artifactSessionId}\0${candidate.providerItemId}\0${candidate.outputIndex}\0${digest}`)
-      .digest("hex").slice(0, 32)}`,
-    ownerReference,
+    attachmentId: codexArtifactAttachmentId({
+      sessionId: artifactSessionId, providerItemId: candidate.providerItemId,
+      outputIndex: candidate.outputIndex, sha256: stored.sha256,
+    }),
+    ownerReference: stored.ownerReference,
     label: candidate.label,
     mimeType: candidate.mimeType,
-    sizeBytes: bytes.length,
-    sha256: digest,
+    sizeBytes: stored.sizeBytes,
+    sha256: stored.sha256,
   };
 }
 

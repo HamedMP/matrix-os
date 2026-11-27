@@ -17,6 +17,21 @@ describe("owner database fallback teardown (S20 / T099)", () => {
     expect(order).toEqual(["collaboration", "stream", "repository", "canvas", "pool"]);
   });
 
+  it("stops background repairs, waiting for them, before releasing the repository they write to", async () => {
+    const order: string[] = [];
+    const backgroundRepairs = { stop: vi.fn(() => new Promise<void>((resolve) => {
+      setTimeout(() => { order.push("repair stopped"); resolve(); }, 10);
+    })) };
+    await expect(teardownOwnerDatabaseServices({
+      backgroundRepairs,
+      chatRepository: { release: vi.fn(async () => { order.push("repository"); }) },
+      appDb: { destroy: vi.fn(async () => { order.push("pool"); }) },
+    })).resolves.toEqual([
+      "collaboration", "backgroundRepairs", "chatEventStream", "chatRepository", "canvasRepository", "appDb",
+    ]);
+    expect(order).toEqual(["repair stopped", "repository", "pool"]);
+  });
+
   it("isolates a failing step, keeps tearing down the rest and still destroys the pool", async () => {
     const warn = vi.fn();
     const appDb = { destroy: vi.fn(async () => undefined) };

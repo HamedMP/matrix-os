@@ -39,6 +39,7 @@ import { OsViewStateRepository } from "../os-view-state/repository.js";
 import type { createProjectManager } from "../project-manager.js";
 import type { createWorktreeManager } from "../worktree-manager.js";
 import { constructOwnerCollaboration } from "./collaboration.js";
+import { startCodexImageBackfill, type BackgroundRepairHandle } from "../chat/codex-image-backfill.js";
 
 export interface OwnerDatabaseBootstrapOptions {
   databaseUrl?: string;
@@ -90,6 +91,8 @@ export interface OwnerDatabaseServices extends OwnerDatabaseFallbackServices {
   collaboration: GatewayCollaborationRuntime | null;
   messagingRepository: MessagingKyselyRepository | null;
   pushTokens: PushTokenStore | null;
+  /** Aborts one-time background repairs, such as recovering Codex images, on shutdown. */
+  backgroundRepairs: BackgroundRepairHandle | null;
 }
 
 export interface InitializeOwnerDatabaseOptions {
@@ -125,7 +128,7 @@ export async function initializeOwnerDatabaseServices(
     canvasService: null, canvasSubscriptionHub: null, canvasCleanupTimer: null,
     chatRepository: null, chatEventStream: null, chatExecutionRoots: null,
     chatCollaborationGuard: null, collaboration: null, messagingRepository: null,
-    pushTokens: null,
+    pushTokens: null, backgroundRepairs: null,
   };
   let failClosedReason = options.initialFailureReason;
   const result = await bootOwnerDatabaseWithFallback({
@@ -153,6 +156,7 @@ export async function initializeOwnerDatabaseServices(
       const chatRepository = new ChatRepository(kysely as Kysely<any>);
       services.chatRepository = chatRepository;
       await chatRepository.bootstrap();
+      services.backgroundRepairs = startCodexImageBackfill(chatRepository, options.homePath);
       const ownerChatExecutionRoots = createChatExecutionRootResolver({
         homePath: options.homePath,
         projects: options.codingAgentProjectManager,
