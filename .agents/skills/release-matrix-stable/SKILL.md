@@ -1,234 +1,179 @@
 ---
 name: release-matrix-stable
-description: Release the Matrix OS customer VPS host bundle - cut a canary from main with a user-facing changelog, verify it on a reviewed VPS, then promote that exact version to stable (or roll stable back). Use when asked to "release to stable", "promote stable", "cut a canary", "release Matrix", "write the changelog" for a host-bundle release, or "roll back stable".
+description: Release the Matrix OS customer VPS host bundle by qualifying the exact automatic green-main dev artifact, verifying that immutable version on a reviewed VPS, and promoting it to stable (or rolling stable back). Use when asked to release Matrix host bundles, promote stable, write the host changelog, or roll back stable.
 ---
 
 # Release Matrix Stable
 
-Customer VPSes run immutable host bundles. Platform Postgres holds release
-metadata and channel pointers; R2 holds the bytes. Pipeline:
-`.github/workflows/host-bundle-release.yml` -> `scripts/host-bundle-release.mjs`
-(manifest) -> `scripts/publish-release.sh` (R2 upload + `POST
-/system-bundles/releases`). Background: `docs/dev/releases.md`. The platform
-service is a separate lane: `release-platform`.
+Customer VPSes run immutable host bundles. A push to `main` automatically builds
+and publishes the host artifact to the `dev` channel. A stable release reuses
+that exact green-main dev artifact: it does not build or promote a separate host
+canary. Desktop prerelease channels are unrelated to this skill.
+
+Platform Postgres holds release metadata and channel pointers; R2 holds the
+immutable bytes. The platform service is a separate lane handled by
+`release-platform`.
 
 ## Where to run it
 
-Run every command from the root of a Matrix OS checkout. The `git` and `gh`
-commands act on the current repository, and the scripts this skill calls live
-in it. Check before anything else, and stop if either line fails:
+Run from the root of a Matrix OS checkout and name the repository on every
+GitHub CLI call:
 
 ```bash
-test "$(gh repo view --json nameWithOwner -q .nameWithOwner)" = "HamedMP/matrix-os"
+test "$(gh repo view --repo HamedMP/matrix-os --json nameWithOwner -q .nameWithOwner)" = "HamedMP/matrix-os"
 test -f .github/workflows/host-bundle-release.yml
 ```
 
-If the skill was started elsewhere (for example through the `matrix-dev`
-plugin in another repository), ask where the Matrix OS checkout is and `cd`
-there first.
-
 ## Rules
 
-- Release only a `main` commit whose CI is green. Never dispatch a canary or
-  stable build from a feature branch.
-- **Ask the user before**: dispatching the canary, deploying to any VPS,
-  promoting `stable`, choosing `severity=security`, or rolling back.
-- Never set `deploy_after_publish=true` without explicit approval for a
-  fleet-wide rollout; it deploys the new version to every running VPS.
-- Never print `PLATFORM_SECRET`. Platform admin calls below need it in env.
+- Release only the locked `main` commit whose same-SHA CI is green.
+- Do not manually dispatch another host build for an ordinary stable release.
+  Wait for the automatic `main` run and qualify its exact `dev` artifact.
+- Ask immediately before each mutation: updating release metadata, deploying to
+  any VPS, promoting `stable`, retrying a mutating job, choosing
+  `severity=security`, or rolling back.
+- Never set `deploy_after_publish=true` for this path. Fleet rollout uses the
+  exact approved target manifest from `release-full-stable`.
+- Never print `PLATFORM_SECRET`.
 
-## 1. Pick the commit and the range
+## 1. Lock the commit and release range
 
 ```bash
-git fetch origin
+git fetch origin main
 SHA=$(git rev-parse origin/main)
-gh run list --commit "$SHA" --workflow ci.yml --limit 3     # must be success
+gh run list --repo HamedMP/matrix-os --commit "$SHA" --workflow ci.yml --limit 3 \
+  --json databaseId,headSha,status,conclusion,url
 STABLE=$(curl -fsS https://app.matrix-os.com/system-bundles/channels/stable.json)
-echo "$STABLE" | jq '{version, gitCommit, createdAt}'
 BASE=$(echo "$STABLE" | jq -r .gitCommit)
+echo "$STABLE" | jq '{version,gitCommit,createdAt,snapshotStatus}'
 git log --oneline "$BASE..$SHA"
 ```
 
-The workflow's own `Same-SHA CI gate` also waits for CI on that commit.
+Record the current stable version as the rollback target. If `origin/main`
+moves later, keep this locked SHA; do not silently expand the release.
 
-## 2. Write the changelog
+## 2. Qualify the automatic dev artifact
 
-The changelog is **plain text**, stored in the `changelog` field of the release
-registration JSON (`string | null`, max 32,000 chars, schema
-`HostBundleReleaseBodySchema` in `packages/platform/src/host-bundle-routes.ts`).
-Settings -> System -> Updates renders it with `whitespace-pre-line`, so use
-newlines and `- ` bullets, not Markdown headings or links. It is fixed at
-registration and carried unchanged when the same version is promoted to
-`stable`, so write it when cutting the canary.
+Find the automatic host workflow for the locked SHA and wait for its R2 publish
+job to succeed:
 
-Draft from Conventional Commits, then edit by hand:
+```bash
+gh run list --repo HamedMP/matrix-os --commit "$SHA" \
+  --workflow host-bundle-release.yml --limit 5 \
+  --json databaseId,event,headSha,status,conclusion,url,createdAt
+DEV=$(curl -fsS https://app.matrix-os.com/system-bundles/channels/dev.json)
+echo "$DEV" | jq '{version,gitCommit,gitRef,buildTime,channel,severity,updateType,sha256,size}'
+VERSION=$(echo "$DEV" | jq -r .version)
+test "$(echo "$DEV" | jq -r .gitCommit)" = "$SHA"
+curl -fsS "https://app.matrix-os.com/system-bundles/releases/$VERSION.json" \
+  | jq '{version,gitCommit,gitRef,buildTime,channel,severity,updateType,sha256,size,bundleKey,checksumKey,incrementalManifestKey,incrementalManifestSha256}'
+```
+
+Stop if the workflow `headSha`, dev `gitCommit`, immutable release
+`gitCommit`, version, checksum, or object keys disagree. If the automatic run
+is absent or failed, diagnose it and ask before retrying; do not replace it with
+a second release build.
+
+## 3. Write and approve the changelog
+
+The changelog is plain text shown in Settings → System → Updates. Use newlines
+and `- ` bullets, keep 3–8 user-visible items, and omit PR numbers, internal
+names, customer data, and infrastructure noise.
 
 ```bash
 node scripts/release-changelog.mjs --base "$BASE" --head "$SHA" > /tmp/changelog.txt
 ```
 
-The script groups `feat` -> New, `fix`/`revert` -> Fixed, `perf` -> Faster,
-everything else -> Polish and reliability. Then:
+Show the edited changelog and the selected `VERSION`, SHA, severity, current
+stable version, and workflow URL. Approval of the copy is not permission to
+mutate release metadata.
 
-- Keep what a user would notice; drop `ci`/`test`/`docs`/refactor noise.
-- Plain language, one short line per item, 3-8 items, well under 1,500 chars.
-- No PR or ticket numbers, internal names, hostnames, customer data, or secrets.
-- Merge related commits into one line.
+## 4. Attach the changelog to the same immutable artifact
 
-Example:
+The automatic dev registration normally has no final customer changelog.
+Re-registering identical artifact fields updates only changelog/severity/update
+type and does not move a channel pointer. Ask immediately before this request.
 
-```text
-What's changed
-
-New
-- Chat shows your sent message immediately.
-- Keyboard shortcuts are listed in Getting started.
-
-Fixed
-- Files Next and Previous now include every open tab.
-- WhatsApp settings stay connected after a restart.
-```
-
-Shape of the registration body that carries it (built by `publish-release.sh`;
-you do not hand-write it for a normal release):
-
-```json
-{
-  "version": "v2026.11.23-2101",
-  "gitCommit": "<40-char sha>",
-  "gitRef": "main",
-  "buildTime": "2026-11-23T10:00:00Z",
-  "bundleKey": "system-bundles/<version>/matrix-host-bundle.tar.gz",
-  "checksumKey": "system-bundles/<version>/matrix-host-bundle.tar.gz.sha256",
-  "incrementalManifestKey": "system-bundles/<version>/incremental-manifest.json",
-  "incrementalManifestSha256": "<sha256>",
-  "sha256": "<sha256>",
-  "size": 123456789,
-  "severity": "normal",
-  "updateType": "manual",
-  "changelog": "What's changed\n\nNew\n- ...",
-  "snapshotEligible": true,
-  "channel": "canary"
-}
-```
-
-Show the draft to the user and get approval before step 3.
-
-## 3. Severity
-
-- `normal` (default): `updateType=manual`; users see the update in Settings and
-  choose when to install.
-- `security`: `publish-release.sh` sets `updateType=auto`, so VPSes subscribed
-  to that channel may auto-apply it during passive polling. It does **not**
-  bypass the `deploy_after_publish` gate. Use only for real security fixes, and
-  ask first.
-
-## 4. Cut the canary
-
-Canonical today: dispatch from `main` (version becomes
-`v<YYYY.MM.DD>-<run_number>`):
+For a normal release use `severity=normal` and `updateType=manual`.
+`security` implies `updateType=auto` and requires separate explicit approval.
 
 ```bash
-gh workflow run host-bundle-release.yml --ref main -f expected_sha="$SHA" \
-  -f channel=canary -f severity=normal -f changelog="$(cat /tmp/changelog.txt)"
-gh run list --workflow host-bundle-release.yml --event workflow_dispatch --limit 1 \
-  --json databaseId,headSha,url
-gh run watch <run-id> --exit-status
-gh run view <run-id> --log | grep 'Generated version'     # VERSION
-curl -fsS https://app.matrix-os.com/system-bundles/channels/canary.json | jq '{version, gitCommit, changelog}'
+curl -fsS "https://app.matrix-os.com/system-bundles/releases/$VERSION.json" \
+  | jq --rawfile cl /tmp/changelog.txt \
+      '{version,gitCommit,gitRef,buildTime,bundleKey,checksumKey,incrementalManifestKey,incrementalManifestSha256,sha256,size,severity:"normal",updateType:"manual",changelog:$cl}' \
+  | curl -fsS -X POST https://app.matrix-os.com/system-bundles/releases \
+      -H "Authorization: Bearer $PLATFORM_SECRET" \
+      -H "Content-Type: application/json" --data-binary @-
 ```
 
-`--ref main` builds whatever `main` is when the dispatch lands, which may be
-newer than the commit you approved. `expected_sha` pins the approved commit:
-the run's first job fails before anything is built or published when `main`
-has moved. Always pass it. If the run fails there, nothing was released:
-return to step 1 with the new `main`, regenerate the changelog for the new
-range, and get fresh approval. As a final check, the run's `headSha` and the
-canary's `gitCommit` must equal `$SHA`.
+A `409` means an immutable artifact field differed; stop rather than forcing
+it. Read the release back and verify the changelog, severity, update type,
+checksum, size, and SHA.
 
-Alternative: pushing a `v*` tag builds a bundle named after the tag and
-promotes `canary`, but registers **no changelog**. Recent tags
-(`git tag -l 'v*' --sort=-creatordate`) use the same date-run form; never push a
-tag that matches an already-published version (the registration conflicts).
-Dispatching `channel=stable` directly skips canary verification; avoid it.
+## 5. Verify the stable candidate on one reviewed VPS
 
-## 5. Verify the canary
-
-Deploy only to a reviewed handle (ask first; prefer a disposable test VPS):
+Ask before deploying `VERSION` to a reviewed disposable or named VPS. This is
+a scoped exact-version deployment, not a channel promotion:
 
 ```bash
 curl -fsS -X POST https://app.matrix-os.com/vps/deploy \
-  -H "Authorization: Bearer $PLATFORM_SECRET" -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $PLATFORM_SECRET" \
+  -H "Content-Type: application/json" \
   -d '{"handle":"<reviewed-handle>","version":"<VERSION>"}'
-curl -fsS https://app.matrix-os.com/vps/fleet -H "Authorization: Bearer $PLATFORM_SECRET" \
-  | jq '.machines[] | select(.handle=="<reviewed-handle>") | {handle,status,imageVersion,healthy}'
+curl -fsS https://app.matrix-os.com/vps/fleet \
+  -H "Authorization: Bearer $PLATFORM_SECRET" \
+  | jq '.machines[] | select(.handle=="<reviewed-handle>") | {machineId,handle,status,imageVersion,healthy}'
 ```
 
-On the VPS (`docs/dev/releases.md` step 4):
+Verify on that VPS:
 
 ```bash
-cat /opt/matrix/app/BUNDLE_VERSION; cat /opt/matrix/release.json
+cat /opt/matrix/app/BUNDLE_VERSION
+cat /opt/matrix/release.json
 systemctl is-active matrix-gateway matrix-shell matrix-sync-agent
 curl -fsS http://127.0.0.1:4000/health
 ```
 
-In the browser: Settings -> System -> Updates shows the version and Git commit,
-and the changed features work. Record what you tested.
+Also verify the changed user journeys and Settings release information. Record
+the exact handle, machine ID, installed version, provenance, services, health,
+and observations. If no reviewed VPS is available, report stable promotion as
+blocked instead of claiming the artifact is qualified.
 
-## 6. Promote to stable (ask first)
+## 6. Promote the exact verified version to stable
 
-Promote the exact verified version; this reuses its bytes and changelog:
+Show the verified `VERSION`, SHA, changelog, and previous stable version, then
+ask immediately before promotion:
 
 ```bash
 curl -fsS -X POST https://app.matrix-os.com/system-bundles/channels/stable \
-  -H "Authorization: Bearer $PLATFORM_SECRET" -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $PLATFORM_SECRET" \
+  -H "Content-Type: application/json" \
   -d '{"version":"<VERSION>"}'
-curl -fsS https://app.matrix-os.com/system-bundles/channels/stable.json | jq '{version, gitCommit, snapshotStatus}'
+curl -fsS https://app.matrix-os.com/system-bundles/channels/stable.json \
+  | jq '{version,gitCommit,sha256,severity,updateType,changelog,snapshotStatus}'
 ```
 
-What it triggers:
+This reuses the already verified bytes. It changes new provisioning and the
+stable pointer, and requests a golden snapshot. It does not perform a fleet
+rollout.
 
-- New provisioning uses it immediately (production binds
-  `CUSTOMER_VPS_IMAGE_VERSION=stable` and pins the resolved version per machine).
-- A golden snapshot build is requested in the same transaction
-  (`docs/dev/golden-vps-snapshots.md`); `snapshotStatus` tracks it. A 503 means
-  snapshot compatibility is not configured: stop and escalate.
-- Existing stable-subscribed VPSes discover it within about 5 minutes; with
-  `updateType=manual` users install from Settings. No fleet deploy happens.
+## Rollback
 
-## Fixing a changelog after publishing (ask first)
-
-Re-registering the same version with identical artifact fields updates only
-`changelog`/`severity`/`updateType`. Omit `channel` so nothing is promoted:
-
-```bash
-curl -fsS https://app.matrix-os.com/system-bundles/releases/<VERSION>.json \
-  | jq --rawfile cl /tmp/changelog.txt '{version,gitCommit,gitRef,buildTime,bundleKey,checksumKey,incrementalManifestKey,incrementalManifestSha256,sha256,size,severity,updateType,changelog:$cl}' \
-  | curl -fsS -X POST https://app.matrix-os.com/system-bundles/releases \
-      -H "Authorization: Bearer $PLATFORM_SECRET" -H "Content-Type: application/json" --data-binary @-
-```
-
-A 409 means an artifact field differed; do not force it.
-
-## Rollback (ask first)
-
-Re-promote the previous stable version (note it in step 1):
+Ask first, then re-promote the recorded previous stable version:
 
 ```bash
 curl -fsS -X POST https://app.matrix-os.com/system-bundles/channels/stable \
-  -H "Authorization: Bearer $PLATFORM_SECRET" -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $PLATFORM_SECRET" \
+  -H "Content-Type: application/json" \
   -d '{"version":"<previous-stable-version>"}'
 ```
 
-This fixes new provisioning and the channel pointer. VPSes that already
-installed the bad version downgrade with `matrix-update <version>` or a scoped
-`POST /vps/deploy {handle, version}`.
+VPSes that already installed the bad version require explicit scoped downgrades.
 
 ## Report
 
-- [ ] Commit SHA, base stable version, CI run
-- [ ] Workflow run URL, `VERSION`, channel, severity
-- [ ] Final changelog text
-- [ ] Canary verification: handle, checks run, results
-- [ ] Stable promotion response and `snapshotStatus` (or "not promoted")
-- [ ] Previous stable version (rollback target)
+- [ ] Locked SHA, same-SHA CI, automatic host workflow
+- [ ] Qualified dev version, checksum, object keys, and changelog
+- [ ] Reviewed-VPS verification and changed journeys
+- [ ] Stable promotion response and golden snapshot status
+- [ ] Previous stable version as rollback target
