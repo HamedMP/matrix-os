@@ -20,7 +20,7 @@ function lowerBound(list: readonly CalcNode[], row: number): number {
 }
 
 /** Walks the formula cells a node reads, one at a time, without building a list of them. */
-class Precedents {
+export class Precedents {
   private depIndex = 0;
   private lists: CalcNode[][] = [];
   private listIndex = 0;

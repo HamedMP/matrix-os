@@ -6,7 +6,9 @@
  * their cells at run time (OFFSET, INDIRECT): the order cannot place them
  * after cells their text does not name, so each is calculated again when a
  * cell it actually read was stored after it, and the new value is carried on
- * to its dependants, until nothing moves.
+ * to its dependants, until nothing moves. Formulas that still move after
+ * many rounds read one another in a circle; once nothing moves, the circles
+ * whose values agree are found from what was read (`calc-circles.ts`).
  *
  * A bound that stops a run leaves the formulas it did not reach marked as
  * pending; the next run starts with those and does not redo the others.
@@ -24,6 +26,7 @@ import type { CellProvider, FormulaScalar, FormulaValue, FunctionRegistry } from
 import type { CellRange, CellValue, ChangedCell, SheetCellRef } from "../../api/xlsx.js";
 import { isOfficeError } from "../../errors.js";
 import { formatValue } from "../format/index.js";
+import { findRunCircles } from "./calc-circles.js";
 import { NO_CLOCK, clocklessFunctions } from "./calc-clock.js";
 import { type CalcGraph, type CalcNode, type Dep, functionsOf } from "./calc-graph.js";
 import { type ReadLog, makeProvider } from "./calc-provider.js";
@@ -95,6 +98,10 @@ export class Run {
   readonly circular: SheetCellRef[] = [];
   /** The nodes in {@link circular}, so a formula calculated again in the run is reported once. */
   private readonly reported = new Set<CalcNode>();
+  /** Formulas found to read one another in a circle at run time; they hold `#REF!` for the rest of the run. */
+  private readonly closed = new Set<CalcNode>();
+  /** The formulas that pick their cells at run time calculated in this run: where circles they close are looked for. */
+  private readonly ran = new Set<CalcNode>();
   private evaluated = 0;
   /** Values stored so far. */
   private seq = 0;
@@ -222,6 +229,7 @@ export class Run {
     if (node.dynamic) {
       log.reads = [];
       log.overflow = false;
+      this.ran.add(node);
     }
     // A formula without a value has nothing to keep: TODAY and NOW give #N/A in it.
     const keeps = this.clockless !== null && node.cell.value !== null;
@@ -400,14 +408,15 @@ export class Run {
   /** Calculates again the formulas whose run-time reads were stored after them. False when the bound stopped it. */
   private settle(): boolean {
     const dynamic = this.graph.dynamic;
-    /** Formulas found to read one another in a circle; they hold `#REF!` for the rest of the run. */
-    const closed = new Set<CalcNode>();
+    const closed = this.closed;
     let reverse = true;
     for (let round = 0; round < 2 * MAX_ROUNDS; round++) {
       const stale = dynamic.filter((node) => !closed.has(node) && this.isStale(node));
-      if (stale.length === 0) return true;
       this.sink = new Map();
-      if (round === MAX_ROUNDS) {
+      if (stale.length === 0) {
+        // Nothing moves, which a circle whose values agree also gives: look for circles in what was read.
+        if (!this.closeCircles()) return true;
+      } else if (round === MAX_ROUNDS) {
         // Still moving after this many rounds: these formulas read one another in a circle.
         const moving = new Set(stale);
         for (const node of dynamic) {
@@ -430,12 +439,24 @@ export class Run {
     return true;
   }
 
+  /** Marks as circular the formulas that read one another in a circle at run time and were not yet. False when there are none. */
+  private closeCircles(): boolean {
+    let any = false;
+    for (const node of findRunCircles(this.graph, this.ran)) {
+      if (this.closed.has(node)) continue;
+      any = true;
+      this.closed.add(node);
+      this.putCircular(node);
+    }
+    return any;
+  }
+
   /** Carries the cells in the sink on to the formulas that name them. False when the bound stopped it. */
   private spread(): boolean {
     if (isEmpty(this.sink)) return true;
     for (let i = 0; i < this.order.length; i++) {
       const node = this.order[i] as CalcNode;
-      if (node.circular || !this.namedIn(node, this.sink, false)) continue;
+      if (node.circular || this.closed.has(node) || !this.namedIn(node, this.sink, false)) continue;
       if (this.evaluate(node)) continue;
       this.defer(0, false);
       return false;

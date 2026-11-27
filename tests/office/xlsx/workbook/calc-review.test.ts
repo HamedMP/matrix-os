@@ -11,6 +11,8 @@
 
 import { describe, expect, it } from "vitest";
 import { createXlsx, openXlsx, parseA1 } from "../../../../packages/office/src/xlsx/index.js";
+import { findRunCircles } from "../../../../packages/office/src/xlsx/workbook/calc-circles.js";
+import type { CalcGraph } from "../../../../packages/office/src/xlsx/workbook/calc-graph.js";
 import { TRACE_LIMIT } from "../../../../packages/office/src/xlsx/workbook/model.js";
 import { stateOf } from "../../../../packages/office/src/xlsx/workbook/workbook.js";
 import { buildXlsx, err, valueAt } from "./helpers.js";
@@ -245,6 +247,44 @@ describe("formulas that pick their cells at run time", () => {
     // One entry per cell, from the value before the run to the value after it.
     const keys = result.changed.map((cell) => `${cell.row},${cell.col}`);
     expect(new Set(keys).size).toBe(keys.length);
+  });
+
+  // Fault detected: a circle whose values stop moving looked settled, so the run reported it complete with no
+  // circular cells and the cells kept a value Excel does not give them.
+  it("reports a circle closed at run time whose values do not move", () => {
+    const workbook = createXlsx({ sheetNames: ["S"] });
+    const sheet = workbook.listSheets()[0]!.id;
+    workbook.setFormula(sheet, parseA1("A1"), 'INDIRECT("B1")');
+    workbook.setFormula(sheet, parseA1("B1"), 'INDIRECT("A1")');
+    // Through a formula that names its cell: A3 reads B3 at run time, B3 names A3.
+    workbook.setFormula(sheet, parseA1("A3"), 'INDIRECT("B3")*1');
+    workbook.setFormula(sheet, parseA1("B3"), "A3*1");
+    // Reads a cell of the circle but is not part of it.
+    workbook.setFormula(sheet, parseA1("D1"), 'INDIRECT("A1")');
+    workbook.setFormula(sheet, parseA1("E1"), 'INDIRECT("F1")');
+    workbook.setCell(sheet, parseA1("F1"), 4);
+    const result = workbook.recalc();
+    expect(result.complete).toBe(true);
+    expect(result.circular.map((cell) => `${cell.row},${cell.col}`).sort()).toEqual(["0,0", "0,1", "2,0", "2,1"]);
+    expect(["A1", "B1", "A3", "B3", "D1"].map((a) => valueAt(workbook, "S", a))).toEqual(Array(5).fill(err("#REF!")));
+    expect(valueAt(workbook, "S", "E1")).toBe(4);
+    // Pointed elsewhere, the circle opens and the cells calculate again.
+    workbook.setFormula(sheet, parseA1("B1"), 'INDIRECT("F1")');
+    const after = workbook.recalc();
+    expect(after.circular.map((cell) => `${cell.row},${cell.col}`).sort()).toEqual(["2,0", "2,1"]);
+    expect(["A1", "B1", "D1"].map((a) => valueAt(workbook, "S", a))).toEqual([4, 4, 4]);
+  });
+
+  // Fault detected: the walk for such circles had no bound, so a large workbook could make every run walk it whole.
+  it("looks for such circles within a bounded walk", () => {
+    const workbook = createXlsx({ sheetNames: ["S"] });
+    const sheet = workbook.listSheets()[0]!.id;
+    workbook.setFormula(sheet, parseA1("A1"), 'INDIRECT("B1")');
+    workbook.setFormula(sheet, parseA1("B1"), 'INDIRECT("A1")');
+    workbook.recalc();
+    const graph = stateOf(workbook).calc.graph as CalcGraph;
+    expect(findRunCircles(graph, graph.dynamic).length).toBe(2);
+    expect(findRunCircles(graph, graph.dynamic, 2)).toEqual([]);
   });
 });
 
