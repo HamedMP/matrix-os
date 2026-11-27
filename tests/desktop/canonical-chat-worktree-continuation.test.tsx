@@ -1,6 +1,14 @@
 // @vitest-environment jsdom
 
 import React from "react";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { ApiClient } from "@desktop/renderer/src/lib/api";
+import { AppError } from "@desktop/shared/app-error";
+import { createChatExecutionRootResolver } from "../../packages/gateway/src/chat/execution-root";
+import { createProjectManager } from "../../packages/gateway/src/project-manager";
+import { createWorktreeManager } from "../../packages/gateway/src/worktree-manager";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CanonicalChatDetailResponse } from "@matrix-os/contracts";
@@ -95,5 +103,77 @@ describe("native Chat worktree continuation", () => {
       fixture.detail.record.chat.id,
       expect.objectContaining({ executionRoot: worktree, parts: [{ type: "text", text: "Then run the Files tests in the same worktree." }] }),
     ));
+  });
+
+  it("offers an idle Chat an explicit project checkout after its worktree is deleted", async () => {
+    const fixture = worktreeFixture();
+    const { detail, client } = fixture;
+    const owner = detail.record.chat.ownerScope;
+    if (owner.type !== "personal") throw new Error("Expected a personal Chat");
+    const ownerScope = { type: "user" as const, id: owner.ownerId };
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-chat-worktree-deletion-"));
+    try {
+      const projects = createProjectManager({ homePath });
+      const created = await projects.createProject({ mode: "scratch", name: "Matrix OS", slug: "matrix-os", ownerScope });
+      if (!created.ok) throw new Error("Fixture project creation failed");
+      const { project } = created;
+      const worktrees = createWorktreeManager({
+        homePath, runCommand: async (_command, args) => {
+          if (args[0] === "worktree" && args[1] === "add") {
+            await mkdir(args[args.indexOf("--") + 1]!, { recursive: true });
+          }
+          return { stdout: "", stderr: "" };
+        },
+      });
+      const createdWorktree = await worktrees.createWorktree({ projectSlug: project.slug, branch: "feature/chat", ownerScope });
+      if (!createdWorktree.ok) throw new Error("Fixture worktree creation failed");
+      const root = { kind: "worktree", projectId: project.id, worktreeId: createdWorktree.worktree.id } as const;
+      const projectRoot = { kind: "project", projectId: project.id } as const;
+      detail.record.projectId = project.id;
+      detail.runs[0]!.executionRoot = root;
+      useBoard.setState({ projects: [project] });
+      const resolver = createChatExecutionRootResolver({ homePath, projects, worktrees });
+      await expect(resolver.resolve(owner, root)).resolves.toMatchObject({ ref: root });
+      await expect(worktrees.deleteWorktree({ projectSlug: project.slug, worktreeId: root.worktreeId, ownerScope }))
+        .resolves.toEqual({ ok: true });
+      await expect(resolver.resolve(owner, root)).rejects.toThrow();
+      const get = vi.fn(async (path: string) => {
+        if (path === "/api/projects/matrix-os/worktrees") {
+          const result = await worktrees.listWorktrees(project.slug, ownerScope);
+          if (!result.ok) throw new Error("Fixture worktree inventory failed");
+          return { worktrees: result.worktrees };
+        }
+        if (path === "/api/projects/matrix-os") return { project };
+        throw new Error("Unexpected fixture request");
+      });
+      const admit = vi.mocked(client.admitTurn).getMockImplementation()!;
+      vi.mocked(client.admitTurn).mockImplementation(async (chatId, input, options) => {
+        if (!input.executionRoot) throw new Error("Fixture requires an explicit project root");
+        await resolver.resolve(owner, input.executionRoot);
+        return admit(chatId, input, options);
+      });
+      render(<CanonicalChatWorkspace client={client} api={{ get } as unknown as ApiClient}
+        projectId={project.id} initialChatId={detail.record.chat.id} initialView="conversation"
+        active catalog={fixture.providerCatalog} />);
+      const editor = await screen.findByRole("textbox", { name: "Reply to chat" });
+      await setSharedComposerText(editor, "Continue after removing the worktree.");
+      fireEvent.click(screen.getByRole("button", { name: "Send" }));
+      const chooseProject = await screen.findByRole("button", { name: "Use project checkout" });
+      expect(client.admitTurn).not.toHaveBeenCalled();
+      expect(editor.textContent).toBe("Continue after removing the worktree.");
+      fireEvent.click(chooseProject);
+      vi.mocked(client.admitTurn).mockRejectedValueOnce(new AppError("server", { httpStatus: 503 }));
+      fireEvent.click(screen.getByRole("button", { name: "Send" }));
+      await screen.findByText("Message status is unconfirmed. You can retry safely.");
+      expect(client.admitTurn).toHaveBeenCalledExactlyOnceWith(detail.record.chat.id,
+        expect.objectContaining({ executionRoot: projectRoot,
+          parts: [{ type: "text", text: "Continue after removing the worktree." }] }), { chatScope: "project" });
+      const request = vi.mocked(client.admitTurn).mock.calls[0]![1];
+      fireEvent.click(screen.getByRole("button", { name: "Send" }));
+      await waitFor(() => expect(client.admitTurn).toHaveBeenCalledTimes(2));
+      expect(vi.mocked(client.admitTurn).mock.calls[1]![1]).toEqual(request);
+    } finally {
+      await rm(homePath, { recursive: true, force: true });
+    }
   });
 });

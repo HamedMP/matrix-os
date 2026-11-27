@@ -101,6 +101,11 @@ export function createCanonicalChatAdmissionTracker() {
       attempts.push(attempt);
       return attempt;
     },
+    hasUnresolved(identity: unknown, scope: string, value?: Input) {
+      const payload = value === undefined ? undefined : JSON.stringify(InputSchema.parse(value));
+      return attempts.some(item => item.identity === identity && item.scope === scope
+        && (payload === undefined || (item.sourcePayload ?? item.payload) === payload));
+    },
     bind(attempt: ChatAdmissionAttempt, record: CanonicalChatRecord) {
       attempt.record ??= record;
       attempt.request ??= { ...JSON.parse(attempt.payload), clientRequestId: attempt.id, baseRevision: record.chat.revision };

@@ -464,6 +464,24 @@ export function useCanonicalChatRouteController({
     }
   }, [client, detail, loadDetail, updateDetail]);
 
+  const canUseProjectCheckout = (
+    worktree: Extract<NonNullable<CanonicalCreateChatTurnRequest["executionRoot"]>, { kind: "worktree" }>,
+    revision: number,
+    retry?: Omit<CanonicalCreateChatTurnRequest, "clientRequestId" | "baseRevision">,
+  ) => {
+    const current = detailRef.current;
+    const chatId = activeChatIdRef.current;
+    const authority = admissionAuthority.current;
+    if (!authority.valid || authority.client !== client || authority.identity !== admissionIdentity
+      || !routeScopeRef.current?.active || !current || !chatId || current.record.chat.id !== chatId
+      || current.record.activeRun || current.record.chat.revision !== revision) return false;
+    const { executionRoot } = withChatContinuationRoot<Pick<CanonicalCreateChatTurnRequest, "executionRoot">>({}, current, chatId);
+    return executionRoot?.kind === "worktree" && executionRoot.projectId === worktree.projectId
+      && executionRoot.worktreeId === worktree.worktreeId
+      && (!admissions.hasUnresolved(admissionIdentity, chatId)
+        || (retry !== undefined && admissions.hasUnresolved(admissionIdentity, chatId, retry)));
+  };
+
   const submitTurn = useCallback(async (
     input: Omit<CanonicalCreateChatTurnRequest, "clientRequestId" | "baseRevision"> & { clientRequestId?: string },
     title: string,
@@ -998,6 +1016,7 @@ export function useCanonicalChatRouteController({
     refresh: load,
     moveProject,
     submitTurn,
+    canUseProjectCheckout,
     cancelActiveRun,
     steerActiveRun,
     queueTurn,

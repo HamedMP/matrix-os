@@ -1,3 +1,5 @@
+import { useProjectCheckoutRecovery } from "./canonical-chat-turn-admission";
+import { Button } from "../../design/primitives";
 import { PROJECT_SETUP_COMPOSER_CLASS, projectSetupDetailPresentation, projectSetupControlsMessageId } from "@matrix-os/ui";
 import { useDesktopProjectSetup } from "../project/use-desktop-project-setup";
 import { useDesktopProjectSlashScope } from "../project/desktop-project-slash-scope";
@@ -45,6 +47,7 @@ import type {
   AgentProviderSummary,
   CanonicalChatMessagePart,
   CanonicalChatDetailResponse,
+  CanonicalCreateChatTurnRequest,
   CanonicalProviderCatalog,
   CanonicalChatQueuedTurn,
 } from "@matrix-os/contracts";
@@ -299,6 +302,7 @@ function CanonicalChatWorkspaceContent({
   const [optimisticQueuedTurns, setOptimisticQueuedTurns] = useState<CanonicalChatQueuedTurn[] | null>(null);
   const [editingQueuedTurn, setEditingQueuedTurn] = useState<CanonicalChatQueuedTurn | null>(null);
   const [localComposerFocusRequestId, setLocalComposerFocusRequestId] = useState(0);
+  const checkout = useProjectCheckoutRecovery(client, JSON.stringify([admissionIdentity, draftScope, draftRevision]), controller.detail);
   const sideDraft = useSideChatDraft();
   const sideDraftRequest = sideDraft?.pending;
   useEffect(() => {
@@ -733,6 +737,12 @@ function CanonicalChatWorkspaceContent({
         ...(executionRoot ? { executionRoot }
           : submission.projectSkill ? { executionRoot: { kind: "project" as const, projectId: submission.projectSkill.projectId } } : {}),
       };
+      const replyInput: Omit<CanonicalCreateChatTurnRequest, "clientRequestId" | "baseRevision"> = input;
+      if (!directBotId && !replyInput.executionRoot && !permissionResources.length) {
+        const root = await checkout.resolve({ input: replyInput, api, projects, canUseCheckout: controller.canUseProjectCheckout, isCurrent: isCurrentSubmission });
+        if (root === null || !isCurrentSubmission()) return;
+        if (root) replyInput.executionRoot = root;
+      }
       const requestScope = routedComposerChatId ?? `new:${projectId ?? "global"}`;
       const attempt = mentionRequests.resolve(client, requestScope, permissionResources.length ? input : { ...input, draftRevision }, "send");
       const clientRequestId = attempt?.clientRequestId;
@@ -985,6 +995,14 @@ function CanonicalChatWorkspaceContent({
       />
 
       <BrowserPermissionReminder/>
+      {checkout.offered && !directBotId && !activeRun && !editingQueuedTurn && !permissionResources.length && (
+        checkout.selected ? <p role="status" className="px-2 pb-2 text-sm">This reply will use the project checkout.</p> : (
+          <div className="flex items-center justify-between gap-2 px-2 pb-2 text-sm">
+            <span>The previous worktree is unavailable. You can send this reply in the project checkout.</span>
+            <Button variant="subtle" disabled={uploadingAttachments} onClick={checkout.select}>Use project checkout</Button>
+          </div>
+        )
+      )}
       <SharedChatComposer
         permissionModeRequest={permissionModeRequest}
         value={draft}
