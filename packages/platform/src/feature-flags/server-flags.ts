@@ -9,7 +9,7 @@ import { PostHog, type PostHogOptions } from 'posthog-node';
  * - PostHog flags hold the runtime on/off switch and its rollout.
  *
  * The effective state is the env capability AND the flag. Flags are evaluated
- * locally from definitions polled every 30 s with the feature-flags secure API
+ * locally from definitions polled every 15 s with the feature-flags secure API
  * key, so a request never waits on PostHog. Until definitions first load, and
  * for a flag missing from the project, a switch takes its `whenUnknown` value
  * (fail closed). During a PostHog outage the last loaded definitions stay in
@@ -47,6 +47,12 @@ export interface ServerFeatureFlags {
    * locally. Never makes a network call.
    */
   evaluate(flag: PlatformFeatureFlag, subject: FlagSubject): Promise<boolean | undefined>;
+  /**
+   * Calls `listener` after newly loaded definitions change `flag` (including the
+   * first load), once the new definitions are in effect. An unchanged poll does
+   * not call it. Returns an unsubscribe.
+   */
+  onFlagChange(flag: PlatformFeatureFlag, listener: () => void): () => void;
   /** Stops the definitions poller. */
   shutdown(): Promise<void>;
 }
@@ -70,7 +76,10 @@ export async function resolveRuntimeSwitch(
   return value ?? runtimeSwitch.whenUnknown;
 }
 
-export const FLAG_DEFINITIONS_POLL_INTERVAL_MS = 30_000;
+/** 15 s keeps poll-to-effect under a minute for workers that react to changes (see onFlagChange). */
+export const FLAG_DEFINITIONS_POLL_INTERVAL_MS = 15_000;
+/** Bound on change listeners per client; a listener beyond it is refused and logged. */
+export const MAX_FLAG_CHANGE_LISTENERS = 32;
 export const FLAG_DEFINITIONS_TIMEOUT_MS = 10_000;
 const DEFAULT_FLAGS_HOST = 'https://eu.i.posthog.com';
 const LOCAL_EVALUATION_PATH = '/api/feature_flag/local_evaluation';
@@ -89,6 +98,7 @@ export interface FlagClient {
     onlyEvaluateLocally: true; sendFeatureFlagEvents: false; disableGeoip: true;
   }): Promise<boolean | undefined>;
   on(event: 'error', listener: (error: unknown) => void): unknown;
+  on(event: 'localEvaluationFlagsLoaded', listener: () => void): unknown;
   shutdown(timeoutMs?: number): Promise<void>;
 }
 
@@ -152,7 +162,11 @@ function errorName(error: unknown): string {
  * remote evaluation) is refused, so no distinct id or property leaves the
  * platform.
  */
-function definitionsOnlyFetch(host: string, networkFetch: typeof fetch): PostHogFetch {
+function definitionsOnlyFetch(
+  host: string,
+  networkFetch: typeof fetch,
+  observe: (response: Response) => Promise<void>,
+): PostHogFetch {
   const allowed = `${host}${LOCAL_EVALUATION_PATH}`;
   return async (url, options) => {
     const target = new URL(url);
@@ -164,22 +178,94 @@ function definitionsOnlyFetch(host: string, networkFetch: typeof fetch): PostHog
       redirect: 'error',
       signal: options.signal ? AbortSignal.any([options.signal, timeout]) : timeout,
     });
+    if (response.status === 200) await observe(response.clone());
     return response;
   };
 }
 
+const noChanges = () => () => undefined;
+
 /** A configured key whose companion settings are invalid: every flag reads unknown (fail closed). */
 function closedFlags(): ServerFeatureFlags {
-  return { configured: true, evaluate: async () => undefined, shutdown: async () => undefined };
+  return { configured: true, evaluate: async () => undefined, onFlagChange: noChanges, shutdown: async () => undefined };
 }
 
-export function createServerFeatureFlagsFromClient(client: FlagClient, log: Log = defaultLog): ServerFeatureFlags {
+const KNOWN_FLAGS: readonly PlatformFeatureFlag[] = Object.values(PLATFORM_FEATURE_FLAGS);
+
+/**
+ * Tracks each platform flag's definition across polls. A downloaded body is
+ * compared when it arrives; listeners run on posthog-node's load event, after
+ * the new definitions are applied. Bounded: one fingerprint per platform flag.
+ */
+export interface FlagChangeTracker {
+  observe(response: Response): Promise<void>;
+  applied(): void;
+  subscribe(flag: PlatformFeatureFlag, listener: () => void): () => void;
+}
+
+export function createFlagChangeTracker(log: Log = defaultLog): FlagChangeTracker {
+  const fingerprints = new Map<PlatformFeatureFlag, string>();
+  const listeners = new Set<{ flag: PlatformFeatureFlag; listener: () => void }>();
+  let pending = new Set<PlatformFeatureFlag>();
+  return {
+    async observe(response) {
+      let body: unknown;
+      try {
+        body = await response.json();
+      } catch (error: unknown) {
+        // posthog-node reads the same body and reports it; nothing changed here.
+        log('flag_definitions_unreadable', { code: errorName(error) });
+        return;
+      }
+      const flags = (body as { flags?: unknown } | null)?.flags;
+      if (!Array.isArray(flags)) return;
+      for (const key of KNOWN_FLAGS) {
+        const definition = flags.find((entry) => (entry as { key?: unknown } | null)?.key === key) ?? null;
+        const fingerprint = JSON.stringify(definition);
+        if (fingerprints.get(key) !== fingerprint) {
+          fingerprints.set(key, fingerprint);
+          pending.add(key);
+        }
+      }
+    },
+    applied() {
+      const changed = pending;
+      pending = new Set();
+      if (changed.size === 0) return;
+      for (const entry of [...listeners]) {
+        if (!changed.has(entry.flag)) continue;
+        try {
+          entry.listener();
+        } catch (error: unknown) {
+          log('flag_change_listener_failed', { flag: entry.flag, code: errorName(error) });
+        }
+      }
+    },
+    subscribe(flag, listener) {
+      if (listeners.size >= MAX_FLAG_CHANGE_LISTENERS) {
+        log('flag_change_listener_refused', { flag });
+        return () => undefined;
+      }
+      const entry = { flag, listener };
+      listeners.add(entry);
+      return () => { listeners.delete(entry); };
+    },
+  };
+}
+
+export function createServerFeatureFlagsFromClient(
+  client: FlagClient,
+  log: Log = defaultLog,
+  changes: FlagChangeTracker = createFlagChangeTracker(log),
+): ServerFeatureFlags {
   client.on('error', (error: unknown) => {
     // posthog-node's messages are generic, but only the error class is logged.
     log('flag_definitions_error', { code: errorName(error) });
   });
+  client.on('localEvaluationFlagsLoaded', () => changes.applied());
   return {
     configured: true,
+    onFlagChange: (flag, listener) => changes.subscribe(flag, listener),
     async evaluate(flag, subject) {
       if (!SAFE_DISTINCT_ID.test(subject.distinctId)) {
         log('flag_subject_refused', { flag });
@@ -215,21 +301,22 @@ export function createServerFeatureFlags(options: ServerFeatureFlagsOptions): Se
   const log = options.log ?? defaultLog;
   const loaded = loadServerFlagSettings(options.env);
   if (loaded.kind === 'unconfigured') {
-    return { configured: false, evaluate: async () => undefined, shutdown: async () => undefined };
+    return { configured: false, evaluate: async () => undefined, onFlagChange: noChanges, shutdown: async () => undefined };
   }
   if (loaded.kind === 'invalid') {
     log('flag_client_unconfigured', { invalid: loaded.invalid.join(',') });
     return closedFlags();
   }
   const { settings } = loaded;
+  const changes = createFlagChangeTracker(log);
   const client = new PostHog(settings.projectToken, {
     host: settings.host,
     personalApiKey: settings.secureApiKey,
     featureFlagsPollingInterval: options.pollIntervalMs ?? FLAG_DEFINITIONS_POLL_INTERVAL_MS,
     requestTimeout: FLAG_DEFINITIONS_TIMEOUT_MS,
-    fetch: definitionsOnlyFetch(settings.host, options.fetch ?? fetch),
+    fetch: definitionsOnlyFetch(settings.host, options.fetch ?? fetch, (response) => changes.observe(response)),
     disableGeoip: true,
     sendFeatureFlagEvent: false,
   });
-  return createServerFeatureFlagsFromClient(client as unknown as FlagClient, log);
+  return createServerFeatureFlagsFromClient(client as unknown as FlagClient, log, changes);
 }

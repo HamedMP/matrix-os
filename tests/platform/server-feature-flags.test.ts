@@ -147,6 +147,22 @@ describe('server feature flags', () => {
     await loaded(flags, false);
   });
 
+  it('notifies a flag change once the new definitions are in effect, and not for unchanged polls', async () => {
+    const fake = fakePostHog(() => definitions([flag('free-tier-sleep', { active: false })]));
+    const { flags } = flagsFor(fake);
+    const seen: Array<boolean | undefined> = [];
+    flags.onFlagChange(PLATFORM_FEATURE_FLAGS.freeTierSleep, () => {
+      void flags.evaluate(PLATFORM_FEATURE_FLAGS.freeTierSleep, { distinctId: OWNER }).then((value) => seen.push(value));
+    });
+    await vi.waitFor(() => expect(seen).toEqual([false]), { timeout: 2_000, interval: 20 });
+    const polls = fake.calls.length;
+    await vi.waitFor(() => expect(fake.calls.length).toBeGreaterThan(polls + 2), { timeout: 2_000, interval: 20 });
+    expect(seen).toEqual([false]);
+
+    fake.respond(() => definitions([flag('free-tier-sleep')]));
+    await vi.waitFor(() => expect(seen).toEqual([false, true]), { timeout: 2_000, interval: 20 });
+  });
+
   it('only downloads definitions, with a timeout and no redirects, and sends no distinct id or email', async () => {
     const fake = fakePostHog(() => definitions([flag('free-tier-enabled')]));
     const { flags, log } = flagsFor(fake);

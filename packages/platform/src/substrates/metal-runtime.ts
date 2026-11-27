@@ -9,7 +9,7 @@ import { createMetalVmDeletionDrainer } from './metal-vm-deletions.js';
 import { createLifecycleReader } from './metal-lifecycle-reader.js';
 import { createMetalSleeper, startMetalSleeperWorker, type MetalSleeperWorker } from './metal-sleeper.js';
 import { METAL_MAINTENANCE_LOCK_KEY, METAL_SCHEDULED_WAKE_LOCK_KEY, METAL_SLEEPER_LOCK_KEY, runAsSingleton } from './metal-singleton.js';
-import type { ServerFeatureFlags } from '../feature-flags/server-flags.js';
+import { PLATFORM_FEATURE_FLAGS, type ServerFeatureFlags } from '../feature-flags/server-flags.js';
 import { createFreeTierSleepSwitch } from '../free-tier/switches.js';
 import type { SubstrateRegistry } from './registry.js';
 import type { OnDemandRuntimeSubstrate } from './types.js';
@@ -214,9 +214,27 @@ function startConfiguredSleeper(
     readLifecycle: createLifecycleReader({ substrates, platformSecret }),
     sleepAllowed: createFreeTierSleepSwitch(flags),
   });
-  return startMetalSleeperWorker({
+  const worker = startMetalSleeperWorker({
     sleeper: { tick: sleeper.sleepTick },
     singleton: (run) => runAsSingleton(db, METAL_SLEEPER_LOCK_KEY, run),
     scheduledWake: { tick: sleeper.wakeTick, singleton: (run) => runAsSingleton(db, METAL_SCHEDULED_WAKE_LOCK_KEY, run) },
   });
+  return connectSleepFlag(flags, worker);
+}
+
+/**
+ * Runs a sleep pass as soon as new definitions change `free-tier-sleep`, so a
+ * flag turned on takes effect within one poll plus the pass in flight instead
+ * of waiting for the next 60 s interval. Unchanged polls trigger nothing.
+ */
+export function connectSleepFlag(flags: ServerFeatureFlags | undefined, worker: MetalSleeperWorker): MetalSleeperWorker {
+  const unsubscribe = flags?.onFlagChange(PLATFORM_FEATURE_FLAGS.freeTierSleep, () => worker.requestSleepPass());
+  return {
+    stop() {
+      unsubscribe?.();
+      worker.stop();
+    },
+    drain: () => worker.drain(),
+    requestSleepPass: () => worker.requestSleepPass(),
+  };
 }

@@ -16,7 +16,7 @@ limits, email addresses or other personal data in a flag.
 
 `packages/platform/src/feature-flags/server-flags.ts` evaluates flags locally:
 
-- Definitions are polled every 30 s from
+- Definitions are polled every 15 s from
   `/api/feature_flag/local_evaluation` with the PostHog feature-flags secure API
   key. A request never waits on PostHog.
 - Each poll has a 10 s timeout and refuses redirects. The client may make no
@@ -68,6 +68,10 @@ capability is on, then ask the switch.
 | `free-tier-enabled` | New free admission and the Free offer on the signup journey. Admitted owners keep their runtime. | flag | no new admission | open (`MATRIX_FREE_TIER_ENABLED` already enabled the tier) |
 | `free-tier-invite-required` | Whether admission needs an invite | flag | invites required | `MATRIX_FREE_TIER_INVITE_REQUIRED` |
 | `free-tier-sleep` | The idle sleeper's suspends. Scheduled wakes and resumes keep running. | flag | no suspends | sleeps (`MATRIX_FREE_TIER_SLEEP_ENABLED` already installed the sleeper) |
+
+A change to `free-tier-sleep` triggers a sleeper pass as soon as the poll
+applies it (`onFlagChange`), so it takes effect within one 15 s poll plus the
+pass already in flight (at most 30 s), rather than waiting for the 60 s interval.
 
 `MATRIX_FREE_TIER_ENABLED` and `MATRIX_FREE_TIER_SLEEP_ENABLED` stay as the
 capability layer: with either off, the flag cannot turn that part on.

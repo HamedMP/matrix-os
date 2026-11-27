@@ -25,6 +25,7 @@ function fakeFlags(values: FlagValues | 'cold'): ServerFeatureFlags & { evaluate
   return {
     configured: true,
     evaluate: vi.fn(async (flag: string) => (values === 'cold' ? undefined : values[flag])),
+    onFlagChange: () => () => undefined,
     shutdown: async () => undefined,
   };
 }
@@ -106,7 +107,7 @@ describe('free tier admission switches', () => {
     expect(await admitted()).toBe(true);
   });
 
-  it.each([undefined, { configured: false, evaluate: async () => undefined, shutdown: async () => undefined }])(
+  it.each([undefined, { configured: false, evaluate: async () => undefined, onFlagChange: () => () => undefined, shutdown: async () => undefined }])(
     'without a flags key, admission follows the env config (%#)', async (flags) => {
       const envOpen = provisioner(flags as ServerFeatureFlags | undefined, { ...CONFIG, inviteRequired: false });
       expect(await envOpen.isEligible(OWNER)).toBe(true);

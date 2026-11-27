@@ -285,7 +285,7 @@ describe('metal idle sleeper', () => {
     const idle = await seedMachine();
     const asleep = await seedMachine({ overrides: { status: 'suspended', nextWakeAt: ago(MINUTE) } });
     const evaluate = vi.fn(async () => false);
-    const flags = { configured: true, evaluate, shutdown: async () => undefined };
+    const flags = { configured: true, evaluate, onFlagChange: () => () => undefined, shutdown: async () => undefined };
     const { sleeper: s, stop, ensureRunning, readLifecycle } = sleeper({ sleepAllowed: createFreeTierSleepSwitch(flags) });
 
     await s.tick(NOW);
@@ -308,7 +308,7 @@ describe('metal idle sleeper', () => {
     expect(await machine(idle)).toMatchObject({ status: 'suspended' });
   });
 
-  it('free-tier-sleep turned on suspends an idle VM on the next tick, not after the recheck window', async () => {
+  it('free-tier-sleep turned on suspends an idle VM on the next pass, even one triggered seconds later', async () => {
     const idle = await seedMachine();
     let allowed = false;
     const { sleeper: s, stop } = sleeper({ sleepAllowed: async () => allowed });
@@ -316,8 +316,9 @@ describe('metal idle sleeper', () => {
     await s.tick(NOW);
     expect(stop).not.toHaveBeenCalled();
 
+    // The flag-change pass (connectSleepFlag) can run well before the next 60 s interval.
     allowed = true;
-    await s.tick(new Date(NOW.getTime() + METAL_SLEEP_INTERVAL_MS));
+    await s.tick(new Date(NOW.getTime() + 1_000));
     expect(stop).toHaveBeenCalledTimes(1);
     expect(await machine(idle)).toMatchObject({ status: 'suspended' });
   });
