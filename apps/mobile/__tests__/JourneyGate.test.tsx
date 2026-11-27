@@ -1,6 +1,7 @@
 import React from "react";
 import { fireEvent, render, within } from "@testing-library/react-native";
 import { Platform, ScrollView, StyleSheet } from "react-native";
+import { FREE_PLAN_COPY } from "@matrix-os/contracts/free-plan-copy";
 import { JourneyGate } from "../components/JourneyGate";
 import type { JourneyFetchResult, MobileJourneyState } from "../lib/journey";
 
@@ -80,6 +81,17 @@ describe("JourneyGate", () => {
     expect(getByText(
       "Claude Code and Codex come preinstalled on your free computer. You can install OpenCode or Pi later from the Terminal’s + menu.",
     )).toBeTruthy();
+  });
+
+  it("tells a free-plan owner their computer sleeps when idle and wakes on open (ENG-520)", () => {
+    const { getByText } = render(
+      <JourneyGate
+        result={ok({ phase: "install_choices_required", detail: "Set up your free Matrix computer.", nextAction: { kind: "start_provision" } })}
+        onRetry={noop}
+        onOpenUrl={noop}
+      />,
+    );
+    expect(getByText(FREE_PLAN_COPY.sleep)).toBeTruthy();
   });
 
   it("shows why a free start failed and lets the owner try again", () => {

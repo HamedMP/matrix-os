@@ -8,6 +8,7 @@ export interface CliJourneyState {
     | "payment_settling"
     | "provisioning"
     | "provisioning_failed"
+    | "install_choices_required"
     | "first_run"
     | "ready";
   detail: string;
@@ -118,6 +119,20 @@ export function journeyGuidance(journey: CliJourneyState | null): JourneyGuidanc
           `or finish first-run setup at ${journey.nextAction.url ?? "https://app.matrix-os.com/"}.`,
         ],
         suggestedCommand: "login",
+        exitCode: 1,
+      };
+    case "install_choices_required":
+      if (journey.nextAction.kind === "start_provision") {
+        // The Free plan (spec 2691) needs no plan or install choices: setup starts it directly.
+        return {
+          lines: ["You're signed in. Run `mos setup` to start your free Matrix computer."],
+          suggestedCommand: "setup",
+          exitCode: 1,
+        };
+      }
+      return {
+        lines: ["You're signed in, but there's no Matrix computer yet. Run `mos setup` to create one."],
+        suggestedCommand: "setup",
         exitCode: 1,
       };
     case "ready":

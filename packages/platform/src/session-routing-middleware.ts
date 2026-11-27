@@ -154,6 +154,10 @@ interface CreateSessionRoutingMiddlewareOpts {
   platformSecret: string;
   platformJwtSecret: string;
   legacyContainerRoutingEnabled: boolean;
+  /** A free provisioner exists (spec 2691): the pre-VPS page offers free setup to owners the journey offers it to. */
+  freePlanAvailable?: boolean;
+  /** Free signup needs no invite, so the public sign-up hero may describe the Free plan. */
+  freeSignupOffer?: boolean;
   proxyTimeoutMs: number;
   authShellProxyTimeoutMs: number;
   codeServerPort: number;
@@ -254,6 +258,8 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
     platformSecret,
     platformJwtSecret,
     legacyContainerRoutingEnabled,
+    freePlanAvailable = false,
+    freeSignupOffer = false,
     proxyTimeoutMs,
     authShellProxyTimeoutMs,
     codeServerPort,
@@ -364,7 +370,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       applyAuthPageHeaders(c, scriptNonce, applyNoStoreHeaders);
       const authMode = c.req.path.startsWith('/sign-up') ? 'sign-up' : 'sign-in';
       return c.html(
-        getAuthPage(publishableKey, authMode, scriptNonce, buildPostAuthRedirectPath(c.req.url), appOrigin(appEnv)),
+        getAuthPage(publishableKey, authMode, scriptNonce, buildPostAuthRedirectPath(c.req.url), appOrigin(appEnv), { freePlanAvailable, freeSignupOffer }),
         200,
       );
     }
@@ -718,7 +724,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       }
       const scriptNonce = randomBytes(16).toString('base64');
       applyAuthPageHeaders(c, scriptNonce, applyNoStoreHeaders);
-      return c.html(getAuthPage(publishableKey, authMode, scriptNonce, routineChatTarget ?? buildPostAuthRedirectPath(c.req.url), appOrigin(appEnv)));
+      return c.html(getAuthPage(publishableKey, authMode, scriptNonce, routineChatTarget ?? buildPostAuthRedirectPath(c.req.url), appOrigin(appEnv), { freePlanAvailable, freeSignupOffer }));
     }
 
     if (isAppDomain) {

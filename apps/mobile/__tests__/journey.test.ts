@@ -1,3 +1,4 @@
+import { FREE_PLAN_COPY } from "@matrix-os/contracts/free-plan-copy";
 import { PROVISION_START_MESSAGES, fetchMobileJourney, isConnectablePhase, requestMobileProvisionStart } from "../lib/journey";
 
 describe("fetchMobileJourney", () => {
@@ -70,6 +71,12 @@ describe("requestMobileProvisionStart", () => {
     const message = await requestMobileProvisionStart("https://app.matrix-os.com", "tok");
     expect(message).toBe(PROVISION_START_MESSAGES.unavailable);
     expect(message).not.toMatch(/host-a|10\.0|capacity is full/);
+  });
+
+  it("says the Free plan is at capacity when the platform reports it full (ENG-520)", async () => {
+    answer(503, { error: "busy" });
+    expect(await requestMobileProvisionStart("https://app.matrix-os.com", "tok")).toBe(PROVISION_START_MESSAGES.capacityFull);
+    expect(PROVISION_START_MESSAGES.capacityFull).toBe(FREE_PLAN_COPY.capacityFull);
   });
 
   it.each([

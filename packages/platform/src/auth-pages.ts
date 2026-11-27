@@ -1,4 +1,5 @@
 import { appSessionSignOutScript } from './auth-session-sign-out-script.js';
+import { freePlanAuthScript, freePlanSignUpStory, type AuthPageFreePlanOptions } from './auth-page-free-plan.js';
 import type { UserMachineRecord } from './db.js';
 import { normalizeDeviceReturnPath } from './request-routing.js';
 import { getAuthPageIndexingTags } from './auth-page-indexing.js';
@@ -32,14 +33,18 @@ export function getAuthPage(
   scriptNonce: string,
   redirectTarget: string,
   appShellOrigin: string,
+  freePlanOptions: AuthPageFreePlanOptions = {},
 ) {
+  const freePlanStory = freePlanSignUpStory(mode, freePlanOptions);
   const escapedPublishableKey = escapeHtmlAttr(publishableKey);
   const redirectTargetJson = escapeInlineScriptJson(redirectTarget);
   const deviceReturnTargetJson = escapeInlineScriptJson(deviceReturnTargetFromRedirectPath(redirectTarget));
   const signOutTargetJson = escapeInlineScriptJson(mode === 'sign-up' ? '/sign-up' : '/sign-in');
   const billingSetupTargetJson = escapeInlineScriptJson(buildBillingSetupTarget(appShellOrigin, redirectTarget));
   const modeLabel = mode === 'sign-up' ? 'Create your free Matrix account' : 'Welcome back to Matrix';
-  const modeDetail = mode === 'sign-up'
+  const modeDetail = freePlanStory
+    ? freePlanStory.lead
+    : mode === 'sign-up'
     ? 'Start with a free account. Choose your cloud computer to see available trial offers and billing details.'
     : 'Sign in to continue to your Matrix computer, provisioning status, or trial checkout.';
   return `<!DOCTYPE html>
@@ -535,9 +540,9 @@ export function getAuthPage(
         <h1>${modeLabel}</h1>
         <p class="lead">${modeDetail}</p>
         <div class="proof">
-          <div class="proof-row"><span class="dot"></span><span>Signup stays free until you deliberately start hosted provisioning.</span></div>
+          ${freePlanStory ? freePlanStory.proofRows.map((row) => `<div class="proof-row"><span class="dot"></span><span>${row}</span></div>`).join('\n          ') : `<div class="proof-row"><span class="dot"></span><span>Signup stays free until you deliberately start hosted provisioning.</span></div>
           <div class="proof-row"><span class="dot"></span><span>The trial provisions an owner-controlled Matrix computer, not just a dashboard.</span></div>
-          <div class="proof-row"><span class="dot"></span><span>Clerk handles account security and the payment step for the hosted runtime.</span></div>
+          <div class="proof-row"><span class="dot"></span><span>Clerk handles account security and the payment step for the hosted runtime.</span></div>`}
         </div>
       </div>
     </section>
@@ -582,6 +587,7 @@ export function getAuthPage(
     var checkoutAttemptStorageKey = 'matrix.billing.checkoutAttemptAt';
     var checkoutAttemptMaxAgeMs = 30 * 60 * 1000;
     var defaultDeveloperTools = ['codex', 'claude-code', 'opencode', 'pi'];
+    ${freePlanAuthScript(freePlanOptions)}
     var developerToolLogos = {
       codex: '<svg role="img" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><title>OpenAI</title><path d="M22.2819 9.8211a5.9847 5.9847 0 0 0-.5157-4.9108 6.0462 6.0462 0 0 0-6.5098-2.9A6.0651 6.0651 0 0 0 4.9807 4.1818a5.9847 5.9847 0 0 0-3.9977 2.9 6.0462 6.0462 0 0 0 .7427 7.0966 5.98 5.98 0 0 0 .511 4.9107 6.051 6.051 0 0 0 6.5146 2.9001A5.9847 5.9847 0 0 0 13.2599 24a6.0557 6.0557 0 0 0 5.7718-4.2058 5.9894 5.9894 0 0 0 3.9977-2.9001 6.0557 6.0557 0 0 0-.7475-7.0729zm-9.022 12.6081a4.4755 4.4755 0 0 1-2.8764-1.0408l.1419-.0804 4.7783-2.7582a.7948.7948 0 0 0 .3927-.6813v-6.7369l2.02 1.1686a.071.071 0 0 1 .038.052v5.5826a4.504 4.504 0 0 1-4.4945 4.4944zm-9.6607-4.1254a4.4708 4.4708 0 0 1-.5346-3.0137l.142.0852 4.783 2.7582a.7712.7712 0 0 0 .7806 0l5.8428-3.3685v2.3324a.0804.0804 0 0 1-.0332.0615L9.74 19.9502a4.4992 4.4992 0 0 1-6.1408-1.6464zM2.3408 7.8956a4.485 4.485 0 0 1 2.3655-1.9728V11.6a.7664.7664 0 0 0 .3879.6765l5.8144 3.3543-2.0201 1.1685a.0757.0757 0 0 1-.071 0l-4.8303-2.7865A4.504 4.504 0 0 1 2.3408 7.872zm16.5963 3.8558L13.1038 8.364 15.1192 7.2a.0757.0757 0 0 1 .071 0l4.8303 2.7913a4.4944 4.4944 0 0 1-.6765 8.1042v-5.6772a.79.79 0 0 0-.407-.667zm2.0107-3.0231l-.142-.0852-4.7735-2.7818a.7759.7759 0 0 0-.7854 0L9.409 9.2297V6.8974a.0662.0662 0 0 1 .0284-.0615l4.8303-2.7866a4.4992 4.4992 0 0 1 6.6802 4.66zM8.3065 12.863l-2.02-1.1638a.0804.0804 0 0 1-.038-.0567V6.0742a4.4992 4.4992 0 0 1 7.3757-3.4537l-.142.0805L8.704 5.459a.7948.7948 0 0 0-.3927.6813zm1.0976-2.3654l2.602-1.4998 2.6069 1.4998v2.9994l-2.5974 1.4997-2.6067-1.4997Z"/></svg>',
       'claude-code': '<svg role="img" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><title>Anthropic</title><path d="M17.3041 3.541h-3.6718l6.696 16.918H24Zm-10.6082 0L0 20.459h3.7442l1.3693-3.5527h7.0052l1.3693 3.5528h3.7442L10.5363 3.5409Zm-.3712 10.2232 2.2914-5.9456 2.2914 5.9456Z"/></svg>',
@@ -622,6 +628,7 @@ export function getAuthPage(
     var activeProvisionButton = null;
     var activeProvisionInputs = [];
     var activeProvisionError = null;
+    var activeProvisionFree = false;
     var appearance = {
       variables: {
         colorPrimary: '#D06F25',
@@ -729,13 +736,32 @@ export function getAuthPage(
       );
     }
     function showNoRuntimeState() {
-      showDefaultInstallsState();
+      if (!freePlanAvailable) {
+        showDefaultInstallsState(false);
+        return;
+      }
+      showLoadingState('Loading...');
+      resolveFreePlanSetup().then(function(freePlan) { showDefaultInstallsState(freePlan); });
     }
-    function showDefaultInstallsState() {
+    // With Stripe billing on, a Free-eligible owner with no computer yet gets 402
+    // from app-session too: the journey decides between free setup and billing.
+    function showFreeSetupOrBilling() {
+      if (!freePlanAvailable) {
+        openBillingSettingsFromClerkSession();
+        return;
+      }
+      showLoadingState('Loading...');
+      resolveFreePlanSetup().then(function(freePlan) {
+        if (freePlan) showDefaultInstallsState(true);
+        else openBillingSettingsFromClerkSession();
+      });
+    }
+    function showDefaultInstallsState(freePlan) {
       var el = document.getElementById('auth');
       setDefaultInstallsCard(true);
       el.innerHTML = '';
-      var selectedTools = defaultDeveloperTools.slice();
+      var selectedTools = freePlan ? freePlanToolIds.slice() : defaultDeveloperTools.slice();
+      var unavailableUntilReady = freePlan ? 'Unavailable until your computer is ready' : 'Unavailable until your VPS is ready';
 
       var state = document.createElement('div');
       state.className = 'settings-window';
@@ -773,7 +799,7 @@ export function getAuthPage(
         unavailableItem.textContent = labelText;
         var unavailableStatus = document.createElement('span');
         unavailableStatus.className = 'settings-nav-status';
-        unavailableStatus.textContent = 'Unavailable until your VPS is ready';
+        unavailableStatus.textContent = unavailableUntilReady;
         unavailableItem.appendChild(unavailableStatus);
         nav.appendChild(unavailableItem);
       });
@@ -785,7 +811,7 @@ export function getAuthPage(
       billingItem.textContent = 'Billing';
       var billingStatus = document.createElement('span');
       billingStatus.className = 'settings-nav-status completed';
-      billingStatus.textContent = 'Completed';
+      billingStatus.textContent = freePlan ? 'Free plan' : 'Completed';
       billingItem.appendChild(billingStatus);
       nav.appendChild(billingItem);
 
@@ -804,7 +830,7 @@ export function getAuthPage(
         unavailableItem.textContent = labelText;
         var unavailableStatus = document.createElement('span');
         unavailableStatus.className = 'settings-nav-status';
-        unavailableStatus.textContent = 'Unavailable until your VPS is ready';
+        unavailableStatus.textContent = unavailableUntilReady;
         unavailableItem.appendChild(unavailableStatus);
         nav.appendChild(unavailableItem);
       });
@@ -865,7 +891,7 @@ export function getAuthPage(
 
       var detailText = document.createElement('p');
       detailText.className = 'install-detail';
-      detailText.textContent = 'Choose command-line agents to preinstall on this VPS.';
+      detailText.textContent = freePlan ? 'Matrix preinstalls coding agents on your free computer.' : 'Choose command-line agents to preinstall on this VPS.';
       hero.appendChild(detailText);
       content.appendChild(hero);
 
@@ -877,13 +903,13 @@ export function getAuthPage(
       toolsHeading.textContent = 'Developer tools';
       toolsHeader.appendChild(toolsHeading);
       var toolsDetail = document.createElement('p');
-      toolsDetail.textContent = 'Choose command-line agents to preinstall on this VPS.';
+      toolsDetail.textContent = freePlan ? freePlanCopy.preinstalls : 'Choose command-line agents to preinstall on this VPS.';
       toolsHeader.appendChild(toolsDetail);
       toolsPanel.appendChild(toolsHeader);
 
       var toolList = document.createElement('div');
       toolList.className = 'developer-tool-grid';
-      defaultDeveloperTools.forEach(function(tool) {
+      selectedTools.forEach(function(tool) {
         var label = document.createElement('label');
         label.className = 'developer-tool-option selected';
         var copy = document.createElement('span');
@@ -897,6 +923,10 @@ export function getAuthPage(
         text.textContent = tool === 'claude-code' ? 'Claude Code' : tool === 'opencode' ? 'OpenCode' : tool === 'codex' ? 'Codex' : 'Pi';
         copy.appendChild(logo);
         copy.appendChild(text);
+        label.appendChild(copy);
+        toolList.appendChild(label);
+        // Free computers preinstall a fixed pair: shown, not chosen.
+        if (freePlan) return;
         var input = document.createElement('input');
         input.type = 'checkbox';
         input.checked = true;
@@ -910,9 +940,7 @@ export function getAuthPage(
             label.classList.remove('selected');
           }
         });
-        label.appendChild(copy);
         label.appendChild(input);
-        toolList.appendChild(label);
       });
       toolsPanel.appendChild(toolList);
       content.appendChild(toolsPanel);
@@ -925,14 +953,14 @@ export function getAuthPage(
       var footer = document.createElement('div');
       footer.className = 'default-installs-footer';
       var footerText = document.createElement('p');
-      footerText.textContent = 'CLI login happens after the VPS is ready. Tool authentication is completed inside each CLI.';
+      footerText.textContent = freePlan ? freePlanCopy.sleep : 'CLI login happens after the VPS is ready. Tool authentication is completed inside each CLI.';
       footer.appendChild(footerText);
       var actions = document.createElement('div');
       actions.className = 'default-installs-actions';
       var buildButton = document.createElement('button');
       buildButton.type = 'button';
       buildButton.className = 'primary';
-      buildButton.textContent = 'Build VPS';
+      buildButton.textContent = freePlan ? freePlanCopy.setupLabel : 'Build VPS';
       buildButton.addEventListener('click', function() {
         startProvisioningFromClerkSession(selectedTools.slice());
       });
@@ -946,12 +974,15 @@ export function getAuthPage(
       activeProvisionButton = buildButton;
       activeProvisionInputs = Array.prototype.slice.call(toolList.querySelectorAll('input'));
       activeProvisionError = inlineError;
+      activeProvisionFree = freePlan;
     }
     function setProvisionControls(loading, errorMessage) {
       if (activeProvisionButton) {
         activeProvisionButton.disabled = loading;
         activeProvisionButton.dataset.loading = loading ? 'true' : 'false';
-        activeProvisionButton.textContent = loading ? 'Building VPS...' : 'Build VPS';
+        activeProvisionButton.textContent = activeProvisionFree
+          ? (loading ? freePlanCopy.settingUpLabel : freePlanCopy.setupLabel)
+          : (loading ? 'Building VPS...' : 'Build VPS');
       }
       activeProvisionInputs.forEach(function(input) { input.disabled = loading; });
       if (activeProvisionError) {
@@ -972,6 +1003,7 @@ export function getAuthPage(
         activeProvisionButton = null;
         activeProvisionInputs = [];
         activeProvisionError = null;
+        activeProvisionFree = false;
       }
     }
     function showBillingRequiredState() {
@@ -1035,10 +1067,18 @@ export function getAuthPage(
       clearBillingSetupRetryCount();
       window.location.replace(target);
     }
-    function showProvisionRetryError() {
+    function showProvisionRetryError(message) {
       provisionStarted = false;
       checkoutJustCompleted = false;
-      setProvisionControls(false, provisioningRetryError);
+      var fallback = activeProvisionFree ? freePlanCopy.setupRetry : provisioningRetryError;
+      setProvisionControls(false, typeof message === 'string' ? message : fallback);
+    }
+    function showProvisionStartFailure(res) {
+      if (!activeProvisionFree) {
+        showProvisionRetryError();
+        return null;
+      }
+      return freeProvisionFailureMessage(res).then(showProvisionRetryError);
     }
     function waitForAppSession(afterProvision) {
       showLoadingState('Finishing your Matrix computer...');
@@ -1088,8 +1128,9 @@ export function getAuthPage(
               Authorization: 'Bearer ' + token,
               'Content-Type': 'application/json'
             },
+            // The free plan's preinstalls are fixed server-side, so its request names no tools.
             body: JSON.stringify({
-              developerTools: developerTools,
+              developerTools: activeProvisionFree ? undefined : developerTools,
               runtime: requestedRuntime || undefined
             }),
             credentials: 'same-origin',
@@ -1125,8 +1166,7 @@ export function getAuthPage(
               showProvisionRetryError();
             });
           }
-          showProvisionRetryError();
-          return null;
+          return showProvisionStartFailure(res);
         })
         .catch(function(err) {
           console.error('[matrix] Runtime provisioning failed', err instanceof Error ? err.name : String(typeof err));
@@ -1179,7 +1219,7 @@ export function getAuthPage(
           }
           if (res.status === 402) {
             if (passiveCheckoutContinuation) waitForAppSession(provisioningAccepted);
-            else openBillingSettingsFromClerkSession();
+            else showFreeSetupOrBilling();
             return null;
           }
           if (passiveRuntimeContinuation && isRetryableAppSessionStatus(res.status)) waitForAppSession(provisioningAccepted);

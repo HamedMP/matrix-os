@@ -128,7 +128,10 @@ describe('waking a metal runtime from every entry point', () => {
     expect(page.status).toBe(503);
     expect(page.headers.get('content-type')).toContain('text/html');
     expect(page.headers.get('retry-after')).toBe('3');
-    expect(await page.text()).toContain('http-equiv="refresh"');
+    const pageHtml = await page.text();
+    expect(pageHtml).toContain('http-equiv="refresh"');
+    // A sleeping computer says it is waking, not booting (ENG-520).
+    expect(pageHtml).toContain('Waking your Matrix computer');
 
     // The 503 is answered before proxying, so a client may retry even a POST.
     expect(rig.ingress.requests).toEqual([]);

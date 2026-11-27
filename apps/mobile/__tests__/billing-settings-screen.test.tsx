@@ -9,6 +9,7 @@ import React from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react-native";
 import { Linking, Platform } from "react-native";
 
+import { FREE_PLAN_COPY } from "@matrix-os/contracts/free-plan-copy";
 import BillingSettingsScreen from "../app/settings-detail/billing";
 
 const PRICING_URL = "https://matrix-os.com/pricing";
@@ -63,6 +64,39 @@ describe("billing settings", () => {
       expect(mockOpenPortal).not.toHaveBeenCalled();
       expect(openUrl).not.toHaveBeenCalledWith(PRICING_URL);
       expect(openUrl).not.toHaveBeenCalledWith(PORTAL_URL);
+    });
+  });
+
+  describe("on the Free plan (ENG-520)", () => {
+    function freeBillingState() {
+      return {
+        billing: { entitlement: { source: "free", planSlug: "matrix_free", status: "active", portalAvailable: false, billingInterval: null } },
+        isPending: false,
+        isError: false,
+        openPortal: mockOpenPortal,
+        isOpeningPortal: false,
+      };
+    }
+
+    it.each(["ios", "android"] as const)("names the plan and the sleep rule, with no purchase copy, in the %s store build", (os) => {
+      jest.replaceProperty(Platform, "OS", os);
+      mockUseSettingsBilling.mockReturnValue(freeBillingState());
+      render(<BillingSettingsScreen />);
+
+      expect(screen.getByText("Free")).toBeTruthy();
+      expect(screen.getByText(FREE_PLAN_COPY.sleep)).toBeTruthy();
+      expect(screen.queryByText(/matrix_free/)).toBeNull();
+      expect(screen.queryByText(/browser|pricing|upgrade|buy|purchase|paid/i)).toBeNull();
+    });
+
+    it("shows no upgrade action even in the web build, where paid owners get Change plan", () => {
+      jest.replaceProperty(Platform, "OS", "web");
+      mockUseSettingsBilling.mockReturnValue(freeBillingState());
+      render(<BillingSettingsScreen />);
+
+      expect(screen.getByText(FREE_PLAN_COPY.morePlans)).toBeTruthy();
+      expect(screen.queryByLabelText("Change plan")).toBeNull();
+      expect(screen.queryByText(/upgrade|change plan|always.on|pricing|paid plan/i)).toBeNull();
     });
   });
 

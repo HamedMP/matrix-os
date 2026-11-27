@@ -3,6 +3,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { useAuth, RedirectToSignIn } from "@clerk/nextjs";
 import { palette as c, fonts, lightFg } from "@matrix-os/brand";
+import { FREE_PLAN_COPY } from "@matrix-os/contracts/free-plan-copy";
 import {
   AlertCircleIcon,
   CheckCircle2Icon,
@@ -16,6 +17,7 @@ import { MatrixBootMark } from "@/components/MatrixBootMark";
 import { MatrixLoadingScreen } from "@/components/MatrixLoadingScreen";
 import {
   PROVISIONING_RETRY_ERROR,
+  freeProvisionFailureMessage,
   isAcceptedProvisionResponse,
   isAmbiguousProvisioningTimeout,
 } from "@/lib/provisioning-handoff";
@@ -335,6 +337,7 @@ function BootSequenceInner({
 
   /** The free plan names no tools: the platform preinstalls its fixed set. */
   async function startProvision(developerTools?: DeveloperToolId[]): Promise<void> {
+    const freePlan = developerTools === undefined;
     setWorking(true);
     setInstallError(null);
     const finishProvision = (error: string | null = null): void => {
@@ -355,7 +358,7 @@ function BootSequenceInner({
         return;
       }
       if (!await isAcceptedProvisionResponse(res)) {
-        finishProvision(PROVISIONING_RETRY_ERROR);
+        finishProvision(freePlan ? await freeProvisionFailureMessage(res) : PROVISIONING_RETRY_ERROR);
         return;
       }
       // 202 means provisioning was accepted, not that a runtime is ready for
@@ -371,7 +374,7 @@ function BootSequenceInner({
         refreshJourney();
         return;
       }
-      finishProvision(PROVISIONING_RETRY_ERROR);
+      finishProvision(freePlan ? FREE_PLAN_COPY.setupRetry : PROVISIONING_RETRY_ERROR);
     }
   }
 

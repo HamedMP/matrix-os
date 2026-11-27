@@ -17,6 +17,8 @@ export type CustomerVpsFailureCode =
   | 'retry_throttled'
   /** Journey only: a failed computer that once ran; a rebuild would retire it. */
   | 'support_required'
+  /** Journey only: the free plan has no room for another computer. */
+  | 'free_capacity_full'
   | 'unknown';
 
 export class CustomerVpsError extends Error {

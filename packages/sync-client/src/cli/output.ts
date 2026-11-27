@@ -9,6 +9,8 @@ import {
   type RuntimeWakeSignal,
 } from "@matrix-os/contracts/runtime-lifecycle";
 
+import { FREE_PLAN_COPY } from "@matrix-os/contracts/free-plan-copy";
+
 export const CLI_OUTPUT_VERSION = 1;
 
 const GENERIC_MESSAGES: Record<string, string> = {
@@ -29,6 +31,7 @@ const GENERIC_MESSAGES: Record<string, string> = {
   not_authenticated: "Not signed in. Run `mos login` first.",
   retry_exhausted: "Setup has failed repeatedly. Contact support@matrix-os.com.",
   setup_failed: "Couldn't start setup. Please try again shortly.",
+  free_capacity_full: FREE_PLAN_COPY.capacityFull,
   setup_timeout: "Setup is taking longer than expected. Re-run `mos login` shortly to check.",
   payment_delayed: "Payment is taking longer than expected to confirm. Contact support@matrix-os.com if it persists.",
   terminal_agent_blocked: "The agent is waiting for a person. Read its screen first, or pass --force.",

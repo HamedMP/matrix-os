@@ -4,6 +4,7 @@ import { useCallback, useEffect, useId, useState } from "react";
 import Image from "next/image";
 import { CheckIcon, Loader2Icon, ServerIcon } from "@/lib/hugeicons";
 import { MATRIX_TELEMETRY_EVENTS } from "@matrix-os/observability/events";
+import { FREE_PLAN_COPY } from "@matrix-os/contracts/free-plan-copy";
 
 import {
   capturePostHogEvent,
@@ -45,7 +46,7 @@ const INSTALL_TARGET_COPY = {
   },
   computer: {
     footer: "You can install or sign into agents anytime from the terminal’s + menu after your computer is ready.",
-    buildLabel: "Set up",
+    buildLabel: FREE_PLAN_COPY.setupLabel,
   },
 } as const;
 
@@ -56,8 +57,7 @@ type InstallTarget = keyof typeof INSTALL_TARGET_COPY;
  * for them (spec 2691, ENG-520), so the free install step shows them read-only.
  */
 const FREE_PREINSTALLED_TOOL_IDS: readonly DeveloperToolId[] = ["claude-code", "codex"];
-const FREE_PREINSTALLS_NOTE =
-  "Claude Code and Codex come preinstalled on your free computer. You can install OpenCode or Pi later from the Terminal’s + menu.";
+const FREE_PREINSTALLS_NOTE = FREE_PLAN_COPY.preinstalls;
 
 function isTextEntryTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
@@ -379,6 +379,7 @@ function FreePreinstallsNote() {
         </ul>
       </div>
       <p className="px-1 text-xs text-forest/65">{FREE_PREINSTALLS_NOTE}</p>
+      <p className="mt-2 px-1 text-xs text-forest/65">{FREE_PLAN_COPY.sleep}</p>
     </section>
   );
 }

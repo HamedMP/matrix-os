@@ -1,3 +1,4 @@
+import { FREE_PLAN_COPY } from "@matrix-os/contracts/free-plan-copy";
 import { ActivityIndicator, Alert, Linking } from "react-native";
 import { useUnistyles } from "react-native-unistyles";
 import ArrowUpRight01Icon from "@hugeicons/core-free-icons/ArrowUpRight01Icon";
@@ -9,6 +10,7 @@ import { allowsExternalPurchaseLinks } from "@/lib/store-policy";
 
 const PRICING_URL = "https://matrix-os.com/pricing";
 const PLAN_NAMES: Record<string, string> = {
+  matrix_free: FREE_PLAN_COPY.planName,
   matrix_starter: "Starter",
   matrix_builder: "Builder",
   matrix_max: "Max",
@@ -22,6 +24,7 @@ export default function BillingSettingsScreen() {
   const plan = entitlement
     ? PLAN_NAMES[entitlement.planSlug] ?? entitlement.planSlug
     : isPending ? "Loading…" : isError ? "Unavailable" : "No active plan";
+  const freePlan = entitlement?.source === "free";
   const planDetail = entitlement?.billingInterval
     ? `${plan} · ${entitlement.billingInterval}`
     : plan;
@@ -30,8 +33,11 @@ export default function BillingSettingsScreen() {
     <SettingsPage>
       <SettingsCardStack>
         <SettingsRow card title="Current plan" detail={planDetail} />
+        {/* Free plan (spec 2691): the sleep rule and a neutral note; self-serve upgrade does not exist yet, so no plan action. */}
+        {freePlan ? <SettingsRow card title="Sleep and wake" detail={FREE_PLAN_COPY.sleep} /> : null}
+        {freePlan ? <SettingsRow card title="More plans" detail={FREE_PLAN_COPY.morePlans} /> : null}
         {/* Store builds stay read-only: no pricing page or billing portal link. */}
-        {allowsExternalPurchaseLinks() ? (
+        {allowsExternalPurchaseLinks() && !freePlan ? (
           <SettingsRow
             card
             title="Change plan"
@@ -48,7 +54,7 @@ export default function BillingSettingsScreen() {
   );
 
   async function openChangePlan() {
-    if (isOpeningPortal || !allowsExternalPurchaseLinks()) return;
+    if (isOpeningPortal || freePlan || !allowsExternalPurchaseLinks()) return;
     if (entitlement?.portalAvailable !== true) {
       await Linking.openURL(PRICING_URL);
       return;

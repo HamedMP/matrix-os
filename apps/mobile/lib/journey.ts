@@ -1,5 +1,6 @@
 // Mobile consumer of the platform journey contract (spec 092). The app renders
 // the user's onboarding phase instead of assuming a running machine exists.
+import { FREE_CAPACITY_FULL_CODE, FREE_PLAN_COPY } from "@matrix-os/contracts/free-plan-copy";
 
 export type JourneyPhase =
   | "account_required"
@@ -73,6 +74,7 @@ export const PROVISIONING_STAGE_LABEL: Record<string, string> = {
  */
 export const PROVISION_START_MESSAGES = {
   unavailable: "Matrix can’t start new computers right now. Try again in a few minutes.",
+  capacityFull: FREE_PLAN_COPY.capacityFull,
   throttled: "Setup was just tried. Wait a moment, then try again.",
   support: "Setup can’t continue on its own. Contact support@matrix-os.com.",
   deletionPending: "This account is being deleted, so a new computer can’t be set up.",
@@ -99,6 +101,7 @@ async function readErrorCode(res: Response): Promise<string | null> {
 function provisionStartErrorMessage(status: number, code: string | null): string | null {
   // Session and plan problems are the journey's to show after the reload.
   if (status === 401 || status === 402 || status === 403) return null;
+  if (status === 503 && code === FREE_CAPACITY_FULL_CODE) return PROVISION_START_MESSAGES.capacityFull;
   if (status === 503) return PROVISION_START_MESSAGES.unavailable;
   if (status === 429) return PROVISION_START_MESSAGES.throttled;
   if (status === 409 && (code === "support_required" || code === "retry_exhausted")) return PROVISION_START_MESSAGES.support;

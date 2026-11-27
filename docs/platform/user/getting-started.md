@@ -1,6 +1,6 @@
 # Getting Started with Matrix OS
 
-Matrix OS is an AI-native operating system that runs in the cloud. Open it at `app.matrix-os.com`; the platform uses your signed-in session to route you to your own Matrix VPS with a full desktop environment, AI assistant, and file system.
+Matrix OS is an AI-native operating system that runs in the cloud. Open it at `app.matrix-os.com`; the platform uses your signed-in session to route you to your own Matrix computer with a full desktop environment, AI assistant, and file system.
 
 ## Create Your Account
 
@@ -10,6 +10,11 @@ Matrix OS is an AI-native operating system that runs in the cloud. Open it at `a
 4. Complete the signup process
 
 Your Matrix OS instance is automatically provisioned. This takes about 30 seconds.
+
+## Plans
+
+- **Free**: a full Matrix computer with no card. It starts with 2 GB of memory that grows to 8 GB as you work, 40 GB of disk, Claude Code and Codex preinstalled, and $5 of Matrix AI every day (up to $20 a month). Free capacity is limited; when it is full, setup tells you so and you can try again a few minutes later.
+- **Paid plans** (Starter, Builder, Max): an always-on computer with more resources, for accounts that choose one at signup. More plans for free computers are coming soon.
 
 ## Access Your Instance
 
@@ -43,7 +48,9 @@ Visit [matrix-os.com/dashboard](https://matrix-os.com/dashboard) to:
 
 ## Auto Sleep/Wake
 
-To save resources, your instance can be recovered or refreshed by the platform when needed. When you visit `app.matrix-os.com`, the platform routes your signed-in session to your active customer VPS.
+On the Free plan, your computer sleeps after 60 minutes without use and wakes in a few seconds when you open it. Scheduled jobs wake it on time, and nothing you saved is lost while it sleeps. Paid computers stay on.
+
+To save resources, your instance can be recovered or refreshed by the platform when needed. When you visit `app.matrix-os.com`, the platform routes your signed-in session to your active Matrix computer.
 
 ## What You Can Do
 

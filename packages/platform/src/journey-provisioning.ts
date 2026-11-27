@@ -76,6 +76,7 @@ export function createJourneyProvisioner(
         });
         return true;
       case 'busy':
+        throw new CustomerVpsError(503, 'free_capacity_full', 'Free capacity is full');
       case 'provisioning_unavailable':
         throw new CustomerVpsError(503, 'provider_unavailable', 'Provisioning unavailable');
       case 'throttled':

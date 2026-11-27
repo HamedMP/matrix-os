@@ -24,3 +24,20 @@ describe("platform Figma boot screen", () => {
     expect(html).not.toContain("<img src=x");
   });
 });
+
+describe("platform boot screen for an on-demand computer (ENG-520)", () => {
+  it("says a sleeping computer is waking, not booting, and checks back sooner", () => {
+    const html = getVpsBootPage({ status: "waking" });
+    expect(html).toContain("<title>Waking your Matrix computer</title>");
+    expect(html).toContain("Matrix is waking your computer. It opens in a few seconds.");
+    expect(html).toContain('http-equiv="refresh" content="3"');
+    expect(html).not.toContain("couple of minutes");
+  });
+
+  it("says Matrix is at capacity when a wake cannot be placed", () => {
+    const html = getVpsBootPage({ status: "busy" });
+    expect(html).toContain("<title>Matrix is at capacity</title>");
+    expect(html).toContain("Matrix is at capacity right now. Try again in a minute.");
+    expect(html).not.toContain("Booting Matrix OS");
+  });
+});

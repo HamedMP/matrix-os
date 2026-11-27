@@ -235,6 +235,26 @@ describe("Settings panel", () => {
     expect(settingsZ).toBeLessThan(SHELL_Z_INDEX.notifications);
   });
 
+  it("labels the onboarding sections for a free computer, not a VPS or a completed payment (ENG-520)", async () => {
+    const { Settings } = await import("../../shell/src/components/Settings.js");
+
+    render(
+      <Settings
+        open
+        onOpenChange={() => {}}
+        closeDisabled
+        billingActiveOverride
+        onboardingDefaultInstalls={{ onBuild: vi.fn(), loading: false, error: null, freePlan: true }}
+      />,
+    );
+
+    expect((screen.getByRole("button", { name: "Billing Free plan" }) as HTMLButtonElement).disabled).toBe(true);
+    for (const label of ["Appearance", "Connect Apps", "System"]) {
+      expect(screen.getByRole("button", { name: `${label} Unavailable until your computer is ready` })).toBeTruthy();
+    }
+    expect(screen.queryByRole("button", { name: /VPS|Completed/ })).toBeNull();
+  });
+
   it("renders the onboarding default installs step inside Settings with pre-VPS sections disabled", async () => {
     const onBuild = vi.fn();
     const { Settings } = await import("../../shell/src/components/Settings.js");

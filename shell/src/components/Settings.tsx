@@ -394,7 +394,7 @@ function SettingsFrame({
 
           <div className={`flex min-h-0 flex-1 ${mobile ? "flex-col" : "flex-row"}`}>
             <aside hidden={mobile && mobileDetail} className={mobile ? 'min-h-0 flex-1 overflow-y-auto bg-card' : 'flex w-full shrink-0 flex-col border-b border-sidebar-border bg-sidebar text-sidebar-foreground p-2 sm:w-52 sm:border-b-0 sm:border-r'}>
-              <SettingsNavigation sections={frameVisibleSections} activeSection={activeSection} mobile={mobile} onboarding={onboardingMode} lockedSection={resolvedLockedSection}
+              <SettingsNavigation sections={frameVisibleSections} activeSection={activeSection} mobile={mobile} onboarding={onboardingMode} freePlan={onboardingDefaultInstalls?.freePlan === true} lockedSection={resolvedLockedSection}
                 onSelect={id=>{setActiveSection(id as SectionId);setMobileDetail(true);}} />
               {!showMobileAccountFooter && <SettingsAccountFooter />}
             </aside>
