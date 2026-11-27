@@ -19,20 +19,25 @@ export async function migrateFreeTier(db: PlatformMigrationExecutor): Promise<vo
 }
 
 /**
- * ENG-520 launch guard: a paid subscription that lands for a free owner is
- * never projected; it is queued here for cancel and refund of the payments
- * made since `refund_paid_since` (free admission). `generation` counts re-arms
- * (a later invoice event), so a sweep that held the row never marks a
- * re-armed row done. Keyed by the
- * Stripe subscription only (no owner identity), so account deletion has
- * nothing to erase and a pending refund survives it.
+ * ENG-520 launch guard: compensation for a paid Checkout session that a free
+ * owner completed anyway, one row per blocked session we recorded as their
+ * checkout attempt. Only that session's own payment is refunded; `refund_id`
+ * and `refund_status` track the refund until Stripe reports it succeeded.
+ * `generation` counts re-arms so a sweep holding the row never overwrites a
+ * newer event. No owner identity is stored, so account deletion has nothing
+ * to erase and a pending refund survives it.
  */
 export async function migrateFreeOwnerCompensations(db: PlatformMigrationExecutor): Promise<void> {
   await sql`
     CREATE TABLE IF NOT EXISTS billing_free_owner_compensations (
-      stripe_subscription_id TEXT PRIMARY KEY CHECK (stripe_subscription_id ~ '^sub_[A-Za-z0-9]{1,255}$'),
-      status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'awaiting_settlement', 'done')),
-      refund_paid_since TIMESTAMPTZ NOT NULL,
+      stripe_checkout_session_id TEXT PRIMARY KEY CHECK (stripe_checkout_session_id ~ '^cs_[A-Za-z0-9_]{1,255}$'),
+      checkout_attempt_id TEXT NOT NULL CHECK (length(checkout_attempt_id) BETWEEN 1 AND 128),
+      stripe_subscription_id TEXT CHECK (stripe_subscription_id ~ '^sub_[A-Za-z0-9]{1,255}$'),
+      status TEXT NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending', 'awaiting_settlement', 'refund_pending', 'refund_failed', 'done')),
+      refund_id TEXT CHECK (refund_id ~ '^re_[A-Za-z0-9]{1,255}$'),
+      refund_status TEXT CHECK (refund_status IN ('pending', 'requires_action', 'succeeded', 'failed', 'canceled')),
+      refund_round INTEGER NOT NULL DEFAULT 0 CHECK (refund_round >= 0),
       generation INTEGER NOT NULL DEFAULT 0 CHECK (generation >= 0),
       attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
       lease_until TIMESTAMPTZ,
@@ -42,7 +47,15 @@ export async function migrateFreeOwnerCompensations(db: PlatformMigrationExecuto
     )
   `.execute(db);
   await sql`
-    CREATE INDEX IF NOT EXISTS idx_billing_free_owner_compensations_pending
+    CREATE INDEX IF NOT EXISTS idx_billing_free_owner_compensations_open
     ON billing_free_owner_compensations (created_at) WHERE status <> 'done'
+  `.execute(db);
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_billing_free_owner_compensations_subscription
+    ON billing_free_owner_compensations (stripe_subscription_id) WHERE stripe_subscription_id IS NOT NULL
+  `.execute(db);
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_billing_free_owner_compensations_refund
+    ON billing_free_owner_compensations (refund_id) WHERE refund_id IS NOT NULL
   `.execute(db);
 }

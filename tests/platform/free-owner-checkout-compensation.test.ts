@@ -47,6 +47,7 @@ const WHILE_FREE = new Date(NOW.getTime() + 60_000);
 
 function subscriptionEvent(id: string, owner: string, overrides: {
   type?: string; status?: string; subscriptionId?: string; subscriptionCreated?: Date; eventCreated?: Date;
+  trialStart?: Date; trialEnd?: Date;
 } = {}): StripeWebhookEvent {
   return {
     id,
@@ -55,6 +56,8 @@ function subscriptionEvent(id: string, owner: string, overrides: {
     data: { object: {
       id: overrides.subscriptionId ?? 'sub_free', customer: `cus_${owner}`, status: overrides.status ?? 'active',
       created: SECONDS(overrides.subscriptionCreated ?? WHILE_FREE),
+      ...(overrides.trialStart ? { trial_start: SECONDS(overrides.trialStart) } : {}),
+      ...(overrides.trialEnd ? { trial_end: SECONDS(overrides.trialEnd) } : {}),
       current_period_end: Math.floor(NOW.getTime() / 1000) + 30 * 86_400,
       metadata: { clerk_user_id: owner, matrix_region_slug: 'region_fsn1', matrix_runtime_slot: 'primary' },
       items: { data: [{ price: { id: 'price_max_monthly', unit_amount: 20000, currency: 'usd', recurring: { interval: 'month', interval_count: 1 } }, quantity: 1 }] },
@@ -65,8 +68,15 @@ function subscriptionEvent(id: string, owner: string, overrides: {
 function completedEvent(id: string, owner: string, sessionId: string): StripeWebhookEvent {
   return {
     id, type: 'checkout.session.completed', created: SECONDS(WHILE_FREE),
-    data: { object: { id: sessionId, created: SECONDS(NOW) - 60, client_reference_id: owner, subscription: 'sub_free', metadata: { clerk_user_id: owner } } },
+    data: { object: {
+      id: sessionId, created: SECONDS(NOW) + 30, client_reference_id: owner, subscription: 'sub_free', invoice: 'in_first',
+      metadata: { clerk_user_id: owner },
+    } },
   };
+}
+
+function refundEvent(id: string, type: string, refundId: string, status: string): StripeWebhookEvent {
+  return { id, type, created: SECONDS(new Date(NOW.getTime() + 7_200_000)), data: { object: { id: refundId, object: 'refund', status } } };
 }
 
 function invoicePaidEvent(id: string, subscriptionId: string, type = 'invoice.paid'): StripeWebhookEvent {
@@ -83,7 +93,7 @@ describe('free owner paid checkout compensation', () => {
   let db: PlatformDB;
   let stripe: StripeBillingClient;
   let expireCheckoutSession: ReturnType<typeof vi.fn>;
-  let cancelAndRefundSubscription: ReturnType<typeof vi.fn>;
+  let compensateFreeOwnerCheckout: ReturnType<typeof vi.fn>;
   let webhookEvent: StripeWebhookEvent;
 
   beforeEach(async () => {
@@ -93,13 +103,15 @@ describe('free owner paid checkout compensation', () => {
       status: 'active', memoryCapacityMib: 131072, admissionCeilingMib: 114688,
     });
     expireCheckoutSession = vi.fn(async (_id: string) => ({ status: 'expired', url: null, clerkUserId: FREE, priceId: null, regionSlug: null }));
-    cancelAndRefundSubscription = vi.fn(async () => ({ settled: true }));
+    compensateFreeOwnerCheckout = vi.fn(async () => ({
+      subscriptionId: 'sub_free', settled: false, refund: { id: 're_1', status: 'pending' },
+    }));
     stripe = {
       apiTimeoutMs: 10_000,
       createCheckoutSession: vi.fn(async () => { throw new Error('unexpected checkout'); }),
       createAiCreditCheckoutSession: vi.fn(),
       expireCheckoutSession,
-      cancelAndRefundSubscription,
+      compensateFreeOwnerCheckout,
       retrieveCheckoutSession: vi.fn(),
       retrieveRecurringPrice: vi.fn(),
       createPortalSession: vi.fn(),
@@ -116,10 +128,17 @@ describe('free owner paid checkout compensation', () => {
     });
   }
 
-  async function openAttempt(owner: string, id: string, runtimeSlot = 'primary') {
-    await insertCheckoutAttempt(db, { id, clerkUserId: owner, stripeSessionId: `cs_${id}`, runtimeSlot, createdAt: new Date(NOW.getTime() - 60_000).toISOString() });
-    await db.executor.updateTable('billing_checkout_attempts').set({ checkout_url: `https://checkout.stripe.com/c/pay/cs_${id}` })
+  const sessionFor = (id: string) => `cs_${id.replace(/-/g, '_')}`;
+
+  async function openAttempt(owner: string, id: string, runtimeSlot = 'primary', createdAt = new Date(NOW.getTime() - 60_000)) {
+    await insertCheckoutAttempt(db, { id, clerkUserId: owner, stripeSessionId: sessionFor(id), runtimeSlot, createdAt: createdAt.toISOString() });
+    await db.executor.updateTable('billing_checkout_attempts').set({ checkout_url: `https://checkout.stripe.com/c/pay/${sessionFor(id)}` })
       .where('id', '=', id).execute();
+  }
+
+  /** A checkout started after the owner joined free (NOW), as in the reproduced bug. */
+  async function blockedAttempt(id = 'att_blocked') {
+    await openAttempt(FREE, id, 'primary', new Date(NOW.getTime() + 10_000));
   }
 
   async function attemptStatus(id: string) {
@@ -160,7 +179,7 @@ describe('free owner paid checkout compensation', () => {
       await openAttempt(PAID, '22222222-2222-4222-8222-222222222222');
       const response = await routes(PAID).request('/billing/checkout/status?attemptId=22222222-2222-4222-8222-222222222222');
       expect(response.status).toBe(200);
-      expect(await response.json()).toEqual({ url: 'https://checkout.stripe.com/c/pay/cs_22222222-2222-4222-8222-222222222222' });
+      expect(await response.json()).toEqual({ url: 'https://checkout.stripe.com/c/pay/cs_22222222_2222_4222_8222_222222222222' });
     });
   });
 
@@ -170,18 +189,19 @@ describe('free owner paid checkout compensation', () => {
       await openAttempt(FREE, 'att-2', 'studio');
       await makeFree();
       await expireOpenCheckoutsForFreeOwner({ db, stripe, now: () => NOW }, FREE);
-      expect(expireCheckoutSession.mock.calls.map(([id]) => id).sort()).toEqual(['cs_att-1', 'cs_att-2']);
+      expect(expireCheckoutSession.mock.calls.map(([id]) => id).sort()).toEqual(['cs_att_1', 'cs_att_2']);
       expect([await attemptStatus('att-1'), await attemptStatus('att-2')]).toEqual(['expired', 'expired']);
       await expireOpenCheckoutsForFreeOwner({ db, stripe, now: () => NOW }, FREE);
       expect(expireCheckoutSession).toHaveBeenCalledTimes(2);
     });
 
-    it('treats an already completed session as done and leaves no pending attempt', async () => {
+    it('queues compensation for a session Stripe reports complete, in the same step that retires it', async () => {
       await openAttempt(FREE, 'att-done');
       await makeFree();
       expireCheckoutSession.mockResolvedValueOnce({ status: 'complete', url: null, clerkUserId: FREE, priceId: null, regionSlug: null });
       await expireOpenCheckoutsForFreeOwner({ db, stripe, now: () => NOW }, FREE);
       expect(await attemptStatus('att-done')).toBe('abandoned');
+      expect(await compensations()).toMatchObject([{ stripe_checkout_session_id: 'cs_att_done', checkout_attempt_id: 'att-done', status: 'pending' }]);
     });
 
     it('keeps the attempt for a retry when Stripe is unavailable', async () => {
@@ -206,7 +226,7 @@ describe('free owner paid checkout compensation', () => {
       await makeFree();
       await openAttempt(PAID, 'att-paid');
       await runFreeOwnerBillingSweep({ db, stripe, now: () => NOW });
-      expect(expireCheckoutSession.mock.calls.map(([id]) => id)).toEqual(['cs_att-old']);
+      expect(expireCheckoutSession.mock.calls.map(([id]) => id)).toEqual(['cs_att_old']);
       expect(await attemptStatus('att-old')).toBe('expired');
       expect(await attemptStatus('att-paid')).toBe('open');
     });
@@ -226,43 +246,81 @@ describe('free owner paid checkout compensation', () => {
     });
   });
 
-  describe('layer 3: a subscription that lands for a free owner', () => {
-    it('is never projected into a paid entitlement and is queued once for cancel and refund', async () => {
-      await openAttempt(FREE, 'att-paid-late');
-      await makeFree();
-      expect(await deliver(completedEvent('evt_c1', FREE, 'cs_att-paid-late'))).toMatchObject({ received: true });
-      expect(await deliver(subscriptionEvent('evt_s1', FREE))).toMatchObject({ received: true });
-      expect(await deliver(subscriptionEvent('evt_s1', FREE))).toEqual({ received: true, duplicate: true });
-      expect(await deliver(subscriptionEvent('evt_s2', FREE, { type: 'customer.subscription.updated' }))).toMatchObject({ received: true });
+  describe('layer 3: compensating a blocked checkout that was paid anyway', () => {
+    async function runtimeActions() {
+      return db.executor.selectFrom('billing_runtime_actions').select(['action', 'machine_id']).execute();
+    }
 
-      expect(await getBillingEntitlement(db, FREE)).toMatchObject({ source: 'free' });
+    it('compensates only the blocked checkout: subscription held, only its payment refunded, done when the refund succeeds', async () => {
+      await makeFree();
+      await blockedAttempt();
+      // The subscription event often lands before checkout.session.completed.
+      expect(await deliver(subscriptionEvent('evt_s1', FREE))).toEqual({ received: true, processed: true });
       expect(await db.executor.selectFrom('billing_subscriptions').select('stripe_subscription_id').execute()).toEqual([]);
-      expect(await attemptStatus('att-paid-late')).toBe('abandoned');
-      expect(await compensations()).toMatchObject([{ stripe_subscription_id: 'sub_free', status: 'pending' }]);
-      expect(cancelAndRefundSubscription).not.toHaveBeenCalled();
+      expect(await getBillingEntitlement(db, FREE)).toMatchObject({ source: 'free' });
+      expect(await deliver(completedEvent('evt_c1', FREE, 'cs_att_blocked'))).toEqual({ received: true, processed: true });
+      expect(await deliver(completedEvent('evt_c1', FREE, 'cs_att_blocked'))).toEqual({ received: true, duplicate: true });
+      expect(await attemptStatus('att_blocked')).toBe('abandoned');
+      expect(await compensations()).toMatchObject([{
+        stripe_checkout_session_id: 'cs_att_blocked', checkout_attempt_id: 'att_blocked', stripe_subscription_id: 'sub_free', status: 'pending',
+      }]);
 
       await runFreeOwnerBillingSweep({ db, stripe, now: () => NOW });
-      await runFreeOwnerBillingSweep({ db, stripe, now: () => NOW });
-      expect(cancelAndRefundSubscription).toHaveBeenCalledTimes(1);
-      // Only invoices paid at or after free admission are refunded.
-      expect(cancelAndRefundSubscription).toHaveBeenCalledWith('sub_free', { refundPaidSince: NOW });
-      expect(await compensations()).toMatchObject([{ stripe_subscription_id: 'sub_free', status: 'done' }]);
+      expect(compensateFreeOwnerCheckout).toHaveBeenCalledTimes(1);
+      expect(compensateFreeOwnerCheckout).toHaveBeenCalledWith({ sessionId: 'cs_att_blocked', refundId: null, refundRound: 0 });
+      // Accepted is not done: the refund is still pending.
+      expect(await compensations()).toMatchObject([{ status: 'refund_pending', refund_id: 're_1', refund_status: 'pending' }]);
+
+      expect(await deliver(refundEvent('evt_r1', 'refund.updated', 're_1', 'succeeded'))).toEqual({ received: true, processed: true });
+      expect(await deliver(refundEvent('evt_r1', 'refund.updated', 're_1', 'succeeded'))).toEqual({ received: true, duplicate: true });
+      expect(await compensations()).toMatchObject([{ status: 'done', refund_status: 'succeeded' }]);
+      await runFreeOwnerBillingSweep({ db, stripe, now: () => new Date(NOW.getTime() + 3_600_000) });
+      expect(compensateFreeOwnerCheckout).toHaveBeenCalledTimes(1);
+      expect(await getBillingEntitlement(db, FREE)).toMatchObject({ source: 'free' });
     });
 
-    it('retries a failed cancel and refund on the next sweep', async () => {
+    it('polls a pending refund until Stripe reports it succeeded', async () => {
       await makeFree();
-      await deliver(subscriptionEvent('evt_s1', FREE));
-      cancelAndRefundSubscription.mockRejectedValueOnce(new Error('stripe down'));
+      await blockedAttempt();
+      await deliver(completedEvent('evt_c1', FREE, 'cs_att_blocked'));
       await runFreeOwnerBillingSweep({ db, stripe, now: () => NOW });
-      expect(await compensations()).toMatchObject([{ status: 'pending', attempts: 1 }]);
-      await runFreeOwnerBillingSweep({ db, stripe, now: () => new Date(NOW.getTime() + 10 * 60_000) });
-      expect(await compensations()).toMatchObject([{ status: 'done' }]);
-      expect(cancelAndRefundSubscription).toHaveBeenCalledTimes(2);
+      compensateFreeOwnerCheckout.mockResolvedValueOnce({ subscriptionId: 'sub_free', settled: false, refund: { id: 're_1', status: 'succeeded' } });
+      await runFreeOwnerBillingSweep({ db, stripe, now: () => NOW });
+      expect(compensateFreeOwnerCheckout).toHaveBeenCalledTimes(1);
+      await runFreeOwnerBillingSweep({ db, stripe, now: () => new Date(NOW.getTime() + 31 * 60_000) });
+      expect(compensateFreeOwnerCheckout).toHaveBeenLastCalledWith({ sessionId: 'cs_att_blocked', refundId: 're_1', refundRound: 0 });
+      expect(await compensations()).toMatchObject([{ status: 'done', refund_status: 'succeeded' }]);
     });
 
-    it('never compensates a former paid owner\'s old subscription that updates after they joined free', async () => {
+    it('alerts on a failed refund, keeps the row actionable, and retries with a new refund round', async () => {
+      const alert = vi.spyOn(console, 'error');
+      await makeFree();
+      await blockedAttempt();
+      await deliver(completedEvent('evt_c1', FREE, 'cs_att_blocked'));
+      await runFreeOwnerBillingSweep({ db, stripe, now: () => NOW });
+      await deliver(refundEvent('evt_r1', 'refund.failed', 're_1', 'failed'));
+      expect(await compensations()).toMatchObject([{ status: 'refund_failed', refund_status: 'failed' }]);
+      expect(alert.mock.calls.some(([message]) => String(message).includes('ALERT free owner refund failed'))).toBe(true);
+      compensateFreeOwnerCheckout.mockResolvedValueOnce({ subscriptionId: 'sub_free', settled: false, refund: { id: 're_2', status: 'succeeded' } });
+      await runFreeOwnerBillingSweep({ db, stripe, now: () => NOW });
+      expect(compensateFreeOwnerCheckout).toHaveBeenLastCalledWith({ sessionId: 'cs_att_blocked', refundId: null, refundRound: 1 });
+      expect(await compensations()).toMatchObject([{ status: 'done', refund_id: 're_2' }]);
+      alert.mockRestore();
+    });
+
+    it('queues a checkout whose webhook was handled before the guard shipped, then refunds it', async () => {
+      await makeFree();
+      await blockedAttempt();
+      // Before rollout the normal handler marked the attempt paid.
+      await db.executor.updateTable('billing_checkout_attempts').set({ status: 'paid' }).where('id', '=', 'att_blocked').execute();
+      await runFreeOwnerBillingSweep({ db, stripe, now: () => NOW });
+      expect(await attemptStatus('att_blocked')).toBe('abandoned');
+      expect(compensateFreeOwnerCheckout).toHaveBeenCalledWith({ sessionId: 'cs_att_blocked', refundId: null, refundRound: 0 });
+      expect(await compensations()).toMatchObject([{ stripe_checkout_session_id: 'cs_att_blocked', status: 'refund_pending' }]);
+    });
+
+    it('lets a former paid owner\'s historical subscription flow through the normal handlers only', async () => {
       const yearAgo = new Date(NOW.getTime() - 365 * 86_400_000);
-      // The old subscription was recorded while they paid; it ended, then they joined free at NOW.
       expect(await deliver(subscriptionEvent('evt_old1', FREE, {
         subscriptionId: 'sub_old', subscriptionCreated: yearAgo, eventCreated: yearAgo,
       }))).toEqual({ received: true, processed: true });
@@ -270,62 +328,67 @@ describe('free owner paid checkout compensation', () => {
       await deliver(subscriptionEvent('evt_old2', FREE, {
         type: 'customer.subscription.updated', subscriptionId: 'sub_old', status: 'canceled', subscriptionCreated: yearAgo,
       }));
+      await deliver(invoicePaidEvent('evt_old_inv', 'sub_old'));
       expect(await compensations()).toEqual([]);
       expect(await db.executor.selectFrom('billing_subscriptions').select(['stripe_subscription_id', 'status']).execute())
         .toEqual([{ stripe_subscription_id: 'sub_old', status: 'canceled' }]);
       await runFreeOwnerBillingSweep({ db, stripe, now: () => NOW });
-      expect(cancelAndRefundSubscription).not.toHaveBeenCalled();
+      expect(compensateFreeOwnerCheckout).not.toHaveBeenCalled();
     });
 
-    it('never compensates a subscription created before free admission, even if it was never recorded here', async () => {
-      await makeFree();
-      await deliver(subscriptionEvent('evt_old', FREE, {
-        type: 'customer.subscription.updated', subscriptionId: 'sub_unrecorded', status: 'canceled',
-        subscriptionCreated: new Date(NOW.getTime() - 30 * 86_400_000),
+    it('never suspends a free computer for a former trial owner\'s old trial', async () => {
+      const monthAgo = new Date(NOW.getTime() - 30 * 86_400_000);
+      const trialEnd = new Date(NOW.getTime() - 16 * 86_400_000);
+      await deliver(subscriptionEvent('evt_trial1', FREE, {
+        subscriptionId: 'sub_trial', status: 'trialing', subscriptionCreated: monthAgo, eventCreated: monthAgo,
+        trialStart: monthAgo, trialEnd,
       }));
+      await makeFree();
+      await deliver(subscriptionEvent('evt_trial2', FREE, {
+        type: 'customer.subscription.updated', subscriptionId: 'sub_trial', status: 'canceled', subscriptionCreated: monthAgo,
+        trialStart: monthAgo, trialEnd,
+      }));
+      expect(await runtimeActions()).toEqual([]);
+      expect(await getBillingEntitlement(db, FREE)).toMatchObject({ source: 'free', status: 'active' });
+      expect(await db.executor.selectFrom('user_machines').select('status').where('machine_id', '=', `metal-${FREE}`)
+        .executeTakeFirstOrThrow()).toEqual({ status: 'running' });
       expect(await compensations()).toEqual([]);
     });
 
     it('never compensates from a checkout that completed before free admission', async () => {
+      await openAttempt(FREE, 'att_early');
       await makeFree();
-      const early = completedEvent('evt_early', FREE, 'cs_early');
+      const early = completedEvent('evt_early', FREE, 'cs_att_early');
       early.created = SECONDS(NOW) - 3_600;
       await deliver(early);
       expect(await compensations()).toEqual([]);
     });
 
-    it('keeps rechecking until the subscription\'s invoices are final, then finishes', async () => {
+    it('never compensates a completed session that is not one of this owner\'s checkout attempts', async () => {
       await makeFree();
-      await deliver(subscriptionEvent('evt_s1', FREE));
-      cancelAndRefundSubscription.mockResolvedValueOnce({ settled: false });
-      await runFreeOwnerBillingSweep({ db, stripe, now: () => NOW });
-      expect(await compensations()).toMatchObject([{ status: 'awaiting_settlement' }]);
-      await runFreeOwnerBillingSweep({ db, stripe, now: () => NOW });
-      expect(cancelAndRefundSubscription).toHaveBeenCalledTimes(1);
-      await runFreeOwnerBillingSweep({ db, stripe, now: () => new Date(NOW.getTime() + 31 * 60_000) });
-      expect(cancelAndRefundSubscription).toHaveBeenCalledTimes(2);
-      expect(await compensations()).toMatchObject([{ status: 'done' }]);
+      await deliver(completedEvent('evt_stranger', FREE, 'cs_unknown'));
+      expect(await compensations()).toEqual([]);
     });
 
     it.each(['invoice.paid', 'invoice.payment_succeeded'])('re-arms a finished compensation when %s arrives late', async (type) => {
       await makeFree();
-      await deliver(subscriptionEvent('evt_s1', FREE));
+      await blockedAttempt();
+      await deliver(completedEvent('evt_c1', FREE, 'cs_att_blocked'));
+      compensateFreeOwnerCheckout.mockResolvedValueOnce({ subscriptionId: 'sub_free', settled: true, refund: null });
       await runFreeOwnerBillingSweep({ db, stripe, now: () => NOW });
       expect(await compensations()).toMatchObject([{ status: 'done' }]);
       expect(await deliver(invoicePaidEvent('evt_inv1', 'sub_free', type))).toEqual({ received: true, processed: true });
       expect(await deliver(invoicePaidEvent('evt_inv1', 'sub_free', type))).toEqual({ received: true, duplicate: true });
       expect(await compensations()).toMatchObject([{ status: 'pending' }]);
-      await runFreeOwnerBillingSweep({ db, stripe, now: () => NOW });
-      expect(cancelAndRefundSubscription).toHaveBeenCalledTimes(2);
-      expect(await compensations()).toMatchObject([{ status: 'done' }]);
     });
 
     it('does not lose a re-arm that lands while a sweep holds the row', async () => {
       await makeFree();
-      await deliver(subscriptionEvent('evt_s1', FREE));
-      cancelAndRefundSubscription.mockImplementationOnce(async () => {
+      await blockedAttempt();
+      await deliver(completedEvent('evt_c1', FREE, 'cs_att_blocked'));
+      compensateFreeOwnerCheckout.mockImplementationOnce(async () => {
         await deliver(invoicePaidEvent('evt_inv_race', 'sub_free'));
-        return { settled: true };
+        return { subscriptionId: 'sub_free', settled: true, refund: null };
       });
       await runFreeOwnerBillingSweep({ db, stripe, now: () => NOW });
       expect(await compensations()).toMatchObject([{ status: 'pending' }]);
