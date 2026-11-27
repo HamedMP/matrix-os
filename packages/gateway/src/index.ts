@@ -109,6 +109,9 @@ export type { OsViewStateRouteRepository } from "./os-view-state/routes.js";
 export { createMessagingRoutes } from "./messages/routes.js";
 export { MessagingError, mapMessagingError } from "./messages/errors.js";
 export { MessagingKyselyRepository } from "./messages/repository.js";
+export { MessagingBridgeStore } from "./messages/bridge-store.js";
+export { createMessagingBridgeRoutes } from "./messages/bridge-routes.js";
+export { createMessagingBridgeRuntime } from "./messages/bridge-runtime.js";
 export { createPermissionRegistry } from "./messages/permission-registry.js";
 export { createHermesCapabilityToken, verifyHermesCapabilityToken } from "./messages/hermes-capability.js";
 export { HermesDeliveryRegistry } from "./messages/hermes-delivery.js";
@@ -120,7 +123,6 @@ export type {
   MessagingRepository,
   MessagingOwnerScope,
   MessagingListResult,
-  MessagingBridgeAccountProvider,
 } from "./messages/repository.js";
 export { createConversationStore } from "./conversations.js";
 export type { ConversationStore, ConversationFile, ConversationMeta, SearchResult } from "./conversations.js";

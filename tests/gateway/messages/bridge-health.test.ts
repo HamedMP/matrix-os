@@ -17,6 +17,7 @@ describe("messaging bridge health service", () => {
       networks: [
         { network: "telegram", status: "unknown", accountsHealthy: 0, accountsNeedingRelink: 0 },
         { network: "whatsapp", status: "ok", accountsHealthy: 1, accountsNeedingRelink: 0 },
+        { network: "linkedin", status: "unknown", accountsHealthy: 0, accountsNeedingRelink: 0 },
       ],
     });
   });
@@ -33,6 +34,7 @@ describe("messaging bridge health service", () => {
       networks: [
         { network: "telegram", status: "unknown", accountsHealthy: 0, accountsNeedingRelink: 0 },
         { network: "whatsapp", status: "unknown", accountsHealthy: 0, accountsNeedingRelink: 0 },
+        { network: "linkedin", status: "unknown", accountsHealthy: 0, accountsNeedingRelink: 0 },
       ],
     });
   });
