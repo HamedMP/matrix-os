@@ -2,9 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Context } from 'hono';
 import { Hono } from 'hono';
 import { createClerkAuth } from '../../packages/platform/src/clerk-auth.js';
-import { getUserMachine, insertUserMachine, type PlatformDB, type UserMachineRecord } from '../../packages/platform/src/db.js';
+import { getUserMachine, insertUserMachine, updateUserMachine, type PlatformDB, type UserMachineRecord } from '../../packages/platform/src/db.js';
 import { createApp } from '../../packages/platform/src/main.js';
 import { shutdownPlatformApp } from '../../packages/platform/src/shutdown-platform-app.js';
+import { wakeAfterAsleep } from '../../packages/platform/src/substrates/runtime-asleep.js';
 import { prepareOnDemandUpstream } from '../../packages/platform/src/substrates/substrate-wake.js';
 import { createTestPlatformDb, destroyTestPlatformDb } from './native-platform-db-test-helper.js';
 import { createMetalWakeRig, HANDLE, INGRESS_TOKEN, OWNER, type MetalWakeRig } from './metal-wake-rig.js';
@@ -307,6 +308,25 @@ describe('waking a metal runtime from every entry point', () => {
     expect(await response.json()).toEqual({ error: 'Matrix computer unavailable', code: 'runtime_unavailable' });
     expect(rig.resumeCalls()).toHaveLength(0);
     expect((await rig.machine())?.status).toBe('suspended');
+  });
+
+  it.each([
+    { nextWakeAt: null },
+    { awakeSince: '2026-11-21T13:00:00.000Z' },
+  ])('keeps the runtime routable after wake state changes during a proxy request (%j)', async (wakeState) => {
+    await setup({
+      status: 'running', nextWakeAt: '2026-11-21T13:00:00.000Z', awakeSince: '2026-11-21T11:00:00.000Z',
+    });
+    const snapshot = (await rig.machine())!;
+    await updateUserMachine(db, rig.machineId, wakeState);
+
+    const outcome = await wakeAfterAsleep({
+      db, substrates: rig.substrates, machine: snapshot, identity: { userId: 'user_other', source: 'auth' },
+    });
+
+    expect(outcome).toMatchObject({ kind: 'proceed', machine: { status: 'running', ...wakeState } });
+    expect(await rig.machine()).toMatchObject({ status: 'running', ...wakeState });
+    expect(rig.resumeCalls()).toHaveLength(0);
   });
 
   it('owner requests update last_activity_at at most once per minute', async () => {
