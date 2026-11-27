@@ -170,6 +170,28 @@ describe('release skills', () => {
     expect(skill).toMatch(/report both `RELEASE_CONTENT_SHA`\s+and `DESKTOP_SHA`/i);
   });
 
+  it('reuses only an exact release-cutoff dev artifact instead of rebuilding host bytes', () => {
+    const coordinator = read('.agents/skills/release-full-stable/SKILL.md');
+    const host = read('.agents/skills/release-matrix-stable/SKILL.md');
+    const reuse = host.slice(host.indexOf('## 4.'), host.indexOf('## 5.'));
+    const hostLane = coordinator.slice(
+      coordinator.indexOf('## 5. Release the host bundle'),
+      coordinator.indexOf('## 6. Roll out and verify the fleet'),
+    );
+
+    expect(read('.claude/skills/release-matrix-stable/SKILL.md')).toBe(host);
+    expect(reuse).toMatch(/prefer(?:s|red)? (?:to )?reuse/i);
+    expect(reuse).toContain('dev `gitCommit`');
+    expect(reuse).toContain('`RELEASE_CONTENT_SHA`');
+    expect(reuse).toContain('immutable artifact metadata');
+    expect(reuse).toContain('checksum');
+    expect(reuse).toContain('approved changelog');
+    expect(reuse).toMatch(/promot(?:e|ing)[^\n]*canary/i);
+    expect(reuse).toMatch(/fall back to\s+the canonical canary build/i);
+    expect(reuse).toMatch(/never[^\n]*newest dev/i);
+    expect(hostLane.replace(/\s+/g, ' ')).toContain('reused or newly built');
+  });
+
   it('fails the full-release platform gate closed against the actual serving source', () => {
     const skill = read('.agents/skills/release-full-stable/SKILL.md');
     const platform = skill.slice(

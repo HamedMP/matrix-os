@@ -183,16 +183,25 @@ Use `release-matrix-stable` against `RELEASE_CONTENT_SHA`:
 
 1. Derive the host's plain-text changelog from the same approved editorial
    story, adapting it to the Settings update surface rather than copying JSON.
-2. Ask before cutting the canary.
-3. Verify workflow `headSha`, canary `gitCommit`, bundle checksum, and version
+2. Inspect `dev` before building. Prefer to reuse its existing immutable bytes
+   only when the dev release's `gitCommit` exactly equals
+   `RELEASE_CONTENT_SHA`, same-SHA CI is green, and the immutable artifact
+   metadata, checksum, size, manifest, and reviewed-main provenance all verify.
+   Never select merely the newest dev pointer. If the exact artifact is absent
+   or any proof fails, fall back to the pinned canonical canary build.
+3. Ask before attaching the approved changelog to a reusable release and ask
+   separately before promoting that exact version to canary, or before cutting
+   a new canary when reuse is unavailable.
+4. Verify workflow `headSha`, canary `gitCommit`, bundle checksum, and version
    all point to `RELEASE_CONTENT_SHA`.
-4. Ask before deploying the canary to a reviewed disposable or named VPS.
-5. Verify installed provenance, services, local health, and the changed user
+5. Ask before deploying the canary to a reviewed disposable or named VPS.
+6. Verify installed provenance, services, local health, and the changed user
    journeys on that VPS.
-6. Show the exact verified version and ask before promoting it to stable.
+7. Show the exact verified version and ask before promoting it to stable.
 
 Do not dispatch `stable` directly to bypass canary verification. Record the
-previous stable version before promotion.
+previous stable version before promotion. Report whether the host artifact was
+reused or newly built.
 
 ## 6. Roll out and verify the fleet
 

@@ -123,10 +123,38 @@ Show the draft to the user and get approval before step 3.
   bypass the `deploy_after_publish` gate. Use only for real security fixes, and
   ask first.
 
-## 4. Cut the canary
+## 4. Reuse an exact-cutoff dev artifact or cut the canary
 
-Canonical today: dispatch from `main` (version becomes
-`v<YYYY.MM.DD>-<run_number>`):
+Prefer to reuse already-published bytes when the automatic dev build is the
+exact approved commit. Read `channels/dev.json`, then the immutable release
+record at `releases/<version>.json`. Reuse is allowed only when:
+
+- the dev `gitCommit` exactly equals `$SHA` (the coordinator's
+  `RELEASE_CONTENT_SHA`) and same-SHA CI is green;
+- `gitRef` proves reviewed `main` provenance;
+- the immutable artifact metadata matches the versioned R2 objects, including
+  bundle/checksum keys, SHA-256, size, and incremental manifest; and
+- the version is not already in a conflicting tag or release state.
+
+Never promote merely the newest dev pointer: an older or newer dev commit is
+not the approved release. If the exact dev artifact is missing, its build
+failed, its commit differs, or any artifact proof is unavailable, fall back to
+the canonical canary build below.
+
+An automatic dev release normally has no human-approved changelog. After the
+changelog is approved, ask before re-registering that same version with the
+approved changelog. Copy every immutable artifact field from the release
+record, change only `changelog` (and the already approved severity/update type),
+and omit `channel`. Re-read the release and prove its artifact fields are
+unchanged. A `409` or any mismatch means stop; never create or overwrite bytes.
+
+Then show the exact version, commit, checksum, and changelog and ask separately
+before promoting it to canary through `POST /system-bundles/channels/canary`.
+Re-read the canary pointer and prove it names the same version and commit. This
+path promotes existing bytes; it does not run another host-bundle build.
+
+When reuse is unavailable, canonical today is a dispatch from `main` (version
+becomes `v<YYYY.MM.DD>-<run_number>`):
 
 ```bash
 gh workflow run host-bundle-release.yml --ref main -f expected_sha="$SHA" \
