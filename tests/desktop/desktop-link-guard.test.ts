@@ -83,7 +83,7 @@ async function wired(options: {
       if (answer !== undefined) queueMicrotask(() => toComputer.push(...g.fromCore(answer instanceof Buffer ? answer : reply(body.id, answer))));
     }
     rest = Buffer.alloc(0);
-  });
+  }, frames => toComputer.push(...frames));
   if (options.computerHello !== false) toComputer.push(...(await g.push(HELLO)).toComputer);
   const handshake = (bytes: Buffer = CORE_HELLO) => toComputer.push(...g.fromCore(bytes));
   if (options.coreHello !== null) handshake(options.coreHello ?? CORE_HELLO);
@@ -109,6 +109,108 @@ function consent(answers: boolean[] = [], fullAccess = false) {
   });
   return { c, asks };
 }
+
+describe("explicit authorization for a terminal on an enrolled SSH machine", () => {
+  it("keeps normal listing local and requires fresh remote approval even with desktop Full Access", async () => {
+    const { c, asks } = consent([true, false], true);
+    const target = terminalRecord("devstack-hel1/t2", 123);
+    const { g, toComputer, asked } = await wired({
+      consent: c,
+      script: method => {
+        if (method === "terminal.list") return { terminals: [target, terminalRecord("t2", 124)] };
+        if (method === "machine.list") return { machines: [{ name: "devstack-hel1", id: "a".repeat(32), state: "connected" }] };
+      },
+    });
+    await settle(await g.push(call(2, "terminal.list")));
+    expect(decode(toComputer.slice(1))[0]!.body).toMatchObject({ result: { terminals: [{ address: "t2" }] } });
+    const inventory = await settle(await g.push(call(3, "terminal.list", { enrolled: true })));
+    const data = decode(inventory.toComputer)[0]!.body as { result: { terminals: { address: string; selection_revision: string }[] } };
+    expect(data.result.terminals).toEqual([expect.objectContaining({ address: "devstack-hel1/t2" })]);
+    expect(JSON.stringify(data)).not.toContain(target.cwd);
+    const params = { terminal: "devstack-hel1/t2", cols: 80, rows: 24, selection_revision: data.result.terminals[0]!.selection_revision };
+    expect((await settle(await g.push(call(4, "terminal.attach", params)))).forwarded).toEqual([]);
+    const scoped = { ...params, remote_scope: "b".repeat(64) };
+    const approved = await settle(await g.push(call(5, "terminal.attach", scoped)));
+    const [attachId] = ids(approved.forwarded);
+    expect(attachId).toBeDefined();
+    expect(asks).toMatchObject([{ kind: "remote-terminal", machine: "devstack-hel1", terminal: "devstack-hel1/t2" }]);
+    expect(asked.at(-1)?.params).not.toHaveProperty("remote_scope");
+    const rejected = g.fromCore(reply(attachId, { channel: 4, terminal: { ...target, pid: target.pid + 1 } }));
+    expect(decode(rejected)[0]!.body).toMatchObject({ id: 5, error: { data: { kind: "failed" } } });
+    expect((await settle(await g.push(call(6, "terminal.attach", { ...scoped, remote_scope: "c".repeat(64) })))).forwarded).toEqual([]);
+    expect(asks).toHaveLength(2);
+    expect((await settle(await g.push(call(7, "terminal.kill", { terminal: params.terminal })))).forwarded).toEqual([]);
+  });
+
+  it("refuses a replaced machine while its separate native prompt was pending", async () => {
+    let answer: ((allowed: boolean) => void) | undefined;
+    let machineId = "a".repeat(32);
+    const c = createDesktopLinkConsent({
+      ask: async () => new Promise(resolve => { answer = resolve; }),
+      fullAccess: async () => true,
+      dialogGapMs: 0,
+    });
+    const { g, asked } = await wired({
+      consent: c,
+      script: method => {
+        if (method === "terminal.list") return { terminals: [terminalRecord("devstack-hel1/t2", 123)] };
+        if (method === "machine.list") return { machines: [{ name: "devstack-hel1", id: machineId, state: "connected" }] };
+      },
+    });
+    const inventory = await settle(await g.push(call(2, "terminal.list", { enrolled: true })));
+    const data = decode(inventory.toComputer)[0]!.body as { result: { terminals: { selection_revision: string }[] } };
+    const attach = settle(await g.push(call(3, "terminal.attach", {
+      terminal: "devstack-hel1/t2", cols: 80, rows: 24, remote_scope: "b".repeat(64),
+      selection_revision: data.result.terminals[0]!.selection_revision,
+    })));
+    await expect.poll(() => answer !== undefined).toBe(true);
+    machineId = "d".repeat(32);
+    answer!(true);
+    expect((await attach).forwarded).toEqual([]);
+    expect(asked.every(call => call.method !== "terminal.attach")).toBe(true);
+  });
+
+  it.each([false, true])("releases output only if the enrolled route is unchanged during attach (replacement: %s)", async (replace) => {
+    const { c } = consent([true]);
+    const target = terminalRecord("devstack-hel1/t2", 123);
+    let machineId = "a".repeat(32);
+    const { g, asked, toComputer, written } = await wired({
+      consent: c,
+      script: method => {
+        if (method === "terminal.list") return { terminals: [target] };
+        if (method === "machine.list") return { machines: [{ name: "devstack-hel1", id: machineId, state: "connected" }] };
+      },
+    });
+    const inventory = await settle(await g.push(call(2, "terminal.list", { enrolled: true })));
+    const data = decode(inventory.toComputer)[0]!.body as { result: { terminals: { selection_revision: string }[] } };
+    const approved = await settle(await g.push(call(3, "terminal.attach", {
+      terminal: target.address, cols: 80, rows: 24, remote_scope: "b".repeat(64),
+      selection_revision: data.result.terminals[0]!.selection_revision,
+    })));
+    const [attachId] = ids(approved.forwarded);
+    expect(asked.at(-1)?.method).toBe("terminal.attach");
+
+    if (replace) machineId = "d".repeat(32);
+    // Another machine can present terminal records with the same PID, cwd and timestamp.
+    const out = g.fromCore(Buffer.concat([
+      reply(attachId, { channel: 4, terminal: target }),
+      encodeFrame(4, HC_FRAME.DATA, Buffer.from("initial terminal output")),
+    ]));
+    expect(out).toEqual([]);
+    const frames = () => decode(toComputer.slice(1));
+    if (replace) {
+      await expect.poll(frames).toEqual([
+        expect.objectContaining({ channel: 0, body: expect.objectContaining({ id: 3, error: expect.any(Object) }) }),
+      ]);
+      expect(decode(written.slice(1))).toContainEqual({ channel: 4, kind: HC_FRAME.CLOSE, body: "" });
+    } else {
+      await expect.poll(frames).toMatchObject([
+        { channel: 0, body: { id: 3, result: { channel: 4 } } },
+        { channel: 4, kind: HC_FRAME.DATA, body: "initial terminal output" },
+      ]);
+    }
+  });
+});
 
 /** The guard's call ids for what it forwarded, in order. */
 const ids = (buffers: Buffer[]) => decode(buffers).map((frame) => (frame.body as { id: number }).id);
@@ -573,13 +675,22 @@ describe("Desktop link guard: the owner's consent", () => {
 
   // Fault detected (review): waiting for the owner held every later call on the stream.
   it("keeps the rest of the stream moving while a call waits for the owner", async () => {
-    let allow: ((answer: boolean) => void) | undefined;
-    const c = createDesktopLinkConsent({ ask: () => new Promise<boolean>((resolve) => { allow = resolve; }), fullAccess: async () => false, dialogGapMs: 0, log: () => {} });
+    const shown = Promise.withResolvers<void>();
+    const answer = Promise.withResolvers<boolean>();
+    const c = createDesktopLinkConsent({
+      ask: () => {
+        shown.resolve();
+        return answer.promise;
+      },
+      fullAccess: async () => false,
+      dialogGapMs: 0,
+      log: () => {},
+    });
     const { g } = await wired({ consent: c, script: noTemplates });
     const result = await g.push(Buffer.concat([call(2, "terminal.run", { argv: ["claude"] }), call(4, "terminal.list")]));
     expect(decode(result.forwarded).map((frame) => (frame.body as { method: string }).method)).toEqual(["terminal.list"]);
-    await new Promise((resolve) => setTimeout(resolve, 5));
-    allow!(true);
+    await shown.promise;
+    answer.resolve(true);
     expect(decode((await result.deferred![0]!).forwarded).map((frame) => (frame.body as { method: string }).method)).toEqual(["terminal.run"]);
   });
 

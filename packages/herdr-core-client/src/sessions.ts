@@ -29,6 +29,7 @@ export interface HcAttachOptions {
   history?: number;
   observe?: boolean;
   selectionRevision?: string;
+  remoteScope?: string;
   acceptTerminal?(terminal: unknown): boolean;
 }
 
@@ -219,13 +220,13 @@ export function createHcSessions(options: {
   }
 
   /** Process metadata is internal. Never return it as the renderer's terminal listing. */
-  async function listProcesses(core: HcConnection, remote = false): Promise<HcListedProcess[]> {
-    const listed = ListedSchema.parse(await core.call("terminal.list", {}));
+  async function listProcesses(core: HcConnection, scope?: "remote" | "enrolled"): Promise<HcListedProcess[]> {
+    const listed = ListedSchema.parse(await core.call("terminal.list", scope === "enrolled" ? { enrolled: true } : {}));
     const terminals: HcListedProcess[] = [];
     for (const entry of listed.terminals) {
-      const terminal = (remote ? DiscoveryTerminalSchema : ListedTerminalSchema).safeParse(entry);
+      const terminal = (scope ? DiscoveryTerminalSchema : ListedTerminalSchema).safeParse(entry);
       if (!terminal.success || terminal.data.state !== "live") continue;
-      if (remote && !terminal.data.address.includes("/")) continue;
+      if (scope && !terminal.data.address.includes("/")) continue;
       const state = LocalTerminalStatusSchema.safeParse(terminal.data.status?.state);
       const identity = ProcessIdentitySchema.safeParse(entry);
       terminals.push({ terminal: {
@@ -298,6 +299,7 @@ export function createHcSessions(options: {
           // Sent only when set, so a typing attach looks exactly as before.
           ...(stream.observe ? { observe: true } : {}),
           ...(stream.selectionRevision ? { selection_revision: stream.selectionRevision } : {}),
+          ...(stream.remoteScope ? { remote_scope: stream.remoteScope } : {}),
         }, {
           acceptTerminal: stream.acceptTerminal,
           onData: (chunk, consumed) => {

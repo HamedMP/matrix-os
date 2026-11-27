@@ -27,7 +27,7 @@ export interface HerdrControlDraft {
 export function requestedHerdrTerminal(text: string): string | undefined {
   const draft = text.trimStart();
   // A pasted address also works without an English command or a display-name guess.
-  const desktop = /^(?:(?:please\s+)?(?:use\s+|select\s+)|(?:请)?(?:使用|用)\s*)?`?(desktop:[a-f0-9]{64}\/t[0-9]{1,6}[a-z]{0,2})`?(?=$|[\s,.:，。、：])/iu.exec(draft);
+  const desktop = /^(?:(?:please\s+)?(?:use\s+|select\s+)|(?:请)?(?:使用|用)\s*)?`?(desktop:[a-f0-9]{64}\/(?:machine:[a-z0-9][a-z0-9._-]{0,31}\/)?t[0-9]{1,6}[a-z]{0,2})`?(?=$|[\s,.:，。、：])/iu.exec(draft);
   if (desktop) return desktop[1]!.toLowerCase();
   const machine = /^(?:(?:please\s+)?(?:use\s+|select\s+)|(?:请)?(?:使用|用)\s*)?`?((?:machine:|herdr:)[a-z0-9][a-z0-9._-]{0,31}\/t[0-9]{1,6}[a-z]{0,2})`?(?=$|[\s,.:，。、：])/iu.exec(draft);
   if (machine) return machine[1]!.toLowerCase();

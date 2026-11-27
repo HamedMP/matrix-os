@@ -32,7 +32,7 @@ export function HerdrControlPicker({ request, onSelect, onCancel, requestedTarge
   const [selected, setSelected] = useState<{ request: HerdrSessionsRequest; deviceId?: string; machine?: string } | null>(null);
   const [gateway, setGateway] = useState<{ request: HerdrSessionsRequest; sessions: HerdrSession[] } | null>(null);
   const machines = catalog?.request === request ? catalog.machines : [];
-  const requestedDesktop = /^(?:desktop:)([0-9a-f]{64})\/(t[0-9]{1,6}[a-z]{0,2})$/.exec(requestedTarget ?? "");
+  const requestedDesktop = /^desktop:([0-9a-f]{64})\/(?:machine:([a-z0-9][a-z0-9._-]{0,31})\/)?(t[0-9]{1,6}[a-z]{0,2})$/.exec(requestedTarget ?? "");
   const requestedMachine = /^(?:machine:|herdr:)([a-z0-9][a-z0-9._-]{0,31})\/(t[0-9]{1,6}[a-z]{0,2})$/.exec(requestedTarget ?? "");
   const requestedDeviceId = requestedDesktop?.[1];
   const currentSelection = selected?.request === request ? selected : null;
@@ -82,20 +82,27 @@ export function HerdrControlPicker({ request, onSelect, onCancel, requestedTarge
     </div>}
     {deviceId && catalog?.request !== request ? <p role="status">Finding computer…</p> : deviceId && machine?.state !== "online" ? <p role="status">Computer unavailable.</p> :
       <TerminalChoices key={JSON.stringify([deviceId, machine?.revision, remoteMachine, requestedTarget])} request={request}
-        requestedTarget={requestedDesktop?.[2] ?? requestedMachine?.[2] ?? requestedTarget}
+        requestedTarget={requestedDesktop?.[3] ?? requestedMachine?.[2] ?? requestedTarget}
+        requestedEnrolledMachine={requestedDesktop?.[2]}
         computerName={selectedName} deviceId={deviceId} remoteMachine={remoteMachine} gatewaySessions={gatewaySessions} onSelect={onSelect} />}
     <Button type="button" variant="ghost" size="sm" onClick={onCancel}>Cancel</Button>
   </section>;
 }
 
-function TerminalChoices({ request, requestedTarget, computerName, deviceId, remoteMachine, gatewaySessions, onSelect }:
-  Omit<PickerProps, "onCancel"> & { deviceId: string | null; remoteMachine?: string; gatewaySessions: HerdrSession[] | null }) {
+function TerminalChoices({ request, requestedTarget, computerName, deviceId, remoteMachine, requestedEnrolledMachine, gatewaySessions, onSelect }:
+  Omit<PickerProps, "onCancel"> & {
+    deviceId: string | null;
+    remoteMachine?: string;
+    requestedEnrolledMachine?: string;
+    gatewaySessions: HerdrSession[] | null;
+  }) {
   const [inventory, setInventory] = useState<{ request: HerdrSessionsRequest; sessions: HerdrSession[] } | null>(null);
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(0);
-  const sessions = deviceId
-    ? (inventory?.request === request ? inventory.sessions : null)
-    : gatewaySessions?.filter(row => row.machine === remoteMachine) ?? null;
+  const [selectedEnrolledMachine, setSelectedEnrolledMachine] = useState<string>();
+  const enrolledMachine = requestedEnrolledMachine ?? selectedEnrolledMachine;
+  const allSessions = deviceId ? (inventory?.request === request ? inventory.sessions : null) : gatewaySessions;
+  const sessions = allSessions?.filter(row => row.machine === (deviceId ? enrolledMachine : remoteMachine));
   const workspaceId = deviceId ? desktopLinkWorkspaceId(deviceId) : HERDR_TERMINAL_WORKSPACE_ID;
   useEffect(() => {
     if (!deviceId) return;
@@ -111,14 +118,32 @@ function TerminalChoices({ request, requestedTarget, computerName, deviceId, rem
     return () => { current = false; clearTimeout(timer); };
   }, [request, requestedTarget, workspaceId, deviceId]);
   if (!sessions) return <p role="status">Loading terminals…</p>;
+  const enrolledMachines = deviceId && !requestedTarget
+    ? [...new Set(allSessions?.flatMap(row => row.machine ? [row.machine] : []))]
+    : [];
+  const selectEnrolledMachine = (name?: string) => {
+    setSelectedEnrolledMachine(name);
+    setQuery("");
+    setPage(0);
+  };
   const byId = requestedTarget && HerdrSessionIdSchema.safeParse(requestedTarget).success;
   const search = (requestedTarget ?? query).trim().toLowerCase();
   const matches = sessions.filter(row => requestedTarget
     ? (byId ? row.id === requestedTarget : row.title.toLowerCase() === search)
     : row.title.toLowerCase().includes(search) || row.id.includes(search));
   const start = page * PAGE_SIZE;
-  const addressLabel = remoteMachine ?? (deviceId ? computerName : "gateway");
+  const addressLabel = enrolledMachine ?? remoteMachine ?? (deviceId ? computerName : "gateway");
+  const addressFor = (id: string) => {
+    if (deviceId && enrolledMachine) return `desktop:${deviceId}/machine:${enrolledMachine}/${id}`;
+    return remoteMachine ? `machine:${remoteMachine}/${id}` : `${computerName || "gateway"}/${id}`;
+  };
   return <>
+    {enrolledMachines.length > 0 && <div role="group" aria-label="Machines reachable from this desktop" className="flex flex-wrap gap-1">
+      <Button type="button" size="sm" variant="secondary" aria-pressed={!enrolledMachine}
+        onClick={() => selectEnrolledMachine()}>Local terminals</Button>
+      {enrolledMachines.map(name => <Button key={name} type="button" size="sm" variant="secondary"
+        aria-pressed={enrolledMachine === name} onClick={() => selectEnrolledMachine(name)}>{name}</Button>)}
+    </div>}
     {!requestedTarget && <Input aria-label="Find terminal" placeholder="Find a terminal by name or ID" value={query} onChange={event => {
       setQuery(event.target.value); setPage(0);
     }} />}
@@ -127,7 +152,7 @@ function TerminalChoices({ request, requestedTarget, computerName, deviceId, rem
       <div className="flex flex-wrap gap-1">{matches.slice(start, start + PAGE_SIZE).map(row => <Button key={row.tabId}
         type="button" variant="secondary" size="sm" onClick={() => onSelect({
           kind: "terminal_session", id: `${workspaceId}:${row.tabId}`, label: row.title, revision: row.revision,
-        }, remoteMachine ? `machine:${remoteMachine}/${row.id}` : `${computerName || "gateway"}/${row.id}`)}>{requestedTarget ? `Use ${row.title} (${addressLabel}/${row.id})` : `${row.title} (${row.id})`}</Button>)}</div>}
+        }, addressFor(row.id))}>{requestedTarget ? `Use ${row.title} (${addressLabel}/${row.id})` : `${row.title} (${row.id})`}</Button>)}</div>}
     {matches.length > PAGE_SIZE && <div className="flex items-center gap-2">
       <Button type="button" variant="ghost" size="sm" disabled={!page} onClick={() => setPage(page - 1)}>Previous</Button>
       <span>{start + 1}–{Math.min(start + PAGE_SIZE, matches.length)} of {matches.length}</span>

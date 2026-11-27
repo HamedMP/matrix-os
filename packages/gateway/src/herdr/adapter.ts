@@ -2,7 +2,7 @@
 // owner's own herdr-core, reached through `herdr-core connect`. The core is
 // the owner's, not Matrix's: the adapter lists, attaches, types into and ends
 // its terminals, and does nothing else to it.
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import headless from "@xterm/headless";
 import type { TerminalRef, TerminalWorkspace } from "@matrix-os/contracts";
 import { SafeDisplayStringSchema } from "@matrix-os/contracts";
@@ -122,6 +122,7 @@ export function createHerdrAdapter(options: {
   const refs = createHerdrRefMap();
   // A remotely selectable tab must not become reachable through the generic local workspace API.
   const remoteChatRefs = createHerdrRefMap();
+  const enrolledChatRefs = createHerdrRefMap();
   const remoteWorktrees = options.remoteWorktrees ?? [];
   const processSalt = randomUUID();
   // Bounded by the attachment slots; entries leave on detach and close.
@@ -236,6 +237,9 @@ export function createHerdrAdapter(options: {
         for (const [i, process] of listed.entries()) {
           if (process.selectionRevision) sessions[i]!.revision = process.selectionRevision;
         }
+        if (sessions.length < HERDR_SESSION_LIST_MAX) {
+          sessions.push(...await listEnrolledChatSessions(HERDR_SESSION_LIST_MAX - sessions.length));
+        }
       } else if (chatSelection === "gateway") {
         // A grant selects a specific checkout inode. Normal session polling never needs filesystem I/O.
         const directories = new Map<string, ReturnType<typeof herdrDirectoryIdentity>>();
@@ -264,6 +268,27 @@ export function createHerdrAdapter(options: {
         console.warn("[herdr] terminal listing failed", kind);
       }
       return unavailable(coarse(host.status()));
+    }
+  }
+
+  async function listEnrolledChatSessions(limit: number): Promise<HerdrSession[]> {
+    try {
+      const snapshot = await host.listEnrolledProcesses();
+      return snapshot.terminals.filter((process) => process.selectionRevision).slice(0, limit).map(process => {
+        const terminal = process.terminal;
+        const separator = terminal.id.indexOf("/");
+        return {
+          id: terminal.id.slice(separator + 1), machine: terminal.id.slice(0, separator),
+          tabId: enrolledChatRefs.remember(terminal.id).tabId, title: terminal.title, status: terminal.status,
+          revision: process.selectionRevision!,
+        };
+      });
+    } catch (error: unknown) {
+      // Older Desktop clients deny the opt-in query. Their usual terminal list still works.
+      if (!(error instanceof HcCallError && error.kind === "denied")) {
+        console.warn("[terminal-control] Enrolled terminal listing unavailable", listingFailureKind(error));
+      }
+      return [];
     }
   }
 
@@ -518,6 +543,26 @@ export function createHerdrAdapter(options: {
     }, id, ref, root, selection);
   }
 
+  async function bindEnrolledChatTerminal(ref: TerminalRef, localRef: TerminalRef, root: string, selection: ChatTerminalSelection) {
+    const id = enrolledChatRefs.resolve(localRef);
+    if (!id || !selection.desktop || selection.signal.aborted) return null;
+    const first = await host.listEnrolledProcesses();
+    const selected = first.terminals.filter(process => process.terminal.id === id && process.selectionRevision === selection.revision);
+    const [process] = selected;
+    if (selected.length !== 1 || !process) return null;
+    const stream = { selectionRevision: selection.revision, remoteScope: randomBytes(32).toString("hex") };
+    const tab = { ...liveTab(ref.tabId, process.terminal.title, 0), workspaceId: ref.workspaceId };
+    return bindHerdrChatTerminal({
+      salt: processSalt,
+      qualifiedRemote: true,
+      inspect: () => host.listEnrolledProcesses(),
+      current: generation => generation === first.generation && currentChatGeneration(generation),
+      workspace: async () => ({ ...workspaceWithTabs([tab]), id: ref.workspaceId }),
+      screen: (terminalId, lines) => render(terminalId, lines, stream),
+      writer: terminalId => attach(terminalId, sizes.get(terminalId) ?? DEFAULT_INPUT_SIZE, discardOutput, stream),
+    }, id, ref, root, selection);
+  }
+
   return {
     list,
     discoverTerminals,
@@ -542,7 +587,9 @@ export function createHerdrAdapter(options: {
     async bindChatTerminal(ref: TerminalRef, executionRoot: string, selection: ChatTerminalSelection) {
       const localRef = selection.desktop ? { ...ref, workspaceId: HERDR_TERMINAL_WORKSPACE_ID } : ref;
       const id = refs.resolve(localRef);
-      if (!id) return selection.desktop ? null : bindRemoteChatTerminal(ref, executionRoot, selection);
+      if (!id) return selection.desktop
+        ? bindEnrolledChatTerminal(ref, localRef, executionRoot, selection)
+        : bindRemoteChatTerminal(ref, executionRoot, selection);
       const stream = { selectionRevision: selection.desktop ? selection.revision : undefined };
       return bindHerdrChatTerminal({
         salt: processSalt,
