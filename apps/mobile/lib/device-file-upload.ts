@@ -12,6 +12,7 @@ export interface DeviceFileUpload {
 export interface DeviceFileUploadResult {
   status: number;
   body: string;
+  retryAfter?: string;
 }
 
 /**
@@ -27,5 +28,6 @@ export async function putDeviceFile({ uri, url, headers, signal }: DeviceFileUpl
     headers,
     signal,
   });
-  return { status: result.status, body: result.body };
+  const retryAfter = Object.entries(result.headers).find(([name]) => name.toLowerCase() === "retry-after")?.[1];
+  return { status: result.status, body: result.body, retryAfter };
 }
