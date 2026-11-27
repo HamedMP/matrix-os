@@ -9,6 +9,7 @@ import {
   type CanonicalOwnerScope,
 } from "@matrix-os/contracts";
 import { isHerdrChatTerminalRef, isTerminalControlCommand } from "@matrix-os/contracts/herdr-terminals";
+import { isManagedTerminalRef, type ManagedTerminalTurnAuthority } from "@matrix-os/contracts/managed-terminal-control";
 import { MATRIX_MCP_LAUNCHER, type MatrixMcpCapabilityIssuer } from "./matrix-mcp-launch.js";
 import { CodexTerminalMcpLeaseSchema } from "../coding-agents/codex-terminal-mcp.mjs";
 
@@ -30,12 +31,17 @@ export function selectedHerdrTerminal(parts: CanonicalProviderRunInput["parts"])
 }
 
 /** Ephemeral direct HTTP admission. This property is never saved or forwarded from request JSON. */
-export type HerdrDispatchRun = CanonicalChatRun & { ownerSubmittedHerdrTurn?: true; ownerSubmittedHerdrDiscovery?: true };
+export type HerdrDispatchRun = CanonicalChatRun & {
+  ownerSubmittedHerdrTurn?: true;
+  ownerSubmittedHerdrDiscovery?: true;
+  managedTerminalAuthority?: ManagedTerminalTurnAuthority;
+};
 export function withOwnerHerdrAdmission(
   run: CanonicalChatRun,
   message: CanonicalChatMessage,
   owner: CanonicalOwnerScope,
   directOwnerTurn?: true,
+  managedTerminalAuthority?: ManagedTerminalTurnAuthority,
 ): HerdrDispatchRun {
   if (
     !directOwnerTurn ||
@@ -50,9 +56,10 @@ export function withOwnerHerdrAdmission(
     message.turnId !== run.turnId
   )
     return run;
-  return selectedHerdrTerminal(message.parts)
-    ? { ...run, ownerSubmittedHerdrTurn: true }
-    : { ...run, ownerSubmittedHerdrDiscovery: true };
+  const target = selectedHerdrTerminal(message.parts);
+  if (!target) return { ...run, ownerSubmittedHerdrDiscovery: true };
+  if (!isManagedTerminalRef(target.ref)) return { ...run, ownerSubmittedHerdrTurn: true };
+  return managedTerminalAuthority ? { ...run, ownerSubmittedHerdrTurn: true, managedTerminalAuthority } : run;
 }
 
 const executions = new AsyncLocalStorage<{
@@ -95,10 +102,12 @@ export function createCodexMcpRunScope(
         return undefined;
       const target = selectedHerdrTerminal(input.parts);
       const discoveryOnly = !target && input.ownerSubmittedHerdrDiscovery === true;
+      const managed = Boolean(target && isManagedTerminalRef(target.ref));
       const selected = target && input.ownerSubmittedHerdrTurn
         && input.interactionMode === "default" && input.permissionMode === "full_access"
-        && input.worktreeId && input.executionRoot
-        ? { chatId: input.chatId, worktreeId: input.worktreeId, executionRoot: input.executionRoot, ...target }
+        && input.worktreeId && input.executionRoot && (!managed || input.managedTerminalAuthority)
+        ? { chatId: input.chatId, worktreeId: input.worktreeId, executionRoot: input.executionRoot, ...target,
+          ...(managed && input.managedTerminalAuthority ? { authority: input.managedTerminalAuthority } : {}) }
         : undefined;
       if (!selected && !discoveryOnly) return undefined;
       if (input.signal.aborted || active.size >= 64 || active.has(input.runId)) {

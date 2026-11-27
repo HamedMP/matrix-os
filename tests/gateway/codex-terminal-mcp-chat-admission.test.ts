@@ -16,6 +16,7 @@ import { createCodingAgentThreadStore } from "../../packages/gateway/src/coding-
 import { createCanonicalCodingChatProviderAdapter } from "../../packages/gateway/src/chat/coding-provider-adapter.js";
 import { nativeCodexMcpExecution } from "../../packages/gateway/src/chat/codex-mcp-run-scope.js";
 import { createMatrixMcpCapabilityRegistry } from "../../packages/gateway/src/chat/matrix-mcp-launch.js";
+import { MANAGED_TERMINAL_OWNER_GRANT_HEADER } from "@matrix-os/contracts/managed-terminal-control";
 afterEach(() => vi.unstubAllEnvs());
 
 it("exposes the actual canonical Codex run to delayed native startup and rotates/revokes on successor", async () => {
@@ -99,10 +100,12 @@ it("grants the selected terminal through canonical HTTP admission; a later inter
   const registry = createMatrixMcpCapabilityRegistry({ configuredOwnerId: owner.ownerId });
   const scope = createCodexMcpRunScope({ issuer: registry, gatewayPort: 4000 });
   const runTokens: Array<string | null> = [];
+  const authorities: unknown[] = [];
   const provider = recordingAdapter(async function* (input) {
     const opened = scope.open(input);
     try {
       runTokens.push(opened?.lease.token ?? null);
+      if (opened) authorities.push(registry.resolveRunContext(opened.lease.token, "POST", "/api/chat/herdr-terminal")?.herdr?.authority);
       if (runTokens.length === 3) {
         expect(registry.resolveRunContext(opened!.lease.token, "POST", "/api/chat/herdr-terminal")?.scope)
           .toBe("chat_herdr_discovery");
@@ -204,6 +207,23 @@ it("grants the selected terminal through canonical HTTP admission; a later inter
     expect(foreignAsk.status, await foreignAsk.text()).toBe(202);
     await orchestrator.drain();
     expect(runTokens.at(-1)).toBeNull();
+
+    const latest = await repository.get(owner, chatId);
+    const clientRequestId = "req_managed_terminal";
+    const managedParts = herdrControlParts().map(part => part.type === "resource_reference"
+      ? { ...part, resource: { ...part.resource, id: "tws_6d6774" + "1".repeat(26) + ":tt_" + "7".repeat(32) } }
+      : part);
+    const requestManaged = (proof?: string) => app.request(`/api/chats/${chatId}/turns`, {
+      method: "POST", headers: { ...ownerHeaders(owner.ownerId), ...(proof ? { [MANAGED_TERMINAL_OWNER_GRANT_HEADER]: proof } : {}) },
+      body: JSON.stringify({ ...body, parts: managedParts, clientRequestId, baseRevision: latest!.chat.revision }),
+    });
+    expect((await requestManaged()).status).toBe(403);
+    const proof = "fixture." + "d".repeat(64);
+    const responseWithProof = await requestManaged(proof);
+    expect(responseWithProof.status, await responseWithProof.text()).toBe(202);
+    await orchestrator.drain();
+    expect(authorities.at(-1)).toEqual({ proof, clientRequestId, bodyDigest: expect.stringMatching(/^[a-f0-9]{64}$/) });
+    expect(JSON.stringify(await repository.get(owner, chatId))).not.toContain(proof);
 
   } finally {
     await orchestrator.close();

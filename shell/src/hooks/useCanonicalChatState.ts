@@ -50,6 +50,7 @@ import {
 import { createCanonicalChatAdmissionTracker, ChatAdmissionUnconfirmed, CHAT_ADMISSION_UNCONFIRMED, type PendingCanonicalTurn } from "@matrix-os/ui";
 import { canonicalTranscriptWithPendingSend, nextPendingCanonicalSend, optimisticCanonicalSendParts, type PendingCanonicalSend } from "./canonical-chat-pending-send";
 import { admitShellChatTurn, advanceChatRecordForRoutineReceipts } from "./canonical-chat-turn-admission";
+import { managedTerminalChatTurn } from "./managed-terminal-chat-turn";
 
 const ACTIVE_RUN_FALLBACK_POLL_MS = 2_000;
 const EVENT_INVALIDATION_COALESCE_MS = 200;
@@ -529,6 +530,11 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
       setSafeError("The selected project skill is unavailable in this Chat.");
       return false;
     }
+    const resolveManagedTerminalTurn = () => managedTerminalChatTurn(options, detailRef.current, activeChatIdRef.current);
+    if (options.managedTerminalControl && !resolveManagedTerminalTurn()) {
+      setSafeError("Select a terminal in the current Chat again.");
+      return false;
+    }
     submittingRef.current = true;
     latestAdmissionId.current = undefined;
     setSubmitting(true);
@@ -605,17 +611,25 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
         if (failedUpload?.status === "rejected") throw failedUpload.reason;
         const attachmentParts = uploadResults.flatMap((result) =>
           result.status === "fulfilled" ? [result.value] : []);
+        const managedTerminal = resolveManagedTerminalTurn();
+        if (options.managedTerminalControl && !managedTerminal) {
+          await removeUploads();
+          if (sourceIsSelected()) setSafeError("Select a terminal in the current Chat again.");
+          return false;
+        }
         record = advanceChatRecordForRoutineReceipts(record, detailRef.current);
         admissionAttempted = true;
         const parts: CanonicalChatMessagePart[] = [
           ...(text.trim() ? [{ type: "text" as const, text: options.promptText?.trim() || text.trim() }] : []),
           ...(options.resources ?? []).map((resource) => ({ type: "resource_reference" as const, resource })),
+          ...(managedTerminal?.parts ?? []),
           ...attachmentParts,
         ];
         const input = {
           clientRequestId: draftRequestId ?? options.clientRequestId ?? requestId(), baseRevision: record.chat.revision,
           parts, selection, interactionMode: options.interactionMode!, permissionMode: options.permissionMode!,
-          ...(projectSkillProjectId ? { executionRoot: { kind: "project" as const, projectId: projectSkillProjectId } } : {}),
+          ...(managedTerminal ? { executionRoot: managedTerminal.executionRoot }
+            : projectSkillProjectId ? { executionRoot: { kind: "project" as const, projectId: projectSkillProjectId } } : {}),
         };
         const requestScope = record.chat.id;
         let operation = record.activeRun && (options.resources?.length || projectSkillProjectId) ? "queue" as const : "send" as const;

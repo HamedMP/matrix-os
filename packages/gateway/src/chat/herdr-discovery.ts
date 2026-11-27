@@ -4,6 +4,7 @@ import type { DiscoveredMachine } from "@matrix-os/herdr-core-client/sessions";
 import type { DesktopLinkRegistry } from "../desktop-link/registry.js";
 import type { HerdrAdapter } from "../herdr/adapter.js";
 import { privatePreviewHerdrOwner } from "../herdr/private-preview.js";
+import type { ManagedTerminalBroker } from "./managed-terminal-source.js";
 
 export const HerdrDiscoveryActionSchema = HerdrDiscoveryQuerySchema.extend({ action: z.literal("discover") });
 type Query = z.infer<typeof HerdrDiscoveryActionSchema>;
@@ -30,6 +31,29 @@ const empty = (): Inventory => ({ machines: [] });
 
 function viaDesktop(deviceId: string, machine: string) {
   return "desktop:" + deviceId + "/machine:" + machine;
+}
+
+async function managedInventory(broker: ManagedTerminalBroker, input: Query, signal: AbortSignal): Promise<() => Inventory> {
+  const list = await broker.computers(signal);
+  const name = input.machineQuery?.toLowerCase();
+  const peers = list.computers.filter(row => (!name || row.name.toLowerCase().includes(name) || row.runtimeSlot.includes(name))
+    && (!input.machine || input.machine === `matrix:${row.machineId}`));
+  const loadTerminals = Boolean(input.machine || input.query);
+  const inspected = loadTerminals ? peers.slice(0, 4) : [];
+  const snapshots = await Promise.allSettled(inspected.map(peer => broker.terminals(peer.machineId, signal)));
+  const machines = peers.map((peer, index): Machine => {
+    const result = snapshots[index];
+    const terminalInventory = result?.status === "fulfilled" && result.value.available ? undefined
+      : result ? "unavailable" : "unknown";
+    return {
+      id: `matrix:${peer.machineId}`, name: peer.name, runtimeSlot: peer.runtimeSlot, source: "matrix", online: true,
+      state: "connected", terminalInventory, terminals: result?.status === "fulfilled" ? result.value.sessions : [],
+    };
+  });
+  return () => ({
+    machines, partial: list.partial || (loadTerminals && (inspected.length !== peers.length ||
+      machines.some(machine => machine.terminalInventory === "unavailable"))),
+  });
 }
 
 async function enrolledInventory(desktop: Desktop, input: Query, ref: { id: string; name: string }): Promise<Machine[]> {
@@ -104,9 +128,13 @@ async function desktopInventory(registry: DesktopLinkRegistry, desktop: Desktop,
 
 export async function discoverChatTerminals(
   adapter: Pick<HerdrAdapter, "discoverTerminals"> | null, input: Query, desktops?: DesktopLinkRegistry | null,
+  managed?: { broker: ManagedTerminalBroker; signal: AbortSignal },
 ) {
   const sources: Array<Promise<() => Inventory>> = [];
   const requestedMachine = input.machine?.replace(/^herdr:/, "machine:");
+  if (managed && (!requestedMachine || requestedMachine.startsWith("matrix:"))) {
+    sources.push(managedInventory(managed.broker, input, managed.signal));
+  }
   const needGateway = !requestedMachine || requestedMachine === "gateway" || requestedMachine.startsWith("machine:");
   if (adapter && needGateway) {
     sources.push(adapter.discoverTerminals().then(({ machines }) => () => ({
@@ -172,7 +200,8 @@ export async function discoverChatTerminals(
       machines: result.items.map(machine => ({
         id: machine.id, name: nameOf(machine), online: machine.online,
         ...(machine.terminalInventory ? { terminalInventory: machine.terminalInventory } : {}),
-        ...(machine.via ? { via: machine.via, source: machine.source, state: machine.state } : {}),
+        ...(machine.via ? { via: machine.via } : {}),
+        ...(machine.source ? { source: machine.source, state: machine.state } : {}),
         ...(machine.inventoryOnly ? { inventoryOnly: true } : {}),
         ...(machine.runtimeSlot ? { runtimeSlot: machine.runtimeSlot } : {}),
         ...(machine.core ? { core: machine.core } : {}),

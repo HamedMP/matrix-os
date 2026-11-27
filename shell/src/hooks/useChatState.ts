@@ -131,6 +131,8 @@ export interface ChatSubmitOptions {
   promptText?: string;
   /** The selected Skill belongs to this project’s primary checkout. */
   projectSkillProjectId?: string;
+  /** Ephemeral owner selection made in the current Web Chat's terminal picker. */
+  managedTerminalControl?: import("./managed-terminal-chat-turn").ManagedTerminalChatSelection;
   instanceId?: string;
   model?: string;
   interactionMode?: string;

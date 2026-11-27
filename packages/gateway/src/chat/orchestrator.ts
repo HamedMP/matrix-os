@@ -653,6 +653,7 @@ export class CanonicalChatOrchestrator {
         parts: message.parts,
         ...(run.ownerSubmittedHerdrTurn ? { ownerSubmittedHerdrTurn: true as const } : {}),
         ...(run.ownerSubmittedHerdrDiscovery ? { ownerSubmittedHerdrDiscovery: true as const } : {}),
+        ...(run.managedTerminalAuthority ? { managedTerminalAuthority: run.managedTerminalAuthority } : {}),
         selection: run.selection,
         interactionMode: run.interactionMode,
         permissionMode: run.permissionMode,
