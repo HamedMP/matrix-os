@@ -51,7 +51,7 @@ async function fixture(stopped: boolean) {
         fence, pendingCount: () => 0, intervalMs:1000 });
     const stop = vi.fn(async (input: {chatId:string;runId:string}) => {
         if (!stopped)
-            throw new Error('No actual stop evidence');
+            throw new ManagedPiStopUnavailable();
         await lifecycle!.onStopped({ version: 1, ownerId: owner.ownerId, chatId: input.chatId, runId: input.runId, runtimeHandle: `runtime_${'a'.repeat(32)}`, executionGeneration: '1', stoppedAt: new Date().toISOString() });
     });
     lifecycle.bindManaged({ stopAndDrain: stop });
@@ -75,7 +75,7 @@ describe('durable exact-owner pilot copy cleanup', () => {
     });
     it('withholds completion on missing runtime proof and preserves copied data; persisted proofs support a later pass', async () => {
         const f = await fixture(false);
-        await expect(lifecycle!.purgeAccount(command)).rejects.toThrow();
+        expect(await lifecycle!.purgeAccount(command)).toMatchObject({ complete: false, pending: 1, unresolved: 0 });
         expect(JSON.stringify(await f.repository.getDetailPage(owner, 'chat_one', { limit: 20 }))).toContain('synthetic Google-derived result');
         expect((await f.contexts.inspect(owner.ownerId, 'chat_one'))?.availability).toBe('purging');
         expect(f.fence.blocked).toBe(false);
@@ -83,6 +83,7 @@ describe('durable exact-owner pilot copy cleanup', () => {
             complete: boolean;
         }> `SELECT complete FROM google_pilot_purge_commands`.execute(f.repository.kysely)).rows[0]?.complete).toBe(false);
         await lifecycle!.onStopped({ version: 1, ownerId: owner.ownerId, chatId: 'chat_one', runId: 'run_one', runtimeHandle: `runtime_${'a'.repeat(32)}`, executionGeneration: '1', stoppedAt: new Date().toISOString() });
+        await sql`UPDATE google_copy_purge_jobs SET next_attempt=clock_timestamp()`.execute(f.repository.kysely);
         expect((await lifecycle!.purgeAccount(command)).complete).toBe(true);
     });
     it('never claims another account or owner job before their separate admission', async () => {
@@ -131,7 +132,8 @@ describe('durable exact-owner pilot copy cleanup', () => {
         await f.contexts.mark({ownerId:owner.ownerId,chatId:'chat_two',googleAccountId:account,consentId:source.consentId,profileId:source.profileId,profileRevision:source.profileRevision,purposeId:source.purposeId,expiresAt:source.expiresAt,retentionDeadline:source.expiresAt});
         await f.repository.appendRunActivities(owner,'chat_two','run_two',[{id:'event:pilot.tool',chatId:'chat_two',runId:'run_two',occurredAt:new Date().toISOString(),type:'agent.activity',activityId:'tool_pilot',kind:'command',label:'Synthetic',status:'running',summary:'synthetic retained activity'}]);
         // run_two stays an active nonmanaged (codex) run: only resolving the hashed copy to chat_two refuses it.
-        await expect(lifecycle!.purgeAccount(command)).rejects.toThrow();
+        expect(await lifecycle!.purgeAccount(command)).toMatchObject({ complete: false, pending: 1, unresolved: 0 });
+        expect(JSON.stringify(await f.repository.getDetailPage(owner, 'chat_one', { limit: 20 }))).not.toContain('synthetic Google-derived result');
         expect(JSON.stringify((await f.repository.kysely.selectFrom('chat_run_events').select('event').where('chat_id','=','chat_two').execute()))).toContain('synthetic retained activity');
         expect(f.stop.mock.calls.some(([input])=>input.runId==='run_two')).toBe(false);
     });
@@ -151,6 +153,7 @@ describe('durable exact-owner pilot copy cleanup', () => {
             type: 'agent.activity', activityId: 'tool_unverified', kind: 'command', label: 'Synthetic',
             status: 'running', summary: retained,
         }]);
+        await sql`UPDATE chat_runs SET driver_kind='matrix_pi' WHERE id='run_two'`.execute(f.repository.kysely);
         await f.repository.finishRun(owner, { chatId: 'chat_two', runId: 'run_two', outcome: 'completed', completedAt: new Date().toISOString() });
         const stop = f.stop.getMockImplementation()!;
         f.stop.mockImplementation(async input => {
@@ -158,12 +161,28 @@ describe('durable exact-owner pilot copy cleanup', () => {
             return stop(input);
         });
 
-        expect(await lifecycle!.purgeAccount(command)).toMatchObject({ complete: false, pending: 0, unresolved: 1 });
+        expect(await lifecycle!.purgeAccount(command)).toMatchObject({ complete: false, pending: 1, unresolved: 0 });
+        expect((await sql`SELECT attempts FROM google_copy_purge_jobs WHERE state='pending'`.execute(f.repository.kysely)).rows)
+            .toEqual([{ attempts: 0 }]);
         expect(JSON.stringify(await f.repository.getDetailPage(owner, 'chat_one', { limit: 20 }))).not.toContain('synthetic Google-derived result');
-        const copy = kind === 'activity'
-            ? await f.repository.kysely.selectFrom('chat_run_events').select('event').where('chat_id', '=', 'chat_two').execute()
-            : await f.repository.kysely.selectFrom('chat_runs').select('context_snapshot').where('id', '=', 'run_two').execute();
-        expect(JSON.stringify(copy)).toContain(retained);
+        const readCopy = () => kind === 'activity'
+            ? f.repository.kysely.selectFrom('chat_run_events').select('event').where('chat_id', '=', 'chat_two').execute()
+            : f.repository.kysely.selectFrom('chat_runs').select('context_snapshot').where('id', '=', 'run_two').execute();
+        expect(JSON.stringify(await readCopy())).toContain(retained);
+        if (kind === 'activity') {
+            // Older builds settled a missing stop receipt as terminal unavailable.
+            await sql`UPDATE google_copy_purge_jobs SET state='unresolved',reason='unavailable',attempts=1
+                WHERE state='pending'`.execute(f.repository.kysely);
+        }
+        await lifecycle!.onStopped({ version: 1, ownerId: owner.ownerId, chatId: 'chat_two', runId: 'run_two',
+            runtimeHandle: `runtime_${'b'.repeat(32)}`, executionGeneration: '1', stoppedAt: new Date().toISOString() });
+        await sql`UPDATE google_copy_purge_jobs SET next_attempt=clock_timestamp() WHERE state<>'deleted'`.execute(f.repository.kysely);
+        lifecycle!.start();
+        await vi.waitFor(async () => {
+            expect((await sql`SELECT complete FROM google_pilot_purge_commands`.execute(f.repository.kysely)).rows)
+                .toEqual([{ complete: true }]);
+        }, { timeout: 4000, interval: 50 });
+        expect(JSON.stringify(await readCopy())).not.toContain(retained);
     });
     it('does not let finished nonmanaged runtime history block registered-copy purge', async () => {
         const f = await fixture(true);
@@ -187,7 +206,7 @@ describe('durable exact-owner pilot copy cleanup', () => {
     it('still refuses purge while a nonmanaged run is active', async () => {
         const f = await fixture(true);
         await sql `UPDATE chat_runs SET driver_kind='codex',status='running',started_at=now() WHERE id='run_one'`.execute(f.repository.kysely);
-        await expect(lifecycle!.purgeAccount(command)).rejects.toThrow();
+        expect(await lifecycle!.purgeAccount(command)).toMatchObject({ complete: false, pending: 1, unresolved: 0 });
         expect(f.stop).not.toHaveBeenCalled();
         expect(JSON.stringify(await f.repository.getDetailPage(owner, 'chat_one', { limit: 20 }))).toContain('synthetic Google-derived result');
     });
