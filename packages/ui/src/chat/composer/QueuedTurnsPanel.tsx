@@ -6,6 +6,11 @@ import { useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode } 
 
 import { hasChatMentionParts } from "../../chat-agents/mentions.js";
 import { SubmittedBotAnswers, isBotAnswerContinuation } from "../../chat-agents/bots/SubmittedBotAnswers.js";
+import { isPrivateAutomationRequest } from "../scheduled-message.js";
+
+function isManualQueueRow(turn: CanonicalChatQueuedTurn): boolean {
+  return !isBotAnswerContinuation(turn) && !isPrivateAutomationRequest(turn.chatId, turn.clientRequestId);
+}
 
 function queuedTurnLabel(turn: CanonicalChatQueuedTurn): string {
   for (const part of turn.parts) {
@@ -82,7 +87,7 @@ export function QueuedTurnsPanel({
   const [dragTargetId, setDragTargetId] = useState<string | null>(null);
   if (turns.length === 0) return null;
   const answers = turns.filter(isBotAnswerContinuation);
-  const ordered = turns.filter(turn => !isBotAnswerContinuation(turn)).sort((left, right) => left.position - right.position);
+  const ordered = turns.filter(isManualQueueRow).sort((left, right) => left.position - right.position);
   if (!ordered.length) return <SubmittedBotAnswers turns={answers} onCancel={onCancel} disabled={disabled || pendingAction !== null} />;
 
   const reorder = (queuedTurnId: string, targetTurnId: string) => {
@@ -95,7 +100,7 @@ export function QueuedTurnsPanel({
     next.splice(targetIndex, 0, moved);
     let index = 0;
     const all = [...turns].sort((left, right) => left.position - right.position);
-    onReorder?.(all.map(turn => isBotAnswerContinuation(turn) ? turn.id : next[index++]!.id), queuedTurnId);
+    onReorder?.(all.map(turn => isManualQueueRow(turn) ? next[index++]!.id : turn.id), queuedTurnId);
   };
 
   const keyboardReorder = (

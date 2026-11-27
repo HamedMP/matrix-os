@@ -42,8 +42,10 @@ export function applyCanonicalChatContent(
   const sortedMessages = messages.sort((a, b) => a.seq - b.seq);
   const windowMessages = sortedMessages.slice(-200);
   const turnIds = windowMessages.flatMap((message) => message.turnId ? [message.turnId] : []);
+  // Keep the owning turn for each message in the bounded window. Presentation
+  // uses that identity to distinguish automatic input from a message the user sent.
   const turns = upsert(detail.turns, content.turns).filter((turn) => turnIds.includes(turn.id))
-    .sort((a, b) => a.createdAt.localeCompare(b.createdAt)).slice(-100);
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   const runIds = windowMessages.flatMap((message) => message.runId ? [message.runId] : []);
   const runs = upsert(detail.runs, content.runs)
     .filter((run) => runIds.includes(run.id) || turns.some((turn) => turn.id === run.turnId))

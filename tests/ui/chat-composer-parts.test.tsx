@@ -48,6 +48,19 @@ describe("shared Chat composer parts", () => {
     expect(edit.closest<HTMLElement>('[role="menu"]')?.style.zIndex).toBe("11000");
   });
 
+  it("hides an automatic Slack input while retaining its position during manual queue edits", () => {
+    const onReorder = vi.fn();
+    const automatic = { ...turn, id: "cqturn_automatic", position: 2, clientRequestId: `req_slack_summary_${"a".repeat(40)}`,
+      parts: [{ type: "text" as const, text: "Summarize this Slack update" }],
+    };
+    const sameTextTypedByUser = { ...automatic, id: "cqturn_manual", position: 3, clientRequestId: "req_manual" };
+    render(<QueuedTurnsPanel turns={[turn, automatic, sameTextTypedByUser]} onSteer={vi.fn()} onCancel={vi.fn()} onReorder={onReorder} />);
+
+    expect(screen.getAllByText("Summarize this Slack update")).toHaveLength(1);
+    fireEvent.keyDown(screen.getByRole("button", { name: "Reorder Summarize this Slack update" }), { key: "ArrowUp" });
+    expect(onReorder).toHaveBeenCalledWith([sameTextTypedByUser.id, automatic.id, turn.id], sameTextTypedByUser.id);
+  });
+
   it("keeps the reorder handle for hosts that can reorder", () => {
     render(<QueuedTurnsPanel turns={[turn]} onSteer={vi.fn()} onCancel={vi.fn()} onEdit={vi.fn()} onReorder={vi.fn()} />);
     expect(screen.getByRole("button", { name: "Reorder Check the logs" })).toBeInTheDocument();
