@@ -9,6 +9,8 @@ import type { AppRegistry } from "../app-db-registry.js";
 import type { QueryEngine } from "../app-db-query.js";
 import type { KvStore } from "../app-db-kv.js";
 import type { ServerMessage } from "./types.js";
+import type { LegacyProjectPathAdmission } from "../collaboration/project-path-admission.js";
+import { registerBridgeFileRoutes } from "./bridge-file-routes.js";
 
 export interface BridgeDataRouteOptions {
   homePath: string;
@@ -20,6 +22,8 @@ export interface BridgeDataRouteOptions {
   queryBodyLimit: MiddlewareHandler;
   dataBodyLimit: MiddlewareHandler;
   logUnexpectedJsonParseFailure(context: string, error: unknown): void;
+  /** The owner file routes' collaboration fence, applied to app file writes; undefined without a collaboration database. */
+  projectPathAdmission?: LegacyProjectPathAdmission | undefined;
 }
 
 /**
@@ -48,6 +52,9 @@ export function registerBridgeDataRoutes(app: Hono, options: BridgeDataRouteOpti
     homePath, queryEngine, appRegistry, kvStore, ensureAppProvisioned,
     broadcast, queryBodyLimit, dataBodyLimit, logUnexpectedJsonParseFailure,
   } = options;
+  registerBridgeFileRoutes(app, {
+    homePath, ...(options.projectPathAdmission ? { projectPathAdmission: options.projectPathAdmission } : {}),
+  });
   // Structured query API (Postgres-backed)
   app.post("/api/bridge/query", queryBodyLimit, async (c) => {
     if (!queryEngine || !appRegistry) {

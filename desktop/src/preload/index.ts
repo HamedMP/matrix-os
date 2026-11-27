@@ -23,6 +23,7 @@ import {
 } from "../shared/native-app-gateway";
 
 import { APP_CAPABILITY_CHANNEL, createNativeAppCapabilityClient } from "../shared/native-app-capabilities";
+import { APP_FILES_CHANNEL, NATIVE_APP_OPEN_REQUEST_CHANNEL, createNativeAppFilesBridge, watchOpenRequestSignals } from "../shared/native-app-files";
 import { NATIVE_APP_COLLABORATION_CHANNEL, NATIVE_COLLABORATION_ERROR_KEY, NativeAppCollaborationError, createNativeAppCollaboration } from "../shared/native-app-collaboration";
 import { CollaborationSafeErrorCodeSchema } from "@matrix-os/contracts";
 import { CollaborativeAppParticipantSchema } from "@matrix-os/contracts";
@@ -72,6 +73,11 @@ if (process.argv.includes(NATIVE_APP_BRIDGE_ARG)) {
     openChat: createNativeAppOpenChatClient((request) => ipcRenderer.invoke(NATIVE_APP_OPEN_CHAT_CHANNEL, request)),
     generate: createAppGenerateClient((context) => ipcRenderer.invoke(APP_GENERATE_CHANNEL, context)),
     ai: createAppAiClient((input) => ipcRenderer.invoke(APP_AI_CHANNEL, input), () => ipcRenderer.invoke(APP_AI_ROUTES_CHANNEL, {})),
+    files: createNativeAppFilesBridge({
+      invokeFiles: (input) => ipcRenderer.invoke(APP_FILES_CHANNEL, input),
+      invokeOpenRequest: (request) => ipcRenderer.invoke(NATIVE_APP_OPEN_REQUEST_CHANNEL, request),
+      watchOpenRequests: (check) => watchOpenRequestSignals(window, check),
+    }),
     // Advertise only capabilities this view can use. Other apps retain the
     // pre-#1624 surface so feature detection does not select an unusable API.
     ...((process.argv.includes(NATIVE_APP_ACTIVITY_BRIDGE_ARG) || process.argv.includes(NATIVE_APP_GALLERY_BRIDGE_ARG) || process.argv.includes(NATIVE_APP_BROWSER_BRIDGE_ARG)) ? {
@@ -86,9 +92,20 @@ if (process.argv.includes(NATIVE_APP_BRIDGE_ARG)) {
   // wrapper in the page world so only the participant field can track sharing.
   contextBridge.executeInMainWorld({
     func: (participant) => {
-      const native = (window as unknown as { __matrixNativeBridge: { collaboration: Record<string, unknown> } }).__matrixNativeBridge;
+      type FileResult = { ok: boolean; value?: unknown; code?: string; message?: string };
+      const native = (window as unknown as { __matrixNativeBridge: { collaboration: Record<string, unknown>; files: Record<string, (...args: unknown[]) => Promise<FileResult>> } }).__matrixNativeBridge;
+      // contextBridge drops an error's name and code, so the preload returns a
+      // result and the page world throws the BridgeFileError shape from it.
+      const settle = (result: FileResult) => {
+        if (result?.ok) return result.value;
+        const error = Object.assign(new Error(result?.message || "File access is unavailable"), { code: result?.code || "unavailable" });
+        error.name = "BridgeFileError";
+        throw error;
+      };
+      const files = Object.freeze({ ...native.files, ...Object.fromEntries(["list", "stat", "read", "write", "mkdir"].map((method) =>
+        [method, (...args: unknown[]) => native.files[method]!(...args).then(settle)])) });
       Object.defineProperty(window, "MatrixOS", {
-        value: Object.freeze({ ...native, collaboration: { ...native.collaboration, participant } }),
+        value: Object.freeze({ ...native, files, collaboration: { ...native.collaboration, participant } }),
         configurable: false, writable: false,
       });
     },

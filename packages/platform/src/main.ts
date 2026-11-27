@@ -138,7 +138,7 @@ import {
   resolveAppDomainIdentity,
 } from './session-routing-identity.js';
 import { createSessionRoutingMiddleware } from './session-routing-middleware.js';
-import { runtimeProxyBodyLimitBytes } from './runtime-proxy-fetch.js';
+import { runtimeProxyBodyLimit } from './runtime-proxy-fetch.js';
 import { createPlatformSubstrateRegistry } from './substrates/platform-substrates.js';
 import type { SubstrateRegistry } from './substrates/registry.js';
 import { proxyLegacyRouteToSubstrate } from './substrates/legacy-proxy-route.js';
@@ -706,16 +706,9 @@ export function createApp(deps: {
   // Session-based routing:
   // - app.matrix-os.com -> Clerk session -> Matrix OS shell/gateway
   // - code.matrix-os.com -> Clerk session -> code-server on the user's VPS
-  const proxyBodyLimit = bodyLimit({ maxSize: PROXY_BODY_LIMIT });
-  const speechUploadBodyLimit = bodyLimit({
-    maxSize: runtimeProxyBodyLimitBytes('POST', '/api/speech/transcriptions', PROXY_BODY_LIMIT),
-  });
   const substrates = deps.substrateRegistry ?? createPlatformSubstrateRegistry(db, appEnv);
-  app.use('*', (c, next) => (
-    runtimeProxyBodyLimitBytes(c.req.method, c.req.path, PROXY_BODY_LIMIT) > PROXY_BODY_LIMIT
-      ? speechUploadBodyLimit(c, next)
-      : proxyBodyLimit(c, next)
-  ), createSessionRoutingMiddleware({
+  // A ten-minute dictation and a document save are larger than the general limit; only their exact paths get more.
+  app.use('*', runtimeProxyBodyLimit(PROXY_BODY_LIMIT), createSessionRoutingMiddleware({
     db,
     docker,
     orchestrator,

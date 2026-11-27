@@ -6,7 +6,9 @@ import type { ChatExecutionRootResolver } from "../chat/execution-root.js";
 import { createCodingAgentProjectMutationService } from "../coding-agents/project-mutations.js";
 import { createCodingAgentRoutes, type CodingAgentRouteDeps } from "../coding-agents/routes.js";
 import type { LegacyProjectOperationAdmission } from "../collaboration/project-fence.js";
-import { createLegacyProjectPathAdmission } from "../collaboration/project-path-admission.js";
+import { resolveRealHomeLocation } from "../collaboration/home-location.js";
+import { createLegacyProjectPathAdmission, type LegacyProjectPathAdmission } from "../collaboration/project-path-admission.js";
+import { appFileFenceTarget } from "../app-files/paths.js";
 import type { FilePreviewService } from "../file-preview-service.js";
 import { registerProjectAgentContextRoute } from "../project-agent-context-routes.js";
 import type { createProjectManager } from "../project-manager.js";
@@ -47,21 +49,48 @@ interface ProjectFileOptions {
   projectOperationAdmission?: LegacyProjectOperationAdmission;
 }
 
+/**
+ * The write fence over the owner's managed projects, or undefined without a
+ * collaboration database. Shared by the owner file routes and the app file
+ * bridge, so both refuse the same writes. Paths are matched in the home's
+ * real location, where folder projects record their roots, so a home
+ * reached through a link is fenced like the unlinked home.
+ */
+export function createGatewayProjectPathAdmission(
+  options: Pick<ProjectFileOptions, "homePath" | "projects" | "projectOperationAdmission">,
+  resolveTarget?: (homePath: string, path: string) => string | null,
+): LegacyProjectPathAdmission | undefined {
+  const { homePath, projects, projectOperationAdmission } = options;
+  if (!projectOperationAdmission) return undefined;
+  return createLegacyProjectPathAdmission({
+    homePath,
+    projectOperationAdmission,
+    resolveHomeLocation: resolveRealHomeLocation,
+    ...(resolveTarget ? { resolveTarget } : {}),
+    listOwnerProjects: async (ownerType, ownerId) => {
+      const result = await projects.listManagedProjects({
+        visibility: "all",
+        ownerScope: { type: ownerType === "organization" ? "org" : "user", id: ownerId },
+      });
+      return result.projects.map(project => ({ id: project.id, localPath: project.localPath }));
+    },
+  });
+}
+
+/**
+ * The same fence for the app file bridge. It matches paths without
+ * synchronous filesystem calls, so an app save or folder creation never
+ * blocks other gateway requests while the fence is consulted.
+ */
+export function createGatewayAppFileProjectPathAdmission(
+  options: Pick<ProjectFileOptions, "homePath" | "projects" | "projectOperationAdmission">,
+): LegacyProjectPathAdmission | undefined {
+  return createGatewayProjectPathAdmission(options, appFileFenceTarget);
+}
+
 export function registerGatewayProjectFileRoutes(app: Hono, options: ProjectFileOptions): void {
-  const { homePath, filePreviewService, executionRoots, projects, projectOperationAdmission } = options;
-  const projectPathAdmission = projectOperationAdmission
-    ? createLegacyProjectPathAdmission({
-        homePath,
-        projectOperationAdmission,
-        listOwnerProjects: async (ownerType, ownerId) => {
-          const result = await projects.listManagedProjects({
-            visibility: "all",
-            ownerScope: { type: ownerType === "organization" ? "org" : "user", id: ownerId },
-          });
-          return result.projects.map(project => ({ id: project.id, localPath: project.localPath }));
-        },
-      })
-    : undefined;
+  const { homePath, filePreviewService, executionRoots } = options;
+  const projectPathAdmission = createGatewayProjectPathAdmission(options);
   registerFileRoutes(app, {
     homePath,
     filePreviewService,

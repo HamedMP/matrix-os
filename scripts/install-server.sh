@@ -725,6 +725,13 @@ EOF
   [ "$access" = "public" ] || nginx_identity_block
   [ "$browser" != "on" ] || nginx_browser_viewer_block
   cat <<EOF
+  # matrix-app-file-upload-limit-v1
+  location = /api/bridge/files {
+    client_max_body_size 15m;
+    include /opt/matrix/env/gateway-auth-token.conf;
+    proxy_pass http://127.0.0.1:4000;
+  }
+
   # matrix-speech-upload-limit-v1
   location = /api/speech/transcriptions {
     client_max_body_size 21m;

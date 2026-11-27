@@ -1,6 +1,7 @@
-import { dirname, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { z } from "zod/v4";
-import { resolveWithinHome, resolveWritableFileApiPath } from "../path-security.js";
+import { resolveWritableFileApiPath } from "../path-security.js";
+import type { HomeLocationResolver } from "./home-location.js";
 import {
   ProjectFenceError,
   type LegacyProjectOperationAdmission,
@@ -43,8 +44,40 @@ export function createLegacyProjectPathAdmission(options: {
     localPath: string;
   }>>;
   projectOperationAdmission: LegacyProjectOperationAdmission;
+  /**
+   * Maps a home-relative path to the absolute location matched against
+   * project roots, or null to leave it unfenced. Defaults to the synchronous
+   * File API resolver; request routes that must not block on disk pass one
+   * that does no synchronous filesystem work.
+   */
+  resolveTarget?: (homePath: string, path: string) => string | null | Promise<string | null>;
+  /**
+   * Resolves the home's real location. When set, project roots and targets
+   * spelled under the configured home are both moved into that location
+   * before matching, so a home reached through a link still matches a
+   * project recorded under its real root. A home that cannot be resolved
+   * refuses the operation instead of running it unfenced.
+   */
+  resolveHomeLocation?: HomeLocationResolver;
 }): LegacyProjectPathAdmission {
   const homePath = resolve(options.homePath);
+  const resolveTarget = options.resolveTarget ?? resolveWritableFileApiPath;
+
+  /** `target` relative to `base`, or null when it lies outside it. */
+  function within(base: string, target: string): string | null {
+    const rel = relative(base, target);
+    return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel)) ? rel : null;
+  }
+
+  async function matchHomeFor(): Promise<string> {
+    if (!options.resolveHomeLocation) return homePath;
+    try {
+      return resolve(await options.resolveHomeLocation(homePath));
+    } catch (error: unknown) {
+      console.warn("[project-path-admission] home location unavailable", error instanceof Error ? error.name : "UnknownError");
+      throw new ProjectFenceError("unavailable");
+    }
+  }
 
   async function admit<T>(
     rawInput: {
@@ -70,11 +103,19 @@ export function createLegacyProjectPathAdmission(options: {
       await options.listOwnerProjects(input.data.ownerType, input.data.ownerId),
     );
     if (!projects.success) throw new ProjectFenceError("unavailable");
+    const matchHome = await matchHomeFor();
+    /** A location under the configured home or its real location, moved into the real one; null outside both. */
+    const toMatchLocation = (location: string): string | null => {
+      const lexical = resolve(homePath, location);
+      const underConfigured = within(homePath, lexical);
+      if (underConfigured !== null) return join(matchHome, underConfigured);
+      return within(matchHome, lexical) === null ? null : lexical;
+    };
     // At most MAX_OWNER_PROJECTS keys and values are inserted. Ancestor lookup
     // avoids multiplying every maintenance path by the full project inventory.
     const projectsByRoot = new Map<string, typeof projects.data>();
     for (const project of projects.data) {
-      const root = resolveWithinHome(homePath, project.localPath);
+      const root = toMatchLocation(project.localPath);
       if (root === null) continue;
       const entries = projectsByRoot.get(root);
       if (entries) entries.push(project);
@@ -87,8 +128,11 @@ export function createLegacyProjectPathAdmission(options: {
       }
       const path = PathSchema.safeParse(candidate);
       if (!path.success) throw new ProjectFenceError("invalid");
-      const target = resolveWritableFileApiPath(homePath, path.data);
-      if (!target) continue;
+      const resolved = await resolveTarget(homePath, path.data);
+      if (!resolved) continue;
+      // A resolver only answers locations inside home; anything else is refused, never left unfenced.
+      const target = toMatchLocation(resolved);
+      if (target === null) throw new ProjectFenceError("invalid");
       let ancestor = target;
       for (;;) {
         for (const project of projectsByRoot.get(ancestor) ?? []) {
@@ -96,7 +140,7 @@ export function createLegacyProjectPathAdmission(options: {
           unique.push(project);
           if (unique.length > MAX_MATCHED_PROJECTS) throw new ProjectFenceError("capacity");
         }
-        if (ancestor === homePath) break;
+        if (ancestor === matchHome) break;
         const parent = dirname(ancestor);
         if (parent === ancestor) break;
         ancestor = parent;

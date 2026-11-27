@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fetchRuntimeProxy } from "../../packages/platform/src/session-routing-middleware.js";
-import { runtimeProxyBodyLimitBytes } from "../../packages/platform/src/runtime-proxy-fetch.js";
+import { Hono } from "hono";
+import { runtimeProxyBodyLimit, runtimeProxyBodyLimitBytes } from "../../packages/platform/src/runtime-proxy-fetch.js";
+import { MAX_APP_FILE_REQUEST_BYTES } from "../../packages/contracts/src/app-files";
 
 describe("runtime proxy response streaming", () => {
   it.each([
@@ -39,6 +41,45 @@ describe("runtime proxy response streaming", () => {
     ] as const) {
       expect(runtimeProxyBodyLimitBytes(method, path, general)).toBe(general);
     }
+  });
+  it("forwards the save of a 10 MiB document while every other proxied body keeps the general limit", () => {
+    // Fault: the session proxy answered 413 for a document save over about 7.5 MiB (base64 in a JSON
+    // envelope) before it reached the owner's machine, so a file that opened could never be saved.
+    const general = 10 * 1024 * 1024;
+    for (const path of [
+      "/api/bridge/files",
+      "/vm/alice/api/bridge/files",
+      "/vm/alice/~runtime/studio/api/bridge/files",
+    ]) {
+      expect(runtimeProxyBodyLimitBytes("POST", path, general)).toBe(MAX_APP_FILE_REQUEST_BYTES);
+    }
+    expect(MAX_APP_FILE_REQUEST_BYTES).toBeGreaterThan(general);
+    for (const [method, path] of [
+      ["POST", "/api/bridge/data"],
+      ["POST", "/api/bridge/files/extra"],
+      ["PUT", "/api/bridge/files"],
+      ["POST", "/vm/alice/extra/api/bridge/files"],
+      ["POST", "/api/files/upload"],
+    ] as const) {
+      expect(runtimeProxyBodyLimitBytes(method, path, general)).toBe(general);
+    }
+    // Each exception keeps its own bound: a document save never gets the larger dictation limit.
+    expect(runtimeProxyBodyLimitBytes("POST", "/api/speech/transcriptions", general)).toBeGreaterThan(MAX_APP_FILE_REQUEST_BYTES);
+  });
+  it("applies each limit to real request bodies", async () => {
+    const general = 1024;
+    const app = new Hono();
+    app.use("*", runtimeProxyBodyLimit(general));
+    app.post("*", async (context) => context.json({ bytes: (await context.req.arrayBuffer()).byteLength }));
+    const post = (path: string, bytes: number) => app.request(path, { method: "POST", body: new Uint8Array(bytes) });
+    expect((await post("/api/other", general)).status).toBe(200);
+    expect((await post("/api/other", general + 1)).status).toBe(413);
+    const save = await post("/vm/alice/api/bridge/files", MAX_APP_FILE_REQUEST_BYTES);
+    expect(save.status).toBe(200);
+    expect(await save.json()).toEqual({ bytes: MAX_APP_FILE_REQUEST_BYTES });
+    expect((await post("/api/bridge/files", MAX_APP_FILE_REQUEST_BYTES + 1)).status).toBe(413);
+    // The dictation path keeps its own, larger bound.
+    expect((await post("/api/speech/transcriptions", MAX_APP_FILE_REQUEST_BYTES + 1)).status).toBe(200);
   });
   afterEach(() => {
     vi.useRealTimers();

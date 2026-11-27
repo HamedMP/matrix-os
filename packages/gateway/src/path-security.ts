@@ -53,6 +53,18 @@ export function isProtectedHomeSubpath(homePath: string, resolvedPath: string): 
   return PROTECTED_HOME_PREFIXES.includes(firstSegment);
 }
 
+/**
+ * The denied-subtree check on the requested name alone, with no disk access.
+ * Only for callers that refuse every symlink component asynchronously
+ * themselves, so no alias can reach a denied subtree under another name.
+ */
+export function isLexicallyDeniedFileApiPath(homePath: string, requestedPath: string): boolean {
+  const resolved = resolveWithinHome(homePath, requestedPath);
+  if (!resolved) return true;
+  const rel = relative(resolve(homePath), resolved).split(sep).join("/");
+  return DENIED_FILE_API_PREFIXES.some(prefix => rel === prefix || rel.startsWith(`${prefix}/`));
+}
+
 export function isDeniedFileApiPath(homePath: string, requestedPath: string): boolean {
   const resolved = resolveWithinHome(homePath, requestedPath);
   if (!resolved) return true;
