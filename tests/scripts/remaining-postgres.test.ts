@@ -196,6 +196,17 @@ describe("remaining real PostgreSQL qualification", () => {
     expect(report.qualified).toBe(false);
     expect(report.batches[1].error).toMatch(/total.*budget/i);
   });
+
+  it("gives each batch a share of the total deadline", () => {
+    const files = Array.from({ length: 21 }, (_, index) => `tests/gateway/budget-${String(index).padStart(2, "0")}.test.ts`);
+    const { root } = fixture({ [remaining]: "// no real database needed", ...Object.fromEntries(files.map(file => [file, "process.env.MATRIX_TEST_POSTGRES_URL;"])) });
+    let clock = 0;
+    const writeReport = executor(root);
+    // Six batches at 50s each need 300s: more than the old fixed 240s, within 6 x 60s.
+    const execute = vi.fn((...args: Parameters<typeof writeReport>) => { const result = writeReport(...args); clock += 50_000; return result; });
+    expect(runRemainingPostgres(root, env, execute, join(root, "output"), files, () => clock)).toBe(0);
+    expect(execute).toHaveBeenCalledTimes(6);
+  });
 });
 
 it("assigns the current checkout's real PostgreSQL suites to executable hosted lanes", () => {
