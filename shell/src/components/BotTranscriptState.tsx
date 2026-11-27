@@ -1,5 +1,5 @@
 import { BotRunMessageBody, BotUnassignedMessageBody, RoutineOccurrenceMessage, RoutineMessageReadNotice, routineMessageTimeline, useRoutineMessageState, type RoutineOccurrence } from "@matrix-os/ui";
-import {Fragment,useState,type ReactNode} from "react";
+import {Fragment,type ReactNode} from "react";
 import type { ChatMessage, MessageGroup } from "@/lib/chat";
 
 const messagesFor = (group: MessageGroup): ChatMessage[] => group.type === "message" ? [group.message] : group.messages;
@@ -39,19 +39,13 @@ export function BotTranscriptMessages({groups,children}:{groups:MessageGroup[];c
   const state=useRoutineMessageState();
   const rows=routineMessageTimeline(groups,state?.occurrences??[],group=>group.type==="message"&&group.message.role==="user"?group.message.metadata?.routineRequestId:undefined,
     group=>group.type==="message"?group.message.timestamp:group.messages[0]!.timestamp);
-  return <>{rows.map(row=>row.kind==="occurrence"?<RoutineOccurrenceMessage key={`scheduled:${row.occurrence.fire.fireId}`} occurrence={row.occurrence}/>
+  return <>{rows.map(row=>row.kind==="occurrence"
+    ? row.occurrence.fire.status === "completed" ? null : <RoutineOccurrenceMessage key={`scheduled:${row.occurrence.fire.fireId}`} occurrence={row.occurrence}/>
     :<Fragment key={row.value.type==="message"?row.value.message.id:row.value.messages[0]!.id}>{children(row.value,groups.indexOf(row.value),row.occurrence)}</Fragment>)}<RoutineMessageReadNotice/></>;
 }
 
 /** An unadmitted fire is content even when the server has not admitted any Chat turns. */
 export function BotTranscriptLayout({empty,children}:{empty:boolean;children:(empty:boolean)=>ReactNode}){
   const state=useRoutineMessageState();
-  return children(empty&&!(state?.occurrences.length));
-}
-
-export function BotScheduledInputText({text,scheduled}:{text:string;scheduled:boolean}){
-  const [expanded,setExpanded]=useState(false);
-  const long=scheduled&&(text.length>200||text.split("\n").length>3);
-  return <><span className={`whitespace-pre-wrap break-words ${long&&!expanded?"line-clamp-3":""}`}>{text}</span>
-    {long?<button type="button" aria-expanded={expanded} className="mt-2 text-sm text-muted-foreground focus-visible:outline-2 focus-visible:outline-offset-2" onClick={()=>setExpanded(value=>!value)}>{expanded?"Show less":"Show more"}</button>:null}</>;
+  return children(empty&&!state?.occurrences.some(({ fire })=>fire.status !== "completed"));
 }
