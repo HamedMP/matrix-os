@@ -5,8 +5,7 @@ export interface ComposerMentionAction {
   kind: "preview" | "terminal";
   keywords: string;
   consumeTrigger?: true;
-  slashCommand?: string;
-  select: (queryDraft: string, remainingDraft?: string) => void;
+  select: (queryDraft: string) => void;
 }
 
 export function ComposerMentionActions({ actions, selectedIndex, onSelect }: {

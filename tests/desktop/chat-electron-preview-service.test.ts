@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { MacActionPairing } from "@desktop/main/desktop-pairing/action";
 import { createChatElectronPreviewService } from "@desktop/main/chat-electron-preview/service";
-import { ChatElectronPreviewTransportInterruptedError } from "@desktop/main/chat-electron-preview/transport";
 
 const identity = { chatId: "chat_test", runId: "run_test" };
 const request = {
@@ -45,27 +44,6 @@ describe("one-time Electron Desktop preview", () => {
     expect(activity.finish).toHaveBeenCalledWith("revoked");
   });
 
-  it("does not execute a typed verification read which changed request kind during consent", async () => {
-    const { deps, service } = setup(async () => ({
-      check: vi.fn().mockResolvedValue(true),
-      close: vi.fn(),
-    }));
-    const verified = { ...request, requestKind: "verification" as const };
-    deps.read.mockResolvedValueOnce(verified).mockResolvedValueOnce(request);
-    expect(await service.run({ ...identity, requestKind: "verification" })).toEqual({ status: "unavailable" });
-    expect(deps.execute).not.toHaveBeenCalled();
-    expect(deps.returnResult).not.toHaveBeenCalled();
-  });
-
-  it("requires native pairing even if the typed verification has a locally approved operation", async () => {
-    const { deps, service } = setup();
-    const verified = { ...request, requestKind: "verification" as const };
-    deps.read.mockResolvedValue(verified);
-    expect(await service.run({ ...identity, requestKind: "verification" })).toEqual({ status: "unavailable" });
-    expect(deps.approve).not.toHaveBeenCalled();
-    expect(deps.execute).not.toHaveBeenCalled();
-  });
-
   it("drops the preview result after a device revision changes during the build", async () => {
     const check = vi.fn().mockResolvedValue(true);
     const close = vi.fn();
@@ -80,20 +58,6 @@ describe("one-time Electron Desktop preview", () => {
     expect(activity.finish).toHaveBeenCalledWith("revoked");
     expect(close).toHaveBeenCalledOnce();
     expect(await service.run(identity)).toEqual({ status: "already-handled" });
-  });
-
-  it("does not retry a dropped receipt after revocation of the Full Access grant that skipped consent", async () => {
-    const actionCheck = vi.fn(async () => true);
-    const originalGrantCheck = vi.fn(async () => true).mockResolvedValueOnce(true).mockResolvedValueOnce(true)
-      .mockResolvedValueOnce(false);
-    const { deps, service } = setup(async () => ({ check: actionCheck, close: vi.fn() }));
-    const verified = { ...request, requestKind: "verification" as const };
-    deps.read.mockResolvedValue(verified);
-    deps.approve.mockResolvedValue({ check: originalGrantCheck });
-    deps.returnResult.mockRejectedValueOnce(new ChatElectronPreviewTransportInterruptedError(new TypeError("Disconnected")));
-    expect(await service.run({ ...identity, requestKind: "verification" })).toEqual({ status: "unavailable" });
-    expect(deps.execute).toHaveBeenCalledOnce();
-    expect(deps.returnResult).toHaveBeenCalledOnce();
   });
 
   it("uses one explicit approval, builds the bound version and returns evidence once", async () => {

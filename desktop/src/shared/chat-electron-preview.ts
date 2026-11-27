@@ -5,12 +5,11 @@ export const CHAT_ELECTRON_PREVIEW_PREFIX = "MATRIX_ELECTRON_PREVIEW_V1 ";
 export const CHAT_ELECTRON_PREVIEW_MAX_AGE_MS = 10 * 60 * 1_000;
 export const CHAT_ELECTRON_PREVIEW_SOURCE = "desktop/src/renderer/src/features/signin/SignIn.tsx";
 export const CHAT_ELECTRON_PREVIEW_BASE_LABEL = "YOUR SPACE TO BEGIN";
-export const ChatElectronPreviewLabelSchema = z.string().regex(/^[A-Z0-9][A-Z0-9 .!?-]{2,54}$/);
 
 export const ChatElectronPreviewMarkerSchema = z.strictObject({
   baseSha: z.string().regex(/^[a-f0-9]{40}$/),
   sourceSha256: z.string().regex(/^[a-f0-9]{64}$/),
-  label: ChatElectronPreviewLabelSchema.refine(label => label !== CHAT_ELECTRON_PREVIEW_BASE_LABEL),
+  label: z.string().regex(/^[A-Z0-9][A-Z0-9 .!?-]{2,54}$/).refine(label => label !== CHAT_ELECTRON_PREVIEW_BASE_LABEL),
   mainChecksPassed: z.literal(true),
   operation: z.literal("verify-sign-in-recovery").optional(),
   backgroundTargetId: z.uuid().optional(),

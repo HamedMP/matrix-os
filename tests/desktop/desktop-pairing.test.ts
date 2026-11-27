@@ -433,32 +433,6 @@ it("cannot authorize an action from a watchdog read started before that action",
   }
 });
 
-it("does not retry a 502 from an in-flight watchdog read at a delivery boundary", async () => {
-  const { enroll, fetchFn } = await setup();
-  const pairing = await enroll();
-  vi.useFakeTimers();
-  try {
-    const grant = new AbortController();
-    const lease = (await pairing.acquireActionPairing(grant))!;
-    const read = Promise.withResolvers<Response>();
-    fetchFn.mockClear();
-    fetchFn.mockReturnValueOnce(read.promise);
-    await vi.advanceTimersByTimeAsync(3_000);
-    expect(fetchFn).toHaveBeenCalledTimes(1);
-
-    const retryBadGateway = vi.fn(() => true);
-    const delivery = lease.check(undefined, retryBadGateway);
-    read.resolve(new Response(null, { status: 502 }));
-    await expect(delivery).resolves.toBe(false);
-    expect(grant.signal.reason).toBe("revoked");
-    expect(retryBadGateway).not.toHaveBeenCalled();
-    expect(fetchFn).toHaveBeenCalledTimes(1);
-  } finally {
-    pairing.cancel();
-    vi.useRealTimers();
-  }
-});
-
 it("fails closed on a pairing status outage and cannot resume an old grant", async () => {
   const { enroll, fetchFn } = await setup();
   const pairing = await enroll();

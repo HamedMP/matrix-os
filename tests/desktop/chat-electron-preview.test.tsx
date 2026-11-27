@@ -53,11 +53,9 @@ const initialProps = {
 };
 
 function ChatElectronPreview(props: Parameters<typeof useChatElectronPreview>[0]) {
-  const { action, feedback, verificationAction, verificationFeedback } = useChatElectronPreview(props);
+  const { action, feedback } = useChatElectronPreview(props);
   return <>{feedback}
     {action ? <button type="button" onClick={() => action.select("@electron")}>{action.label}</button> : null}
-    {verificationFeedback}
-    {verificationAction ? <button type="button" onClick={() => verificationAction.select("@mac")}>{verificationAction.label}</button> : null}
   </>;
 }
 
@@ -151,51 +149,5 @@ describe("Electron Chat preview", () => {
     await waitFor(() => expect(initialProps.onDraft).toHaveBeenCalledOnce());
     expect(initialProps.onDraft.mock.calls[0]?.[0]).toContain("MATRIX_ELECTRON_PREVIEW_V1");
     expect(invoke.mock.calls.every(([channel]) => channel === "chat:electron-preview-available")).toBe(true);
-  });
-});
-
-describe("Mac Verification", () => {
-  function verificationDetail() {
-    const detail = detailWithPreview({ parts: [{ type: "text", text: "Worktree changes are ready." }] });
-    const run = detail.runs[0]!;
-    run.executionRoot = { kind: "worktree", projectId: project!.projectId, worktreeId: "wt_00000000000a" };
-    return detail;
-  }
-
-  it("verifies the selected worktree directly with no generated prompt or provider marker", async () => {
-    const invoke = vi.fn(async (channel: string) => channel === "chat:electron-preview-available"
-      ? { available: false, verificationAvailable: true }
-      : { status: "returned" });
-    vi.stubGlobal("operator", { invoke });
-    const { rerender } = render(<StrictMode><ChatElectronPreview {...initialProps} detail={verificationDetail()} /></StrictMode>);
-
-    const action = await screen.findByRole("button", { name: "Mac Verification" });
-    expect(invoke.mock.calls.some(([channel]) => channel === "chat:electron-preview-run")).toBe(false);
-    fireEvent.click(action);
-    fireEvent.click(action);
-    expect(await screen.findByText("Mac verification returned to this Chat.")).toBeTruthy();
-    rerender(<StrictMode><ChatElectronPreview {...initialProps} detail={verificationDetail()} /></StrictMode>);
-
-    expect(initialProps.onDraft).not.toHaveBeenCalled();
-    expect(invoke.mock.calls.filter(([channel]) => channel === "chat:electron-preview-run")).toEqual([
-      ["chat:electron-preview-run", { chatId: chat.id, runId: selectedRun.id, requestKind: "verification" }],
-    ]);
-  });
-
-  it("does not use the legacy preview capability to expose Mac Verification", async () => {
-    vi.stubGlobal("operator", { invoke: vi.fn(async () => ({ available: true })) });
-    render(<ChatElectronPreview {...initialProps} detail={verificationDetail()} />);
-    await screen.findByRole("button", { name: "Request Electron preview" });
-    expect(screen.queryByRole("button", { name: "Mac Verification" })).toBeNull();
-  });
-
-  it("does not expose Mac Verification for an expired worktree run", async () => {
-    const invoke = vi.fn(async () => ({ available: true, verificationAvailable: true }));
-    vi.stubGlobal("operator", { invoke });
-    const detail = verificationDetail();
-    detail.runs[0]!.completedAt = new Date(Date.now() - CHAT_ELECTRON_PREVIEW_MAX_AGE_MS - 1000).toISOString();
-    render(<ChatElectronPreview {...initialProps} detail={detail} />);
-    await screen.findByRole("button", { name: "Request Electron preview" });
-    expect(screen.queryByRole("button", { name: "Mac Verification" })).toBeNull();
   });
 });

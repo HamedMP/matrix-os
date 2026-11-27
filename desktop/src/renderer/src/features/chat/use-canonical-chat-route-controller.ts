@@ -8,7 +8,6 @@ import type {
   CanonicalChatDetailResponse,
   CanonicalChatApprovalDecision,
   CanonicalChatRecord,
-  CanonicalChatTurnAdmissionResponse,
   CanonicalCreateChatTurnRequest,
   CanonicalQueueChatTurnRequest,
   CanonicalSteerChatRunRequest,
@@ -488,10 +487,6 @@ export function useCanonicalChatRouteController({
     initialProjectId: string | null = projectId,
     onAccepted?: () => void,
     onRejected?: () => void,
-    receiptCallbacks?: {
-      confirmed: (receipt: CanonicalChatTurnAdmissionResponse) => void;
-      unconfirmed: () => void;
-    },
     /** The pending message shows; the composer lets its draft go. */
     onShown?: () => void,
   ) => {
@@ -504,7 +499,6 @@ export function useCanonicalChatRouteController({
       && activeChatIdRef.current === selectedChatId && authority.valid && admissionAuthority.current === authority);
     if (!isCurrentScope()) return null;
     let pendingRequestId: string | undefined;
-    let admissionConfirmed = false;
     const pendingToken = {};
     const sendDraftSession = selectionEpoch.current;
     try {
@@ -526,14 +520,11 @@ export function useCanonicalChatRouteController({
           if ((selectedChatId ?? undefined) !== undefined || !sessionEnded()) onShown?.();
         },
         onAccepted: () => onAccepted?.(), onRejected,
-        onConfirmed: (id, receipt) => {
+        onConfirmed: id => {
           const current = admissionAuthority.current;
           if (!current.valid || !current.mounted || current.client !== client || current.identity !== admissionIdentity
             || activeChatIdRef.current !== selectedChatId) return;
-          if (latestAdmissionId.current !== id) return;
-          admissionConfirmed = true;
-          setError(current => current === CHAT_ADMISSION_UNCONFIRMED ? null : current);
-          if (isCurrentScope() && receipt.turn.clientRequestId === id) receiptCallbacks?.confirmed(receipt);
+          if (latestAdmissionId.current === id) setError(current => current === CHAT_ADMISSION_UNCONFIRMED ? null : current);
         },
         onSnapshot: fresh => {
           if (!isCurrentScope() || admissionSequence.current !== sequence) return;
@@ -557,8 +548,7 @@ export function useCanonicalChatRouteController({
       return admitted;
     } catch (error: unknown) {
       console.warn("[canonical-chat] submit failed:", diagnosticErrorKind(error instanceof ChatAdmissionUnconfirmed ? error.cause : error));
-      if (!isCurrentScope() || admissionSequence.current !== sequence || admissionConfirmed) return null;
-      if (pendingRequestId && error instanceof ChatAdmissionUnconfirmed) receiptCallbacks?.unconfirmed();
+      if (!isCurrentScope() || admissionSequence.current !== sequence) return null;
       setError(error instanceof ChatAdmissionUnconfirmed ? CHAT_ADMISSION_UNCONFIRMED : canonicalChatSubmitFailureMessage(error));
       return null;
     } finally {

@@ -11,8 +11,7 @@ import { providerCatalog } from "./canonical-chat-workspace-test-utils";
 import { CanonicalChatWorkspace } from "@desktop/renderer/src/features/chat/CanonicalChatWorkspace";
 import { useBoard } from "@desktop/renderer/src/stores/board";
 import { useConnection } from "@desktop/renderer/src/stores/connection";
-import { useRetainedComposerDrafts } from "@desktop/renderer/src/features/chat/retained-composer-drafts";
-import { mockSharedComposerPopoverLayout, setSharedComposerText } from "./shared-chat-composer-test-utils";
+import { setSharedComposerText } from "./shared-chat-composer-test-utils";
 
 const input = { parts: [{ type: "text" as const, text: "continue once" }],
   selection: { instanceId: "codex_default", model: "gpt-5.6-sol" }, interactionMode: "default", permissionMode: "supervised" };
@@ -351,106 +350,4 @@ describe("canonical send admission receipts", () => {
       expect(client.admitTurn).toHaveBeenCalledTimes(1);
     } finally { cleanup(); }
   });
-
-  it.each(["observe", "retry", "cancel and retry", "edit and send", "leave Chat", "busy retry"] as const)(
-    "binds Mac Verification to the exact durable receipt after a timeout (%s)", async (action) => {
-      const restoreComposerLayout = mockSharedComposerPopoverLayout();
-      globalThis.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} } as unknown as typeof ResizeObserver;
-      useBoard.setState(useBoard.getInitialState(), true);
-      useConnection.setState({ ...useConnection.getInitialState(), status: "signed-in", userId: snapshot.chat.ownerScope.ownerId }, true);
-      useRetainedComposerDrafts.setState(useRetainedComposerDrafts.getInitialState(), true);
-      const ipc = vi.fn(async (channel: string) => channel === "chat:electron-preview-available"
-        ? { available: false, verificationAvailable: true } : { status: "returned" });
-      window.operator = { invoke: ipc, on: vi.fn(() => () => undefined) };
-      const client = createCanonicalChatWorkspaceClient();
-      const worktree = { kind: "worktree", projectId: "matrix-os", worktreeId: "wt_00000000000a" } as const;
-      const previousRun = { ...snapshot.runs[0]!, executionRoot: worktree, completedAt: new Date().toISOString() };
-      let fresh = { ...await client.getDetail(snapshot.chat.id), runs: [previousRun] };
-      vi.mocked(client.getDetail).mockImplementation(async () => fresh);
-      vi.mocked(client.admitTurn).mockRejectedValue(new AppError("timeout"));
-      const listeners: Array<(event: CanonicalChatInvalidation) => void> = [];
-      const eventSource = { subscribe: (listener: (event: CanonicalChatInvalidation) => void) => {
-        if (listeners.length >= 16) throw new Error("Test listener capacity exceeded");
-        listeners.push(listener); return { dispose() { const index = listeners.indexOf(listener); if (index >= 0) listeners.splice(index, 1); } };
-      } };
-      const refresh = () => act(() => { for (const listener of [...listeners]) listener({ type: "chat.full_refresh" }); });
-      const workspace = (active: boolean) => <CanonicalChatWorkspace client={client} projectId="matrix-os" initialChatId={snapshot.chat.id}
-        initialView="conversation" active={active} catalog={providerCatalog} eventSource={eventSource} />;
-      try {
-        const view = render(workspace(true));
-        const editor = await screen.findByRole("textbox", { name: "Reply to chat" });
-        await setSharedComposerText(editor, "Shorten the sign-in label. @mac");
-        fireEvent.click(await screen.findByRole("option", { name: "Mac Verification", exact: true }));
-        await waitFor(() => expect(editor.textContent?.trim()).toBe("Shorten the sign-in label."));
-        fireEvent.click(screen.getByRole("button", { name: "Send" }));
-        await screen.findByText("Message status is unconfirmed. You can retry safely.");
-        const original = vi.mocked(client.admitTurn).mock.calls[0]![1];
-        expect(original.executionRoot).toEqual(worktree);
-        if (action === "edit and send") {
-          const edited = "Keep the sign-in label as it is.";
-          await setSharedComposerText(editor, edited);
-          fireEvent.click(screen.getByRole("button", { name: "Send" }));
-          await screen.findByText("Choose Cancel verification before sending the edited message.");
-          expect(client.admitTurn).toHaveBeenCalledOnce();
-          expect(editor.textContent).toBe(edited);
-
-          fireEvent.click(screen.getByRole("button", { name: "Cancel verification" }));
-          vi.mocked(client.admitTurn).mockImplementationOnce(async (_chatId, request) => {
-            const receipt = committed(request);
-            return { record: receipt.record, message: receipt.messages.at(-1)!, turn: receipt.turns.at(-1)!,
-              run: receipt.runs.at(-1)!, admission: "accepted" };
-          });
-          fireEvent.click(screen.getByRole("button", { name: "Send" }));
-          await waitFor(() => expect(editor.textContent?.trim()).toBe(""));
-          expect(screen.getByText(edited)).toBeTruthy();
-          expect(client.admitTurn).toHaveBeenCalledTimes(2);
-          const changedRequest = vi.mocked(client.admitTurn).mock.calls[1]![1];
-          expect(changedRequest.clientRequestId).not.toBe(original.clientRequestId);
-          expect(changedRequest.parts).toEqual([{ type: "text", text: edited }]);
-          expect(ipc.mock.calls.filter(([channel]) => channel === "chat:electron-preview-run")).toEqual([]);
-          return;
-        }
-        if (action === "cancel and retry") fireEvent.click(screen.getByRole("button", { name: "Cancel verification" }));
-        if (action === "retry" || action === "cancel and retry") {
-          fireEvent.click(screen.getByRole("button", { name: "Send" }));
-          await waitFor(() => expect(client.admitTurn).toHaveBeenCalledTimes(2));
-          expect(vi.mocked(client.admitTurn).mock.calls[1]![1]).toEqual(original);
-          await screen.findByText("Message status is unconfirmed. You can retry safely.");
-        }
-        if (action === "leave Chat") view.rerender(workspace(false));
-
-        const update = (request: CanonicalCreateChatTurnRequest, revision: number, runId: string) => {
-          const detail = committed(request);
-          return { ...detail, record: { ...detail.record, chat: { ...detail.record.chat, revision } },
-            runs: [previousRun, { ...detail.runs.at(-1)!, id: runId, executionRoot: worktree, completedAt: new Date().toISOString() }] };
-        };
-        fresh = update({ ...original, clientRequestId: "req_unrelated", parts: [{ type: "text", text: "Unrelated worktree change" }] },
-          fresh.record.chat.revision + 1, "run_unrelated");
-        if (action === "busy retry") {
-          const running = { ...fresh.runs.at(-1)!, status: "running" as const, completedAt: undefined };
-          fresh = { ...fresh, runs: [previousRun, running], record: { ...fresh.record,
-            activeRun: { runId: running.id, turnId: running.turnId, status: running.status } } };
-        }
-        if (action === "leave Chat") view.rerender(workspace(true));
-        refresh();
-        await screen.findByText("Unrelated worktree change");
-        expect(ipc.mock.calls.filter(([channel]) => channel === "chat:electron-preview-run")).toEqual([]);
-        if (action === "busy retry") {
-          fireEvent.click(screen.getByRole("button", { name: "Send" }));
-          await screen.findByText("Wait for the active run before retrying this message.");
-          expect(client.queueTurn).not.toHaveBeenCalled();
-        }
-
-        fresh = update(original, fresh.record.chat.revision + 1, "run_receipt");
-        refresh();
-        await waitFor(() => expect(screen.queryByText("Message status is unconfirmed. You can retry safely.")).toBeNull());
-        const expected = action === "observe" || action === "retry" || action === "busy retry"
-          ? [["chat:electron-preview-run", { chatId: snapshot.chat.id, runId: "run_receipt", requestKind: "verification" }]] : [];
-        if (expected.length) await screen.findByText("Mac verification returned to this Chat.");
-        refresh();
-        expect(ipc.mock.calls.filter(([channel]) => channel === "chat:electron-preview-run")).toEqual(expected);
-        expect(client.admitTurn).toHaveBeenCalledTimes(action === "retry" || action === "cancel and retry" ? 2 : 1);
-      } finally { cleanup(); restoreComposerLayout(); }
-    },
-  );
 });

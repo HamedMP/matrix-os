@@ -66,18 +66,6 @@ describe("createAppMenuTemplate", () => {
     expect(pairingItem(options({ platform: "linux", openMacPairing }))).toBeUndefined();
   });
 
-  it("opens Mac Verification setup in the installed macOS client", () => {
-    const openMacVerification = vi.fn();
-    const macOptions = options({ platform: "darwin", isPackaged: true, openMacVerification });
-    const macMenu = createAppMenuTemplate(macOptions);
-    click(find(submenu(macMenu, macOptions.appName), "Mac Verification…"));
-    expect(openMacVerification).toHaveBeenCalledOnce();
-    expect(macOptions.send).not.toHaveBeenCalled();
-
-    const windowsMenu = createAppMenuTemplate(options({ platform: "win32", isPackaged: true, openMacVerification }));
-    expect(JSON.stringify(windowsMenu)).not.toContain("Mac Verification");
-  });
-
   it("opens local Mac activity history from the native menu without a renderer action", () => {
     const openMacActivity = vi.fn();
     const menuOptions = options({ isPackaged: false, openMacActivity });

@@ -15,8 +15,6 @@ const MAX_REPLY_CHUNKS = 256;
 export type PairingAuth = Pick<AuthService, "getStatus" | "getToken" | "getGatewayOrigin">;
 export type PairingState = z.infer<typeof DesktopPairingStateSchema>;
 
-export class PairingBadGatewayError extends Error {}
-
 export function matchingPairingState(a: PairingState, b: PairingState): boolean {
   return a.machineId === b.machineId && a.deviceId === b.deviceId && a.revision === b.revision;
 }
@@ -113,10 +111,6 @@ export function createPairingTransport(auth: PairingAuth, fetchFn: typeof fetch,
     } catch (error: unknown) {
       await response.body?.cancel();
       throw error;
-    }
-    if (path === PAIRING_PATH && method === "GET" && response.status === 502) {
-      await response.body?.cancel();
-      throw new PairingBadGatewayError("Pairing response unavailable");
     }
     const result = await readPairingReply(response, requestSignal);
     assertCurrent();

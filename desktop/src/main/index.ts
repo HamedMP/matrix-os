@@ -4,7 +4,7 @@ import { acknowledgeReopenedPreview } from "./preview-pair-reopen";
 import { createPreviewWindowReopener } from "./preview-pair-window";
 import { initializeDesktopPreview } from "./preview-pair-startup";
 import { app, BrowserWindow, clipboard, dialog, ipcMain, MessageChannelMain, Notification, safeStorage, screen, session, shell, webContents, type IpcMainInvokeEvent } from "electron";
-import { join, dirname } from "node:path";
+import { join, dirname, isAbsolute } from "node:path";
 import { createHash } from "node:crypto";
 import { createFileDownloadService } from "./files/file-download-service";
 import { createOrganizationDriveTransferService } from "./files/organization-drive-transfer";
@@ -729,8 +729,7 @@ if (!gotLock) {
         terminalUrl: terminalRendererUrl,
       };
       const authorizeSender = createSenderPolicy(windowSenders);
-      const macVerificationAllowed = process.platform === "darwin" && !previewContext;
-      const macDeveloperBuild = macVerificationAllowed && !app.isPackaged;
+      const macDeveloperBuild = process.platform === "darwin" && !app.isPackaged && !previewContext;
       const previewCheckout = process.env.MATRIX_ELECTRON_PREVIEW_CHECKOUT;
       const macTerminalChecksAllowed = macDeveloperBuild && process.env.MATRIX_MAC_TERMINAL_CHECK === "1";
       let macBackgroundChecksActive = false;
@@ -741,7 +740,7 @@ if (!gotLock) {
           ? createHash("sha256").update(JSON.stringify([status.platformHost, status.userId, status.runtimeSlot])).digest("hex")
           : null;
       };
-      const macActivity = macVerificationAllowed ? createMacActivity({
+      const macActivity = macTerminalChecksAllowed || (macDeveloperBuild && previewCheckout && isAbsolute(previewCheckout)) ? createMacActivity({
         userData,
         window: () => mainWindow ?? terminalWindowController.current(),
         getScope: getMacActivityScope,
@@ -757,7 +756,6 @@ if (!gotLock) {
       const acquireActionPairing = desktopPairing?.acquireActionPairing ?? (async () => null);
       const chatElectronPreview = registerChatElectronPreview(ipcMain, {
         allowed: macDeveloperBuild,
-        macVerificationAllowed,
         checkout: previewCheckout,
         userData,
         electronPath: app.getPath("exe"),
@@ -1030,10 +1028,6 @@ if (!gotLock) {
             void desktopPairing.open().catch((error: unknown) => logMainError("Mac pairing failed", error));
           },
         } : {}),
-        openMacVerification: chatElectronPreview.openVerification
-          ? () => {
-            void chatElectronPreview.openVerification?.().catch((error: unknown) => logMainError("Mac Verification setup failed", error));
-          } : undefined,
         ...(macActivity ? {
           openMacActivity: () => { void macActivity.showHistory(); },
         } : {}),

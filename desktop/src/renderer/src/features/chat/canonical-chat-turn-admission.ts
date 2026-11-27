@@ -1,5 +1,5 @@
 import { createCanonicalChatAdmissionTracker, type CanonicalChatClientAdmission } from "@matrix-os/ui";
-import type { CanonicalChatDetailResponse, CanonicalChatTurnAdmissionResponse, CanonicalCreateChatTurnRequest } from "@matrix-os/contracts";
+import type { CanonicalChatDetailResponse, CanonicalCreateChatTurnRequest } from "@matrix-os/contracts";
 import type { CanonicalChatClient } from "../../lib/canonical-chat-client";
 import { AppError } from "../../../../shared/app-error";
 import { ProjectIdSchema, WorktreeIdSchema, type CanonicalChatExecutionRootRef } from "@matrix-os/contracts";
@@ -14,7 +14,7 @@ export async function admitDesktopChatTurn(options: {
   current: () => CanonicalChatDetailResponse | null;
   onSnapshot: (detail: CanonicalChatDetailResponse) => void;
   isCurrent: () => boolean; mayDispatch: () => boolean; onAccepted: () => void;
-  onConfirmed: (requestId: string, receipt: CanonicalChatTurnAdmissionResponse) => void; onPrepared: (requestId: string) => void;
+  onConfirmed: (requestId: string) => void; onPrepared: (requestId: string) => void;
   canAcknowledge: () => boolean; onRejected?: () => void;
 }) {
   const { clientRequestId: seed, ...input } = options.input;
@@ -32,7 +32,7 @@ export async function admitDesktopChatTurn(options: {
     read: async () => { const detail = await options.client.getDetail(record.chat.id, { limit: 200 });
       if (options.isCurrent() && detail.record.chat.id === record.chat.id) options.onSnapshot(detail); return detail; }, current: options.current,
     isCurrent: options.isCurrent, canAcknowledge: options.canAcknowledge,
-    onAccepted: options.onAccepted, onRejected: options.onRejected, onConfirmed: receipt => options.onConfirmed(attempt.id, receipt),
+    onAccepted: options.onAccepted, onRejected: options.onRejected, onConfirmed: () => options.onConfirmed(attempt.id),
     definitive: error => error instanceof AppError && error.httpStatus !== undefined && error.httpStatus >= 400 && error.httpStatus < 500 && error.httpStatus !== 408,
   });
 }
