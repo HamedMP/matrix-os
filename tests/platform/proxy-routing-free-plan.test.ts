@@ -33,6 +33,11 @@ describe("platform fallback sign-up page on the Free plan", () => {
     const open = await page({ config: { maxRuntimes: 10, inviteRequired: false }, provisioner: freeProvisioner });
     expect(open).toContain("var freePlanAvailable = true;");
     expect(open).toContain("Start on the Free plan.");
+    // Invite-only: invited owners still get free setup, but the public hero must not promise Free to everyone.
+    const inviteOnly = await page({ config: { maxRuntimes: 10, inviteRequired: true }, provisioner: freeProvisioner });
+    expect(inviteOnly).toContain("var freePlanAvailable = true;");
+    expect(inviteOnly).not.toContain("Start on the Free plan.");
+    expect(inviteOnly).toContain("Choose your cloud computer to see available trial offers and billing details.");
     const closed = await page();
     expect(closed).toContain("var freePlanAvailable = false;");
     expect(closed).not.toContain("Start on the Free plan.");

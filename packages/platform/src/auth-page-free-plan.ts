@@ -10,11 +10,27 @@ import { escapeHtml } from './html-escaping.js';
  */
 
 export interface AuthPageFreePlanOptions {
-  /** The deployment has a free runtime provisioner; false keeps the page exactly as before. */
+  /**
+   * The deployment has a free runtime provisioner, so an owner the journey offers
+   * the Free plan (invited, or anyone when signup is open) gets free setup.
+   * False keeps the page exactly as before.
+   */
   freePlanAvailable?: boolean;
+  /** Free signup is open to everyone, so the public sign-up hero may promise it. */
+  freeSignupOffer?: boolean;
 }
 
 const JOURNEY_TIMEOUT_MS = 10_000;
+
+/** Only the strings the setup step uses; the sign-up hero copy stays out of the script. */
+const SCRIPT_COPY = {
+  preinstalls: FREE_PLAN_COPY.preinstalls,
+  sleep: FREE_PLAN_COPY.sleep,
+  capacityFull: FREE_PLAN_COPY.capacityFull,
+  setupRetry: FREE_PLAN_COPY.setupRetry,
+  setupLabel: FREE_PLAN_COPY.setupLabel,
+  settingUpLabel: FREE_PLAN_COPY.settingUpLabel,
+};
 
 /** JSON safe to place inside an inline script element. */
 function inlineScriptJson(value: unknown): string {
@@ -29,7 +45,7 @@ export function freePlanSignUpStory(mode: 'sign-in' | 'sign-up', options: AuthPa
   lead: string;
   proofRows: string[];
 } | null {
-  if (mode !== 'sign-up' || !options.freePlanAvailable) return null;
+  if (mode !== 'sign-up' || !options.freePlanAvailable || !options.freeSignupOffer) return null;
   return {
     lead: escapeHtml(FREE_PLAN_COPY.signUpLead),
     proofRows: [
@@ -49,7 +65,7 @@ export function freePlanAuthScript(options: AuthPageFreePlanOptions): string {
   return `
     var freePlanAvailable = ${options.freePlanAvailable ? 'true' : 'false'};
     // Inlined only while the Free plan is open; the paid page never reads it.
-    var freePlanCopy = ${options.freePlanAvailable ? inlineScriptJson(FREE_PLAN_COPY) : 'null'};
+    var freePlanCopy = ${options.freePlanAvailable ? inlineScriptJson(SCRIPT_COPY) : 'null'};
     var freeCapacityFullCode = ${inlineScriptJson(FREE_CAPACITY_FULL_CODE)};
     var freePlanToolIds = ['claude-code', 'codex'];
     function resolveFreePlanSetup() {
