@@ -16,19 +16,22 @@ function errorCode(error: unknown): string | undefined {
   return (error as NodeJS.ErrnoException | null)?.code;
 }
 
-/** Moves a finished temp file to `finalPath`; false when that name is taken. The temp file is always removed. */
-export async function publishExclusive(tempPath: string, finalPath: string): Promise<boolean> {
+/** Hard-links a finished temp file to `finalPath`; false, changing nothing, when that name is taken. */
+export async function linkExclusive(tempPath: string, finalPath: string): Promise<boolean> {
   try {
     await link(tempPath, finalPath);
     return true;
   } catch (error: unknown) {
     if (errorCode(error) === "EEXIST") return false;
     throw error;
-  } finally {
-    await unlink(tempPath).catch((error: unknown) => {
-      if (errorCode(error) !== "ENOENT") console.warn("[installed-apps] temp launcher cleanup failed:", error instanceof Error ? error.name : "UnknownError");
-    });
   }
+}
+
+/** Best-effort removal of a temp launcher file. */
+export async function removeTemp(tempPath: string): Promise<void> {
+  await unlink(tempPath).catch((error: unknown) => {
+    if (errorCode(error) !== "ENOENT") console.warn("[installed-apps] temp launcher cleanup failed:", error instanceof Error ? error.name : "UnknownError");
+  });
 }
 
 /** Deletes `path` only when it is a regular file directly in `dir` whose name `ownName` accepts. Gone is fine. */

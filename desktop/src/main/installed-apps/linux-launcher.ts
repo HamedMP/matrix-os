@@ -10,7 +10,7 @@
 import { randomBytes } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { publishExclusive, removeOwnedFile } from "./launcher-files";
+import { linkExclusive, removeOwnedFile, removeTemp } from "./launcher-files";
 import { InstallIdSchema } from "./record";
 
 const ENTRY_NAME = /^matrix-app-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.desktop$/;
@@ -98,9 +98,13 @@ export function createLinuxLauncher(options: LinuxLauncherOptions) {
       });
       await mkdir(dir, { recursive: true });
       const tempPath = join(dir, `.matrix-app-${randomBytes(6).toString("hex")}.tmp`);
-      await writeFile(tempPath, entry, { encoding: "utf8", flag: "wx", mode: 0o644 });
-      if (!(await publishExclusive(tempPath, finalPath))) throw new Error("Launcher already exists");
-      return finalPath;
+      try {
+        await writeFile(tempPath, entry, { encoding: "utf8", flag: "wx", mode: 0o644 });
+        if (!(await linkExclusive(tempPath, finalPath))) throw new Error("Launcher already exists");
+        return finalPath;
+      } finally {
+        await removeTemp(tempPath);
+      }
     },
 
     remove(path: string): Promise<void> {
