@@ -3017,7 +3017,8 @@ describe("platform proxy routing", () => {
     expect(html).toContain("if (err && (err.name === 'AbortError' || err.name === 'TimeoutError')) {");
     expect(html).toContain("billingConfirmationPolls = 0;\n            continueWithClerkSession(true);\n            return;");
     expect(html).toContain("setProvisionControls(true, null);");
-    expect(html).toContain("setProvisionControls(false, typeof message === 'string' ? message : provisioningRetryError);");
+    expect(html).toContain("var fallback = activeProvisionFree ? freePlanCopy.setupRetry : provisioningRetryError;");
+    expect(html).toContain("setProvisionControls(false, typeof message === 'string' ? message : fallback);");
     expect(html).not.toContain("ask the operator to provision this account");
     expect(html).not.toContain("You are already signed in");
   });

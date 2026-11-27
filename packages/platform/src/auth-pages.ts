@@ -1057,7 +1057,8 @@ export function getAuthPage(
     function showProvisionRetryError(message) {
       provisionStarted = false;
       checkoutJustCompleted = false;
-      setProvisionControls(false, typeof message === 'string' ? message : provisioningRetryError);
+      var fallback = activeProvisionFree ? freePlanCopy.setupRetry : provisioningRetryError;
+      setProvisionControls(false, typeof message === 'string' ? message : fallback);
     }
     function showProvisionStartFailure(res) {
       if (!activeProvisionFree) {

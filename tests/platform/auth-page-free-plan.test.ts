@@ -140,6 +140,19 @@ describe('platform pre-VPS page on the Free plan', () => {
   });
 
   it.each([
+    ['a network failure', () => { throw new TypeError('Failed to fetch'); }],
+    ['a non-conflict 409', () => Response.json({ error: 'Contact support', code: 'support_required' }, { status: 409 })],
+  ])('says setup could not start, without VPS, after %s on a free start', async (_label, provision) => {
+    const { dom } = openAuthPage({ freePlanAvailable: true, journey: freeJourney, provision });
+    openDoms.push(dom);
+
+    await waitForCondition(() => Boolean(button(dom, FREE_PLAN_COPY.setupLabel)));
+    button(dom, FREE_PLAN_COPY.setupLabel)!.click();
+    await waitForCondition(() => (dom.window.document.querySelector('.default-installs-error')?.textContent ?? '') !== '');
+    expect(dom.window.document.querySelector('.default-installs-error')?.textContent).toBe(FREE_PLAN_COPY.setupRetry);
+  });
+
+  it.each([
     ['a paid journey', paidJourney],
     ['an unavailable journey', () => Response.json({ error: 'journey_unavailable' }, { status: 503 })],
   ])('keeps the paid Build VPS step for %s', async (_label, journey) => {
@@ -159,12 +172,16 @@ describe('platform pre-VPS page on the Free plan', () => {
   });
 
   it('describes the Free plan on sign-up only while it is open', () => {
-    const open = getAuthPage('pk_test_matrix', 'sign-up', 'nonce', '/', 'https://app.matrix-os.com', { freePlanAvailable: true });
+    const open = getAuthPage('pk_test_matrix', 'sign-up', 'nonce', '/', 'https://app.matrix-os.com', { freePlanAvailable: true, freeSignupOffer: true });
     expect(open).toContain(FREE_PLAN_COPY.signUpLead);
     expect(open).toContain(FREE_PLAN_COPY.summary);
     expect(open).not.toContain('trial');
     // No upgrade prompt while self-serve free-to-paid upgrade does not exist.
     expect(open).not.toMatch(/upgrade|always-on|pricing/i);
+
+    // Invite-only free setup is owner-specific: the public hero stays paid.
+    const inviteOnly = getAuthPage('pk_test_matrix', 'sign-up', 'nonce', '/', 'https://app.matrix-os.com', { freePlanAvailable: true });
+    expect(inviteOnly).not.toContain(FREE_PLAN_COPY.signUpLead);
 
     const closed = getAuthPage('pk_test_matrix', 'sign-up', 'nonce', '/', 'https://app.matrix-os.com');
     expect(closed).not.toContain(FREE_PLAN_COPY.signUpLead);
