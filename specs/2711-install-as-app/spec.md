@@ -100,6 +100,7 @@ a Matrix update shows "Restart Matrix to finish updating".
 4. `feat(desktop)`: Windows and Linux launchers, plus the Install and Uninstall UI
    (shared `packages/ui` sheet).
 5. `feat(shell)`: "Open in Matrix Desktop" in Web Desktop and Web Canvas.
+- Public docs: an install/launch/uninstall guide in FinnaAI/matrix-os-site `content/docs/`, as a separate PR after this stack lands.
 
 ### Install record (source of truth)
 
