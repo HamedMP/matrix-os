@@ -19,6 +19,14 @@ The signed digest binds the account, profile, purpose, revisions, data kinds
 and expiry. The consent transaction's revision check prevents accepting the
 same decision again.
 
+On Hosted Computer routes, the Platform edge issues a separate revocation
+proof from the verified personal owner's current session before replacing its
+credentials. The proof lasts up to 30 seconds and binds the DELETE to the
+selected Computer, owner and Gmail account. The Gateway relays it only for
+that operation. The Platform verifies it behind machine and owner delegation
+checks. The consent registry consumes the nonce in the same transaction as
+revocation and purge enqueueing, so replay cannot revoke a later grant.
+
 These routes expose neither credentials, fingerprints, private endpoint/account mappings nor raw provider errors. Responses are not cached. The host must supply verified owner resolution and connection ownership; metadata permission does not imply collection, bot grants or write approval.
 
 The machine processing envelope binds owner, run/runtime generation, profile/consent revisions, exact Google account, purpose and route digest to exact method/path/body bytes. Its maximum lifetime is 30 seconds and never exceeds policy expiry. Signatures are domain-separated, compared in constant time and stripped from untrusted proxy requests. Verification alone is insufficient: composition must revalidate current policy/run authority and consume each request ID once before dispatch. No model receives signing keys or envelopes. This protocol is not yet active in a deployed runtime.

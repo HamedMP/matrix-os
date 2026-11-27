@@ -1,4 +1,5 @@
 import { Hono, type Context } from 'hono';
+import type { GmailHostedRevocationReceipt } from '@matrix-os/contracts';
 import { bodyLimit } from 'hono/body-limit';
 import { z } from 'zod/v4';
 import { GoogleDataAuthorityError, GoogleDataConsentInputSchema } from './profiles.js';
@@ -21,7 +22,7 @@ export function createGoogleDataOwnerRoutes(options: {
   ownsGoogleAccount(ownerId: string, connectionId: string): Promise<boolean>;
   now?: () => Date;
 }) {
-  const app = new Hono();
+  const app = new Hono<{ Variables: { gmailHostedRevocationReceipt?: GmailHostedRevocationReceipt } }>();
   const now = options.now ?? (() => new Date());
   const tooLarge = (c: Context) => {
     c.header('Cache-Control', 'no-store');
@@ -107,7 +108,9 @@ export function createGoogleDataOwnerRoutes(options: {
       // Trigger the middleware's streaming limit even when DELETE ignores its body.
       await c.req.arrayBuffer();
       if (!await options.ownsGoogleAccount(ownerId, parsed.data)) return c.json({ error: 'Gmail account unavailable' }, 404);
-      await options.repository.revokeAccount(ownerId, parsed.data);
+      const receipt = c.get('gmailHostedRevocationReceipt');
+      if (receipt) await options.repository.revokeAccount(ownerId, parsed.data, receipt);
+      else await options.repository.revokeAccount(ownerId, parsed.data);
       return c.json({ revoked: true });
     } catch (error: unknown) {
       if (error instanceof Error && error.name === 'BodyLimitError') return tooLarge(c);

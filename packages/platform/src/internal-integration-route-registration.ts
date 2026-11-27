@@ -1,7 +1,9 @@
 import { createAccountDeletionMutationGuard } from './account-deletion/integration-admission.js';
+import { GMAIL_HOSTED_REVOCATION_PROOF_HEADER, gmailConsentRevocationAccount, type GmailHostedRevocationReceipt } from '@matrix-os/contracts';
 import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { verifyGmailOwnerApprovalProof } from './custom-mcp-approval-proof.js';
+import { verifyGmailHostedRevocationProof } from './gmail-hosted-revocation-proof.js';
 import type { ClerkAuth } from './clerk-auth.js';
 import { APP_SESSION_COOKIE, readCookie } from './session-cookies.js';
 import { isUserSessionProvenance, verifySyncJwt } from './sync-jwt.js';
@@ -57,6 +59,7 @@ export function registerInternalIntegrationRoutes(app: Hono<any>, options: {
       internalSignedOwnerDelegation: boolean;
       internalContainerMachineId: string;
       internalContainerPersonalOwner: string;
+      gmailHostedRevocationReceipt?: GmailHostedRevocationReceipt;
     };
   }>();
   const integrationGuard = createInternalIntegrationGuard();
@@ -148,6 +151,19 @@ export function registerInternalIntegrationRoutes(app: Hono<any>, options: {
       return c.json({ error: 'Forbidden' }, 403);
     return consentLimit(c, async () => {
       c.header('Cache-Control', 'no-store');
+      const proof = c.req.header(GMAIL_HOSTED_REVOCATION_PROOF_HEADER);
+      if (proof) {
+        const accountId = gmailConsentRevocationAccount(c.req.method, c.req.path, `/internal/containers/${handle}/integrations`);
+        const receipt = accountId && !new URL(c.req.url).search && c.get('internalSignedOwnerDelegation') === true
+          ? verifyGmailHostedRevocationProof(proof, { handle, ownerId, accountId }, platformSecret) : null;
+        if (!receipt) {
+          c.res = c.json({ error: 'Forbidden' }, 403);
+          return;
+        }
+        c.set('gmailHostedRevocationReceipt', receipt);
+        await next();
+        return;
+      }
       const session = await options.verifyGmailOwnerSession?.({ handle, ownerId,
         authorization: c.req.header('x-matrix-google-owner-authorization'), cookie: c.req.header('cookie') });
       if (session || (c.req.method === 'POST' && verifyGmailOwnerApprovalProof(

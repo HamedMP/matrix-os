@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { GmailHostedRevocationReceiptSchema, type GmailHostedRevocationReceipt } from '@matrix-os/contracts';
 import { sql, type Kysely, type RawBuilder } from 'kysely';
 import { z } from 'zod/v4';
 import { migrateGooglePurgeDelivery,queueGooglePurgeConsents,type PurgeConsentRow } from './purge-delivery/store.js';
@@ -48,7 +49,10 @@ export function createGoogleDataRepository<DB>(db: Kysely<DB>, options: { now?: 
     if(rows.length>1000) throw new GoogleDataAuthorityError('capacity');
     await queueGooglePurgeConsents(tx,rows);
   };
+  const cleanupRevocationReceipts = (tx: Kysely<DB>) =>
+    sql`DELETE FROM google_hosted_revocation_receipts WHERE expires_at < clock_timestamp() - interval '1 minute'`.execute(tx);
   const cleanup = (at = now()) => guarded(() => locked(async tx => {
+    await cleanupRevocationReceipts(tx);
     const cutoff = new Date(at.getTime() - RETAIN_MS);
     // Reap already eligible ACKs before capacity admission; pending commands never expire.
     const reapAcknowledged=()=>sql`DELETE FROM google_data_purge_commands WHERE id IN (SELECT d.id FROM google_data_purge_commands d
@@ -103,6 +107,8 @@ export function createGoogleDataRepository<DB>(db: Kysely<DB>, options: { now?: 
         await sql`CREATE INDEX IF NOT EXISTS google_data_profile_owner ON google_data_profiles(owner_id)`.execute(tx);
         await sql`CREATE INDEX IF NOT EXISTS google_data_profile_expiry ON google_data_profiles(expires_at)`.execute(tx);
         await sql`CREATE INDEX IF NOT EXISTS google_data_consent_expiry ON google_data_consents(expires_at)`.execute(tx);
+        await sql`CREATE TABLE IF NOT EXISTS google_hosted_revocation_receipts (
+          nonce UUID PRIMARY KEY, expires_at TIMESTAMPTZ NOT NULL)`.execute(tx);
         await migrateGooglePurgeDelivery(tx);
       }));
       await cleanup();
@@ -186,9 +192,20 @@ export function createGoogleDataRepository<DB>(db: Kysely<DB>, options: { now?: 
         return expectedRevision + 1;
       }));
     },
-    async revokeAccount(ownerId: string, googleAccountId: string) {
+    async revokeAccount(ownerId: string, googleAccountId: string, hostedReceipt?: GmailHostedRevocationReceipt) {
       return guarded(() => locked(async tx => {
         keySchema.shape.ownerId.parse(ownerId); z.uuid().parse(googleAccountId);
+        if (hostedReceipt) {
+          const receipt = GmailHostedRevocationReceiptSchema.parse(hostedReceipt);
+          const expiresAt = new Date(receipt.expiresAt);
+          await cleanupRevocationReceipts(tx);
+          const accepted = await sql`INSERT INTO google_hosted_revocation_receipts(nonce,expires_at)
+            SELECT ${receipt.nonce},${expiresAt}::timestamptz
+            WHERE ${expiresAt}::timestamptz > clock_timestamp()
+              AND (SELECT count(*) FROM google_hosted_revocation_receipts) < 10000
+            ON CONFLICT(nonce) DO NOTHING RETURNING nonce`.execute(tx);
+          if (!accepted.rows.length) throw new GoogleDataAuthorityError('conflict');
+        }
         await queueMatching(tx,sql`owner_id=${ownerId} AND google_account_id=${googleAccountId}`);
         const result = await sql`UPDATE google_data_consents SET revision=revision+1,status='revoked',invalidated_at=${now()},updated_at=${now()}
           WHERE owner_id=${ownerId} AND google_account_id=${googleAccountId} AND status='active' RETURNING id`.execute(tx);
