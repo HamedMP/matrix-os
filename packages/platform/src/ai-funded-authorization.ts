@@ -37,7 +37,7 @@ import { loadLockedFundingSources, reconcileExpiredPromotionalCredit } from "./a
 import { previewRuntimeOperationBusy } from "./preview-runtime-admission.js";
 import { isBoundedPreviewProvisioningClass } from "./preview-runtime-access.js";
 import {
-  admitFreeDailySpend, assertFreeModel, grantFreeDailyAllowance, utcDayStart, type FreeAllowanceGrant, type FreeFundingConfig,
+  admitFreeDailySpend, assertFreeModel, grantFreeDailyAllowance, raiseEarlierFreeBudgetDefault, utcDayStart, type FreeAllowanceGrant, type FreeFundingConfig,
 } from "./free-tier/funded-policy.js";
 import { freeMetalMachine, isFreeMetalRuntime } from "./free-tier/free-runtime.js";
 
@@ -139,6 +139,11 @@ export function createFundedAuthorize(deps: FundedAuthorizeDependencies) {
         runtimeSlot: credential.runtime_slot,
       };
       await reconcileExpiredPromotionalCredit(trx.executor, identity, checkedAt);
+      // Runtimes registered before the daily allowance may still hold an earlier default budget.
+      const runtimeBudget = free
+        ? await raiseEarlierFreeBudgetDefault(trx.executor, identity.machineId,
+          { budgetMicrousd: exactInteger(runtime.monthly_budget_microusd), revision: runtime.revision }, checkedAt)
+        : { budgetMicrousd: exactInteger(runtime.monthly_budget_microusd), revision: runtime.revision };
       if (free) await grantFreeDailyAllowance(trx, identity, checked, deps.grantCreditInTransaction);
       const balance = await trx.executor.updateTable("ai_funded_runtime_balances").set({
         ...advanceMonthWindow(utcMonthStart(checked)),
@@ -166,7 +171,7 @@ export function createFundedAuthorize(deps: FundedAuthorizeDependencies) {
       if (free && request.billingPolicy === "postpaid") throw new AiFundedPolicyError("access_disabled");
 
       const billingMode: FundedBillingMode = request.billingMode === "usage" ? "usage" : "hold";
-      const monthlyBudget = exactInteger(runtime.monthly_budget_microusd);
+      const monthlyBudget = runtimeBudget.budgetMicrousd;
       // Upper bounds ignore active holds, which may still be released. A request that
       // cannot fit even then fails now and never takes a priority place.
       const sourceAvailability = await loadLockedFundingSources(trx.executor, identity, balance, checkedAt);
@@ -294,7 +299,7 @@ export function createFundedAuthorize(deps: FundedAuthorizeDependencies) {
         policy: {
           enabled: true,
           globalRevision: global.revision,
-          runtimeRevision: runtime.revision,
+          runtimeRevision: runtimeBudget.revision,
           allowedModelIds,
           monthlyBudgetMicrousd: monthlyBudget,
           checkedAt,

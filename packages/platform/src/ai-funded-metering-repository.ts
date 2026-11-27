@@ -26,7 +26,7 @@ import {
   usageReservationLimit,
 } from "./ai-funded-metering-helpers.js";
 import { createFundedAuthorize } from "./ai-funded-authorization.js";
-import { FREE_MANAGED_MODEL_ID, grantFreeDailyAllowance, isFreeAllowanceEntryId, type FreeFundingConfig } from "./free-tier/funded-policy.js";
+import { FREE_MANAGED_MODEL_ID, grantFreeDailyAllowance, isFreeAllowanceEntryId, raiseEarlierFreeBudgetDefault, type FreeFundingConfig } from "./free-tier/funded-policy.js";
 import { isFreePrepaidHold } from "./free-tier/prepaid-unknown-usage.js";
 import { isFreeMetalRuntime } from "./free-tier/free-runtime.js";
 import {
@@ -195,7 +195,12 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
         .where("owner_id", "=", identity.ownerId)
         .where("runtime_slot", "=", identity.runtimeSlot).execute();
       const balance = await reconcileExpiredPromotionalCredit(trx.executor, identity, checkedAt);
-      const monthlyBudgetMicrousd = exactInteger(runtime.monthly_budget_microusd);
+      // Runtimes registered before the daily allowance may still hold an earlier default budget.
+      const runtimeBudget = free
+        ? await raiseEarlierFreeBudgetDefault(trx.executor, identity.machineId,
+          { budgetMicrousd: exactInteger(runtime.monthly_budget_microusd), revision: runtime.revision }, checkedAt)
+        : { budgetMicrousd: exactInteger(runtime.monthly_budget_microusd), revision: runtime.revision };
+      const monthlyBudgetMicrousd = runtimeBudget.budgetMicrousd;
       const allowedModelIds = enabled
         ? intersectModels(parseModels(global.allowed_model_ids), parseModels(runtime.allowed_model_ids))
           .filter((model) => !free || model === FREE_MANAGED_MODEL_ID)
@@ -229,7 +234,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
         policy: {
           enabled: enabled && allowedModelIds.length > 0,
           globalRevision: global.revision,
-          runtimeRevision: runtime.revision,
+          runtimeRevision: runtimeBudget.revision,
           allowedModelIds: enabled ? allowedModelIds : [],
           monthlyBudgetMicrousd,
           checkedAt,

@@ -1,5 +1,6 @@
 import { FundedAiSafeErrorSchema, MANAGED_WORKERS_AI_MODEL_IDS } from '@matrix-os/contracts';
 import { Hono } from 'hono';
+import { createHash } from 'node:crypto';
 import { sql } from 'kysely';
 import { createAiFundedRelayRoutes, createAiFundedRuntimeRoutes } from '../../packages/platform/src/ai-funded-policy-routes.js';
 import { buildPlatformRuntimeVerificationToken } from '../../packages/platform/src/platform-token.js';
@@ -175,7 +176,7 @@ describe('free funded policy', () => {
     await expect(free.authorize(december, 5 * USD)).resolves.toMatchObject({
       reservation: { reservedMicrousd: 5 * USD, periodStart: '2026-12-01T00:00:00.000Z' },
     });
-    expect((await daily()).at(-1)).toMatchObject({ amount_microusd: 5 * USD });
+    expect(Number((await daily()).at(-1)!.amount_microusd)).toBe(5 * USD);
     expect((await daily()).at(-1)!.entry_id.slice(-10)).toBe('2026-12-01');
   });
 
@@ -327,6 +328,60 @@ describe('free funded policy', () => {
       .toEqual([[replacement.machineId, unspent]]);
     expect(await db.executor.selectFrom('ai_funded_credit_ledger').select('entry_id')
       .where('entry_id', 'like', 'free-daily:%').execute()).toHaveLength(1);
+  });
+
+  it('moves an unspent legacy monthly allowance to a replacement VM, still counting it toward the cap', async () => {
+    const free = harness(db, 100 * USD, clock);
+    const first = await addRuntime(db, 1, 'free', NOV);
+    // A $5 monthly allowance granted this month, before daily allowances replaced it.
+    const legacyId = `free-monthly:${createHash('sha256').update(first.ownerId).digest('hex')}:2026-11`;
+    await free.repo.grantCredit({
+      entryId: legacyId, identity: first, kind: 'promotional_grant', amountMicrousd: 5 * USD,
+      sourceReference: 'matrix-free-monthly-allowance', expiresAt: '2026-12-01T00:00:00.000Z',
+    });
+    await db.executor.updateTable('user_machines').set({ status: 'deleted', deleted_at: NOV.toISOString() })
+      .where('machine_id', '=', first.machineId).execute();
+    const replacement = { ownerId: first.ownerId, machineId: 'free-1-replacement', runtimeSlot: 'primary' };
+    await insertFreeMetalRuntime(db, { machineId: replacement.machineId, clerkUserId: first.ownerId, handle: 'free1r', at: NOV });
+    await db.transaction((trx) => initializeCustomerFundedStarterPolicy(trx, replacement.machineId, { now: NOV.toISOString(), env: ENV }));
+
+    const credential = await free.credential(replacement);
+    // The legacy $5 moves with the owner, and today's $5 is granted beside it.
+    await expect(free.authorize(credential, 10 * USD + 1)).rejects.toThrow(refusal('insufficient_credit'));
+    await expect(free.authorize(credential, 10 * USD)).resolves.toBeDefined();
+    const legacy = await db.executor.selectFrom('ai_funded_promotional_grant_balances').select(['machine_id', 'remaining_microusd'])
+      .where('grant_entry_id', '=', legacyId).executeTakeFirstOrThrow();
+    expect([legacy.machine_id, Number(legacy.remaining_microusd)]).toEqual([replacement.machineId, 5 * USD]);
+    expect(await db.executor.selectFrom('ai_funded_credit_ledger').select('entry_id')
+      .where('entry_id', '=', legacyId).execute()).toHaveLength(1);
+  });
+
+  it.each([
+    { before: 5 * USD, after: 25 * USD }, { before: 10 * USD, after: 25 * USD }, { before: 7 * USD, after: 7 * USD },
+  ])('raises an already-registered free runtime from an earlier default budget on its funding path ($before)', async ({ before, after }) => {
+    const free = harness(db, 100 * USD, clock);
+    const identity = await addRuntime(db, 1, 'free', NOV);
+    const budget = () => db.executor.selectFrom('ai_funded_runtime_policies').select('monthly_budget_microusd')
+      .where('machine_id', '=', identity.machineId).executeTakeFirstOrThrow().then((row) => Number(row.monthly_budget_microusd));
+    await db.executor.updateTable('ai_funded_runtime_policies').set({ monthly_budget_microusd: before })
+      .where('machine_id', '=', identity.machineId).execute();
+    expect((await free.repo.getRuntimeFundingSummary(identity)).policy.monthlyBudgetMicrousd).toBe(after);
+    expect(await budget()).toBe(after);
+    // Admission applies the raise in the same request.
+    await db.executor.updateTable('ai_funded_runtime_policies').set({ monthly_budget_microusd: before })
+      .where('machine_id', '=', identity.machineId).execute();
+    const admitted = free.authorize(await free.credential(identity), Math.min(before, 5 * USD) + 1);
+    if (after > before) await expect(admitted).resolves.toMatchObject({ policy: { monthlyBudgetMicrousd: after } });
+    else await expect(admitted).resolves.toBeDefined();
+    expect(await budget()).toBe(after);
+  });
+
+  it('keeps a paid runtime\'s budget even when it equals an earlier free default', async () => {
+    const free = harness(db, 100 * USD, clock);
+    const paid = await addRuntime(db, 1, 'customer', NOV);
+    await db.executor.updateTable('ai_funded_runtime_policies').set({ monthly_budget_microusd: 10 * USD })
+      .where('machine_id', '=', paid.machineId).execute();
+    expect((await free.repo.getRuntimeFundingSummary(paid)).policy.monthlyBudgetMicrousd).toBe(10 * USD);
   });
 
   it('grants no monthly allowance on a funding read while the free runtime is disabled', async () => {
@@ -482,8 +537,9 @@ describe.skipIf(!freeTierPostgresUrl)('free funded policy races against real Pos
     for (const result of results) {
       if (result.status === 'rejected') expect(result.reason).toBeInstanceOf(AiFundedPolicyError);
     }
-    expect(await a.executor.selectFrom('ai_funded_credit_ledger').select('amount_microusd')
-      .where('entry_id', 'like', 'free-daily:%:2026-11-21').execute()).toEqual([{ amount_microusd: 5 * USD }]);
+    const grants = await a.executor.selectFrom('ai_funded_credit_ledger').select('amount_microusd')
+      .where('entry_id', 'like', 'free-daily:%:2026-11-21').execute();
+    expect(grants.map((row) => Number(row.amount_microusd))).toEqual([5 * USD]);
     const balance = await a.executor.selectFrom('ai_funded_runtime_balances').selectAll()
       .where('machine_id', '=', identity.machineId).executeTakeFirstOrThrow();
     expect(Number(balance.reserved_microusd)).toBeLessThanOrEqual(5 * USD);
