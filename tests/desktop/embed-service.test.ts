@@ -37,6 +37,7 @@ describe("EmbedService", () => {
     internals.manager.createView({ partition: `persist:app-${routeSlug}`, kind: "app", slug: routeSlug,
       routeSlug, allowedOrigins: ["https://gateway.test"], onState: vi.fn() });
     expect(typeof create.mock.calls[0]?.[0].registerViewerTransport).toBe(routeSlug === "browser-lab" ? "function" : "undefined");
+    expect(typeof create.mock.calls[0]?.[0].permissionPolicy).toBe(routeSlug === "browser-lab" ? "function" : "undefined");
     const close = vi.spyOn(internals.viewerAdmission, "close");
     service.closeAll();
     expect(close).toHaveBeenCalledOnce();

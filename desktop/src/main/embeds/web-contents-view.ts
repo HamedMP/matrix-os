@@ -90,6 +90,9 @@ function encodeBoundedSnapshot(source: NativeImage): string | null {
 
 export function createWebContentsView(options: {
   registerViewerTransport?: (contents: WebContents) => () => void;
+  /** Narrow exceptions to the deny-all permission model (e.g. the Browser viewer clipboard). */
+  permissionPolicy?: (contents: WebContents | null, permission: string,
+    details: { isMainFrame: boolean; requestingUrl?: string }) => boolean;
   browserProduct?: { origin: string; renew: () => Promise<unknown> };
   window: BaseWindow;
   partition: string;
@@ -221,9 +224,11 @@ export function createWebContentsView(options: {
   if (options.appBridge || options.sharedAppAuth || options.denyPermissions) {
     // App views receive only the explicit typed bridge. Browser capabilities
     // that could escape that permission model are denied by default.
-    contents.session.setPermissionCheckHandler(() => false);
-    contents.session.setPermissionRequestHandler((_webContents, _permission, callback) => {
-      callback(false);
+    const policy = options.permissionPolicy;
+    contents.session.setPermissionCheckHandler((requesting, permission, _origin, details) =>
+      policy?.(requesting, permission, details) === true);
+    contents.session.setPermissionRequestHandler((requesting, permission, callback, details) => {
+      callback(policy?.(requesting, permission, details) === true);
     });
   }
   if (options.appBridge) {
