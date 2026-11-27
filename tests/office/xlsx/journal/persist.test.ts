@@ -273,6 +273,24 @@ describe("a saved journal holds only what it can read back", () => {
     expect(changes(workbook)).toEqual([]);
   });
 
+  // Outcome protected: rejecting a proposed deletion gives back every formula it turned into #REF!. Fault detected:
+  // past the kept-rewrite limit the deletion went ahead without the old formulas, so a reject put the rows back but
+  // left the references to them broken.
+  it("refuses, before changing anything, a deletion that rewrites more formulas than a journal keeps", async () => {
+    const last = 200_002;
+    const parts = [`<row r="1">${num("A1", 1)}</row>`, `<row r="2"><c r="B2"><f t="shared" ref="B2:B${last}" si="0">$A$1</f><v>1</v></c></row>`];
+    for (let r = 3; r <= last; r++) parts.push(`<row r="${r}"><c r="B${r}"><f t="shared" si="0"/><v>1</v></c></row>`);
+    const workbook = await openXlsx(await buildXlsx({ sheets: [{ name: "Data", rows: parts.join("") }] }));
+    const sheet = sheetId(workbook, "Data");
+    workbook.beginProposal(AGENT);
+    expect(codeOf(() => workbook.deleteRows(sheet, 0, 1))).toBe("limit_exceeded");
+    workbook.endProposal();
+    expect(valueAt(workbook, "Data", "A1")).toBe(1);
+    expect(at(workbook, "Data", "B2").formula).toBe("$A$1");
+    expect(at(workbook, "Data", `B${last}`).formula).toBe("$A$1");
+    expect(changes(workbook)).toEqual([]);
+  }, 120_000);
+
   it("takes back an insertion whose rewritten names a journal could not hold", async () => {
     const refersTo = Array.from({ length: 819 }, () => "Data!$A$9").join("+");
     const workbook = await openXlsx(

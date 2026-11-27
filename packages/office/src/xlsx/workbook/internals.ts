@@ -135,6 +135,11 @@ export interface WorkbookInternals {
    * be saved. Throws `limit_exceeded` when there is too much to keep.
    */
   captureSheetFeatures(sheet: SheetId, axis: "row" | "col", index: number, count: number): SheetFeatureState | null;
+  /**
+   * True when inserting (`count` above 0) or deleting (`count` below 0) rows or columns would rewrite the formulas
+   * of more than `limit` cells. Changes nothing.
+   */
+  structureRewritesExceed(sheet: SheetId, axis: "row" | "col", index: number, count: number, limit: number): boolean;
   /** False when a state read from a file cannot be used. */
   readableSheetFeatures(features: SheetFeatureState): boolean;
   /** Puts a sheet back into a captured state, once the deleted rows or columns are inserted again. */

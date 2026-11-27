@@ -15,6 +15,7 @@ import { flushNames } from "./names.js";
 import { attachSheet } from "./sheet-read.js";
 import { flushSheet } from "./sheet-write.js";
 import { addSharedString, sheetOf } from "./state.js";
+import { structureRewritesExceed } from "./structure.js";
 
 const MAX_LISTENERS = 16;
 
@@ -81,6 +82,8 @@ export function makeInternals(workbook: Workbook, state: WorkbookState): Workboo
       return state.pkg.hasPart(name) ? state.pkg.getPartText(name) : null;
     },
     captureSheetFeatures: (sheet, axis, index, count) => captureSheetFeatures(state, sheetOf(state, sheet), axis, index, count),
+    structureRewritesExceed: (sheet, axis, index, count, limit) =>
+      structureRewritesExceed(state, sheetOf(state, sheet), { axis, index, count }, limit),
     readableSheetFeatures,
     restoreSheetFeatures: (sheet, features) => restoreSheetFeatures(state, sheetOf(state, sheet), features),
     rewriteSheetFeatures,

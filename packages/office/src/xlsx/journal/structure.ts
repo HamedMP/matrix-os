@@ -18,7 +18,15 @@ import { type JournalContext, type OriginalMethods, isActive } from "./context.j
 import { readableEntry } from "./parse.js";
 import { entryJson } from "./persist.js";
 import { rejectEntries } from "./revert.js";
-import { type AxisEntry, type AxisKind, MAX_KEPT_MERGES, MAX_KEPT_NAMES, type NameRewrite, type RenameSheetEntry } from "./types.js";
+import {
+  type AxisEntry,
+  type AxisKind,
+  MAX_KEPT_MERGES,
+  MAX_KEPT_NAMES,
+  MAX_REWRITES,
+  type NameRewrite,
+  type RenameSheetEntry,
+} from "./types.js";
 
 /**
  * Rewrites the formulas the journal keeps to put back: the old formula of
@@ -122,6 +130,12 @@ function proposeAxis(ctx: JournalContext, sheet: SheetId, axis: Axis, index: num
   };
   if (info.mergedRanges.length > MAX_KEPT_MERGES || namesBefore.length > MAX_KEPT_NAMES || !readableEntry(entryJson(before))) {
     throw unkeepable();
+  }
+  // A deletion turns references to its cells into #REF!; only the kept formulas can give them back on reject.
+  if (sign < 0 && ctx.internals.structureRewritesExceed(sheet, axis, index, -count, MAX_REWRITES)) {
+    throw new OfficeError("limit_exceeded", "the deletion rewrites too many formulas to keep as a proposal", {
+      details: { maxRewrites: MAX_REWRITES },
+    });
   }
   ctx.capture = [];
   ctx.captureOverflow = false;

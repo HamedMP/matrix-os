@@ -176,6 +176,37 @@ function moveSheetFeatures(sheet: SheetModel, op: StructuralOp): void {
   });
 }
 
+/**
+ * True when {@link applyStructuralOp} would rewrite the formulas of more than `limit` cells. Cells a deletion
+ * removes are not rewritten. Reads only; when the workbook holds no more formulas than `limit` no text is read.
+ */
+export function structureRewritesExceed(state: WorkbookState, sheet: SheetModel, op: StructuralOp, limit: number): boolean {
+  const removed = (owner: SheetModel, row: number, col: number): boolean => {
+    if (op.count >= 0 || owner !== sheet) return false;
+    const at = op.axis === "row" ? row : col;
+    return at >= op.index && at < op.index - op.count;
+  };
+  let formulas = 0;
+  for (const owner of state.sheets) {
+    for (const row of owner.rows.values()) {
+      for (const [col, cell] of row.cells) if (cell.formula !== null && !removed(owner, row.index, col)) formulas++;
+    }
+  }
+  if (formulas <= limit) return false;
+  const key = sheet.name.toLowerCase();
+  let rewritten = 0;
+  for (const owner of state.sheets) {
+    for (const row of owner.rows.values()) {
+      for (const [col, cell] of row.cells) {
+        if (cell.formula === null || removed(owner, row.index, col)) continue;
+        if (rewriteForStructure(cell.formula, owner === sheet, key, op) === cell.formula) continue;
+        if (++rewritten > limit) return true;
+      }
+    }
+  }
+  return false;
+}
+
 /** Inserts or deletes rows or columns of a sheet. */
 export function applyStructuralOp(state: WorkbookState, sheet: SheetModel, op: StructuralOp): void {
   checkOp(op);

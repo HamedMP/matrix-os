@@ -22,7 +22,10 @@ export const JOURNAL_FORMAT_VERSION = 1;
 export const MAX_PENDING_CHANGES = 100_000;
 /** Cells read to keep the content of deleted rows or columns; a larger proposed deletion throws `limit_exceeded`. */
 export const MAX_SNAPSHOT_CELLS = 200_000;
-/** Formula rewrites kept per structural change; beyond it the reversal relies on the engine's own rewrite. */
+/**
+ * Formula rewrites kept per structural change. A proposed deletion that would rewrite more throws `limit_exceeded`
+ * before anything changes; beyond it an insertion's reversal relies on the engine's own rewrite.
+ */
 export const MAX_REWRITES = 200_000;
 /** Merged ranges a structural change keeps; a proposed one on a sheet with more throws `limit_exceeded` before anything changes. */
 export const MAX_KEPT_MERGES = 100_000;
