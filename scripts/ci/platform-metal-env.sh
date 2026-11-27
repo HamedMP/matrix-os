@@ -99,6 +99,22 @@ case "$mode" in
     umask 077
     secret_dir="$(mktemp -d)"
     trap 'rm -rf "$secret_dir"' EXIT
+    accessor_member="serviceAccount:${CLOUD_RUN_SERVICE_ACCOUNT}"
+    # Malformed or unreadable IAM metadata is an error, not absent access.
+    validate_access_policy() {
+      jq -e '
+        type == "object" and ((.bindings // []) | type == "array") and
+        all(.bindings[]?; type == "object" and (.role | type == "string") and
+          (.members | type == "array") and all(.members[]; type == "string"))
+      ' <<< "$1" >/dev/null || fail "Metal host secret access policy is unreadable."
+    }
+    has_unconditional_accessor() {
+      jq -e --arg member "$accessor_member" '
+        any(.bindings[]?; .role == "roles/secretmanager.secretAccessor" and .condition == null and
+          any(.members[]?; . == $member))
+      ' <<< "$1" >/dev/null
+    }
+    project_policy=""
     for entry in "${expected[@]}"; do
       name="${entry%%=*}"; spec="${entry#*=}"
       [[ "$spec" == secret:* ]] || continue
@@ -111,9 +127,15 @@ case "$mode" in
       if [ ! -s "$secret_dir/$name" ] || [ "$(wc -c < "$secret_dir/$name")" -gt 65536 ]; then
         fail "Metal host configuration is invalid for $name."
       fi
-      accessor="$(gcloud secrets get-iam-policy "$secret_name" --project "$GCP_PROJECT_ID" --flatten='bindings[].members' \
-        --filter="bindings.role:roles/secretmanager.secretAccessor AND bindings.members:serviceAccount:${CLOUD_RUN_SERVICE_ACCOUNT}" --format='value(bindings.members)' | head -1)"
-      if [ "$accessor" != "serviceAccount:${CLOUD_RUN_SERVICE_ACCOUNT}" ]; then fail "Metal host runtime secret access is unavailable for $name."; fi
+      # Access is a grant on this secret or an inherited project grant; conditional grants never count.
+      secret_policy="$(gcloud secrets get-iam-policy "$secret_name" --project "$GCP_PROJECT_ID" --format=json --quiet)"
+      validate_access_policy "$secret_policy"
+      if has_unconditional_accessor "$secret_policy"; then continue; fi
+      if [ -z "$project_policy" ]; then
+        project_policy="$(gcloud projects get-iam-policy "$GCP_PROJECT_ID" --format=json --quiet)"
+        validate_access_policy "$project_policy"
+      fi
+      if ! has_unconditional_accessor "$project_policy"; then fail "Metal host runtime secret access is unavailable for $name."; fi
     done
     node - "$secret_dir" "$ca_enabled" <<'NODE'
 const fs = require('node:fs');

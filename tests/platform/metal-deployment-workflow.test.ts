@@ -26,6 +26,10 @@ const enabled: NodeJS.ProcessEnv = {
   MATRIX_FREE_TIER_ENABLED: "1", MATRIX_FREE_TIER_MAX_RUNTIMES: "50", MATRIX_FREE_TIER_INVITE_REQUIRED: "true",
   MATRIX_FREE_TIER_DAILY_FUNDED_SPEND_MICROUSD: "20000000", MATRIX_FREE_TIER_SLEEP_ENABLED: "1",
 };
+const accessor = "roles/secretmanager.secretAccessor";
+function policy(member: string, condition?: object) {
+  return { bindings: [{ role: accessor, members: [member], ...(condition ? { condition } : {}) }] };
+}
 const apiToken = "a".repeat(40);
 const ingressToken = "b".repeat(40);
 
@@ -34,7 +38,8 @@ function run(mode: string, settings: NodeJS.ProcessEnv = {}, env: unknown[] = []
   writeFileSync(join(dir, "gcloud"), `#!/usr/bin/env node
 const args = process.argv.slice(2);
 if (args.includes('revisions') && args.includes('describe') && args.includes('run')) process.stdout.write(process.env.MOCK_REVISION);
-else if (args.includes('get-iam-policy')) process.stdout.write(process.env.MOCK_ACCESSOR);
+else if (args.includes('projects') && args.includes('get-iam-policy')) process.stdout.write(process.env.MOCK_PROJECT_POLICY);
+else if (args.includes('get-iam-policy')) process.stdout.write(process.env.MOCK_SECRET_POLICY);
 else if (args.includes('access')) process.stdout.write(JSON.parse(process.env.MOCK_VALUES)[args[args.indexOf('--secret') + 1]] || '');
 else process.stdout.write('ENABLED');
 `);
@@ -45,7 +50,9 @@ else process.stdout.write('ENABLED');
     encoding: "utf8",
     env: {
       ...base, PATH: `${dir}:${process.env.PATH}`, GCP_PROJECT_ID: "example", GCP_REGION: "example",
-      CLOUD_RUN_SERVICE_ACCOUNT: "runtime@example.com", MOCK_ACCESSOR: "serviceAccount:runtime@example.com",
+      CLOUD_RUN_SERVICE_ACCOUNT: "runtime@example.com",
+      MOCK_SECRET_POLICY: JSON.stringify(policy("serviceAccount:runtime@example.com")),
+      MOCK_PROJECT_POLICY: JSON.stringify({ bindings: [] }),
       MOCK_REVISION: JSON.stringify({ spec: { containers: [{ env }] } }),
       MOCK_VALUES: JSON.stringify({ "metal-hostd-api-token": apiToken, "metal-hostd-ingress-token": ingressToken,
         "metal-hostd-ca-pem": extra.MOCK_CA ?? "" }),
@@ -127,7 +134,6 @@ describe("production metal and free-tier deployment contract", () => {
     expect(good.status, good.stderr).toBe(0);
     expect(good.stdout + good.stderr).not.toContain(apiToken);
     expect(run("preflight-secrets", enabled, [], { MOCK_CA: "not-a-certificate" }).status).not.toBe(0);
-    expect(run("preflight-secrets", enabled, [], { MOCK_CA: pem, MOCK_ACCESSOR: "serviceAccount:other@example.com" }).status).not.toBe(0);
     const shortToken = run("preflight-secrets", enabled, [], {
       MOCK_CA: pem, MOCK_VALUES: JSON.stringify({ "metal-hostd-api-token": "private-short", "metal-hostd-ingress-token": ingressToken,
         "metal-hostd-ca-pem": pem }),
@@ -140,6 +146,24 @@ describe("production metal and free-tier deployment contract", () => {
     });
     expect(trailingNewline.status).not.toBe(0);
     expect(run("preflight-secrets", { ...enabled, METAL_HOSTD_CA_PEM_ENABLED: "false" }).status).toBe(0);
+  });
+
+  it("accepts a direct or unconditional project grant and rejects conditional or missing access", () => {
+    const pem = selfSignedPem();
+    const member = "serviceAccount:runtime@example.com";
+    const none = JSON.stringify({ bindings: [] });
+    const condition = { title: "expires", expression: "request.time < timestamp('2030-01-01T00:00:00Z')" };
+    const preflight = (secretPolicy: string, projectPolicy: string) =>
+      run("preflight-secrets", enabled, [], { MOCK_CA: pem, MOCK_SECRET_POLICY: secretPolicy, MOCK_PROJECT_POLICY: projectPolicy });
+    const direct = preflight(JSON.stringify(policy(member)), none);
+    expect(direct.status, direct.stderr).toBe(0);
+    const project = preflight(none, JSON.stringify(policy(member)));
+    expect(project.status, project.stderr).toBe(0);
+    expect(preflight(none, JSON.stringify(policy(member, condition))).status).not.toBe(0);
+    expect(preflight(JSON.stringify(policy(member, condition)), none).status).not.toBe(0);
+    expect(preflight(none, none).status).not.toBe(0);
+    expect(preflight(JSON.stringify(policy("serviceAccount:other@example.com")), none).status).not.toBe(0);
+    expect(preflight("not-json", none).status).not.toBe(0);
   });
 
   it("rejects missing, plaintext, stale, or leftover bindings on a deployed revision", () => {
