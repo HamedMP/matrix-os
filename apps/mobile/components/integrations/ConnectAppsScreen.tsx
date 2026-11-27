@@ -62,8 +62,10 @@ export function ConnectAppsScreen({ openedFrom }: ConnectAppsScreenProps) {
   const refreshInventoryRef = useRef(refreshConnectedInventory);
   const syncInFlight = useRef(false);
   const connectInFlight = useRef(false);
-  syncConnectionsRef.current = syncConnections;
-  refreshInventoryRef.current = refreshConnectedInventory;
+  useEffect(() => {
+    syncConnectionsRef.current = syncConnections;
+    refreshInventoryRef.current = refreshConnectedInventory;
+  }, [refreshConnectedInventory, syncConnections]);
   const servicesById = new Map(available.map((service) => [service.id, service]));
   const catalogSections = buildIntegrationSections(available, { query, oauthOnly, connectedOnly, connectedIds: connected.map(c => c.service) });
   const connectedLabel = isPending

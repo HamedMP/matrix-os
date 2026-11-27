@@ -20,6 +20,11 @@ describe("PlatformDb", () => {
     await db.destroy();
   });
 
+  it("preserves reused bind parameters in the shared Kysely query path", async () => {
+    await expect(db.raw("SELECT $1::text AS first, $1::text AS second", ["bound"]))
+      .resolves.toEqual({ rows: [{ first: "bound", second: "bound" }] });
+  });
+
   describe("migrate()", () => {
     it("creates all 5 tables", async () => {
       const result = await db.raw(
