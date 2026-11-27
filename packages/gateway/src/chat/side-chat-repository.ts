@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { Kysely, Transaction } from "kysely";
+import { sql, type Kysely, type Transaction } from "kysely";
 import { boundedProvenanceTransaction } from "../google-data/provenance/transaction.js";
 import { hasGoogleContextMarker, lockGoogleContexts } from "../google-data/runtime/contexts-schema.js";
 import { z } from "zod/v4";
@@ -51,14 +51,21 @@ export class SideChatRepository {
 
   async read(ownerInput: ChatOwner, chatIdInput: string): Promise<SideChatSnapshot> {
     const { owner, chatId } = await this.ownedChat(ownerInput, chatIdInput);
-    return this.withOrdinaryParent(owner, chatId, async tx => {
+    return boundedProvenanceTransaction(this.db, async tx => {
+      await lockGoogleContexts(tx);
+      const marker = await hasGoogleContextMarker(tx, owner.ownerId, chatId)
+        ? (await sql<{ cutoff: string }>`SELECT ordinary_side_answer_seq::text AS cutoff FROM google_context_markers
+            WHERE owner_id=${owner.ownerId} AND chat_id=${chatId}`.execute(tx)).rows[0] ?? { cutoff: "0" }
+        : undefined;
       const thread = await tx.selectFrom("chat_side_threads").select("id")
         .where("chat_id", "=", chatId).where("owner_type", "=", owner.type).where("owner_id", "=", owner.ownerId)
         .executeTakeFirst();
       if (!thread) return { threadId: null, messages: [] };
       const rows = await tx.selectFrom("chat_side_messages")
         .select(["seq", "role", "content", "created_at"])
-        .where("thread_id", "=", thread.id).orderBy("seq", "desc").limit(200).execute();
+        .where("thread_id", "=", thread.id).$if(marker !== undefined, query => query.where(
+          sql<boolean>`(role='user' OR seq<=${marker!.cutoff}::bigint)`))
+        .orderBy("seq", "desc").limit(200).execute();
       return { threadId: thread.id, messages: rows.reverse().map(row => ({
         seq: Number(row.seq), role: row.role, content: row.content, createdAt: asIso(row.created_at),
       })) };
@@ -69,9 +76,9 @@ export class SideChatRepository {
     generate: (prompt: string, signal: AbortSignal) => Promise<{ text: string }>): Promise<SideChatSnapshot> {
     const { owner, chatId } = await this.ownedChat(ownerInput, chatIdInput);
     const request = { clientRequestId: CanonicalChatRequestIdSchema.parse(requestInput.clientRequestId), text: SideChatTextSchema.parse(requestInput.text) };
-    const thread = await this.db.selectFrom("chat_side_threads").select("id")
+    const thread = await this.withOrdinaryParent(owner, chatId, tx => tx.selectFrom("chat_side_threads").select("id")
       .where("chat_id", "=", chatId).where("owner_type", "=", owner.type).where("owner_id", "=", owner.ownerId)
-      .executeTakeFirst();
+      .executeTakeFirst());
     if (!thread) throw new SideChatNotFoundError();
     const prior = await this.db.selectFrom("chat_side_messages").select("seq")
       .where("thread_id", "=", thread.id).where("client_request_id", "=", request.clientRequestId)

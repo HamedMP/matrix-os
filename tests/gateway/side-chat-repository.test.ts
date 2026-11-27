@@ -60,7 +60,9 @@ it("preserves answers committed before Gmail marking and erases later unverified
     await side.create(owner, id);
     await side.ask(owner, id, { clientRequestId: "req_old_answer", text: "Owner question" }, generate);
   }
-  const contexts = createGoogleContextStore(chats.kysely);
+  const contexts = createGoogleContextStore(chats.kysely, { deletionAuthority: {
+    withVerifiedContextDeletion: (_ownerId, _chatId, work) => work(),
+  } });
   await contexts.migrate();
   const account = "10000000-0000-4000-8000-000000000001";
   const deadline = new Date(Date.now() + 60_000).toISOString();
@@ -76,10 +78,13 @@ it("preserves answers committed before Gmail marking and erases later unverified
   }).execute();
   await contexts.mark({ ...mark, expectedRevision: 1 });
 
-  await expect(side.read(owner, chat.id)).rejects.toThrow();
+  const preserved = ["Owner question", "Synthetic Side Chat answer"];
+  expect((await side.read(owner, chat.id)).messages.map(row => row.content)).toEqual(preserved);
+  await expect(side.ask(owner, chat.id, { clientRequestId: "req_old_answer", text: "Owner question" }, generate)).rejects.toThrow();
   await expect(side.ask(owner, chat.id, { clientRequestId: "req_new_answer", text: "Question" }, generate)).rejects.toThrow();
   expect(generate).toHaveBeenCalledTimes(2);
-  await contexts.beginPurge(owner.ownerId, account);
+  const purge = await contexts.beginPurge(owner.ownerId, account);
+  await contexts.completeDeletion(owner.ownerId, chat.id, purge.revisions[chat.id]!);
 
   const rows = await chats.kysely.selectFrom("chat_side_messages as m")
     .innerJoin("chat_side_threads as t", "t.id", "m.thread_id").select(["m.role", "m.content"])
@@ -88,5 +93,6 @@ it("preserves answers committed before Gmail marking and erases later unverified
     { role: "user", content: "Owner question" },
     { role: "assistant", content: "Synthetic Side Chat answer" },
   ]);
+  expect((await side.read(owner, chat.id)).messages.map(row => row.content)).toEqual(preserved);
   expect((await side.read(owner, ordinary.id)).messages).toHaveLength(2);
 });
