@@ -567,7 +567,7 @@ N/A without architectural rationale and reviewer approval.
 | --- | --- | --- |
 | D0 | Linear ticket | Decided: [ENG-446](https://linear.app/matrix-os/issue/ENG-446/runtime-substrates-container-based-free-tier-alongside-vps); stacks share it |
 | D1 | Container provider | Decided 2026-11-10: AWS Lambda MicroVMs, with Cloud Run gen2 as fallback (research.md R4) |
-| D2 | Free AI allowance | Decided 2026-11-13: once-per-owner starter credit plus $5 per month limited to the managed default model; own-account sources stay available |
+| D2 | Free AI allowance | Decided 2026-11-27 (replaces 2026-11-13's $5 per month): once-per-owner starter credit plus $5 per UTC day (expires at day end), at most $20 of allowance usage per owner per UTC month, limited to the managed default model, under the global daily spend fuse; own-account sources stay available |
 | D3 | Limits and retention | Compute decided 2026-11-14: 80 billed hours per month, then read-only with export until the 1st. Retention: propose 90 days inactivity, 30 days notice |
 | D4 | Signup gate | Invite-only until SC-004 and SC-007 hold in production for two weeks |
 | D5 | Free capability set | Chat (Matrix AI), Files, app build and use, Settings. Terminal, coding CLIs, channels, cron, bots, integrations with platform secrets: paid |
