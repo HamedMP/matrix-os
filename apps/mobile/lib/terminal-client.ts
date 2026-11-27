@@ -39,6 +39,14 @@ export interface MobileTerminalConnectOptions {
   onStatus?: (status: "connecting" | "open" | "closed" | "error") => void;
 }
 
+/** A reconnect stopped because its terminal was closed. */
+class TerminalConnectionClosedError extends Error {
+  constructor() {
+    super("Terminal connection closed");
+    this.name = "TerminalConnectionClosedError";
+  }
+}
+
 export class MobileTerminalClient {
   constructor(private readonly gateway: GatewayClient) {}
 
@@ -61,7 +69,11 @@ export class MobileTerminalClient {
     const token = await this.gateway.getWsToken();
     this.gateway.setWebSocketToken(token);
     const ws = this.gateway.openTerminalWebSocket(token, options.sessionId, options.fromSeq, "exclusive");
-    const connection = new MobileTerminalConnection(ws, options, async (fromSeq, ownership) => {
+    const connection = new MobileTerminalConnection(ws, options, async (fromSeq, ownership, signal) => {
+      // A sleeping computer refuses the upgrade; wait for its wake before reopening.
+      // Closing the terminal aborts `signal`, which ends the wait and skips the reopen.
+      await this.gateway.waitForRuntimeAwake(signal);
+      if (signal.aborted) throw new TerminalConnectionClosedError();
       const nextToken = await this.gateway.getWsToken();
       this.gateway.setWebSocketToken(nextToken);
       return this.gateway.openTerminalWebSocket(nextToken, options.sessionId, fromSeq, ownership);
@@ -75,6 +87,8 @@ export class MobileTerminalConnection {
   private attached = false;
   private readonly terminalRef: TerminalRef;
   private disposed = false;
+  // Aborted on close, so a reconnect still waiting for a wake stops.
+  private readonly lifetime = new AbortController();
   private reconnectAttempt = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private heartbeatTimer: ReturnType<typeof setTimeout> | null = null;
@@ -90,7 +104,11 @@ export class MobileTerminalConnection {
   constructor(
     private ws: WebSocket,
     private readonly options: MobileTerminalConnectOptions,
-    private readonly reconnect?: (fromSeq: number, ownership: "exclusive" | "observe") => Promise<WebSocket>,
+    private readonly reconnect?: (
+      fromSeq: number,
+      ownership: "exclusive" | "observe",
+      signal: AbortSignal,
+    ) => Promise<WebSocket>,
   ) {
     const [workspaceId, tabId] = options.sessionId?.split(":") ?? [];
     if (!/^tws_[0-9a-f]{32}$/.test(workspaceId ?? "") || !/^tt_[0-9a-f]{32}$/.test(tabId ?? "")) {
@@ -224,6 +242,7 @@ export class MobileTerminalConnection {
 
   close(): void {
     this.disposed = true;
+    this.lifetime.abort();
     this.clearReconnect();
     this.clearHeartbeat();
     if (this.ws.readyState !== WS_CONNECTING && this.ws.readyState !== WS_OPEN) return;
@@ -245,7 +264,7 @@ export class MobileTerminalConnection {
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       if (this.disposed) return;
-      void this.reconnect!(this.lastSeq + 1, this.requestedOwnership).then((next) => {
+      void this.reconnect!(this.lastSeq + 1, this.requestedOwnership, this.lifetime.signal).then((next) => {
         if (this.disposed) {
           next.close();
           return;
@@ -254,6 +273,7 @@ export class MobileTerminalConnection {
         this.options.onStatus?.("connecting");
         this.bindSocket(next);
       }).catch((err: unknown) => {
+        if (this.disposed) return;
         console.warn("[mobile] terminal reconnect failed", err instanceof Error ? err.name : typeof err);
         this.options.onStatus?.("error");
         this.scheduleReconnect();
