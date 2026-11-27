@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ProviderAccessSourceSchema, type ProviderModelProvider } from "@matrix-os/contracts";
+import { buildBundledModelCatalog } from "../../packages/gateway/src/ai-providers/model-catalog.js";
 import { boundProviderSettingsModels } from "../../packages/gateway/src/ai-providers/provider-settings-model-catalog.js";
 import type { ProviderSettingsConfiguration } from "../../packages/gateway/src/ai-providers/provider-settings-persistence.js";
 import { providerSettingsCanonicalFixture } from "./provider-settings-test-support.js";
@@ -21,6 +22,25 @@ function source(harness: "pi" | "opencode", eligibleModelIds: string[]) {
 }
 
 describe("bounded provider Settings model inventory", () => {
+  it("exposes open-weight Bedrock models only from exact effective platform evidence", () => {
+    const nemotron = "bedrock/nvidia.nemotron-super-3-120b";
+    const qwen = "bedrock/qwen.qwen3-next-80b-a3b";
+    const gptOss = "bedrock/openai.gpt-oss-120b-1:0";
+    const observed = [nemotron, qwen, gptOss];
+    expect(buildBundledModelCatalog(observed).map(model => model.id)).not.toContain(nemotron);
+    const catalog = buildBundledModelCatalog(observed, new Set([nemotron]));
+    expect(catalog.find(model => model.id === nemotron)).toMatchObject({
+      displayName: "Nemotron 3 Super 120B",
+      eligibleAccessSourceIds: ["matrix_bedrock"],
+    });
+    expect(catalog.map(model => model.id)).not.toContain(qwen);
+    expect(catalog.map(model => model.id)).not.toContain(gptOss);
+    expect(buildBundledModelCatalog(observed, new Set(observed)).filter(model => observed.includes(model.id))
+      .map(model => [model.id, model.displayName])).toEqual(expect.arrayContaining([
+        [nemotron, "Nemotron 3 Super 120B"], [qwen, "Qwen3 Next 80B"], [gptOss, "GPT-OSS 120B"],
+      ]));
+  });
+
   it.each([0, 255, 256])("leaves an inventory of %i models unchanged", count => {
     const provider = { id: "openrouter", displayName: "OpenRouter", models: models(count) };
     const input = { modelProviders: [provider], sources: [source("pi", provider.models.map(m => m.id))],

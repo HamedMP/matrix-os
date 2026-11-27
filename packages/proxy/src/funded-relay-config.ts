@@ -5,7 +5,7 @@ import {
   type FundedAiIdentity,
 } from "@matrix-os/contracts";
 import { readFundedPricingReviews, type FundedPricingReviews } from "./funded-pricing-review.js";
-import { resolveBedrockRouteConfig, type BedrockRouteConfig } from "./funded-bedrock-route.js";
+import { resolveBedrockRouteConfig, resolveBedrockRouteConfigs, type BedrockRouteConfig } from "./funded-bedrock-route.js";
 
 import { readJevPricingReview, type JevPricingReview } from "./jev-pricing-review.js";
 const DEFAULT_BODY_LIMIT_BYTES = 2 * 1024 * 1024;
@@ -42,6 +42,7 @@ export interface FundedRelayConfig {
   workersAiToken?: string;
   cloudflarePreview?: FundedCloudflarePreview;
   bedrockRoute?: BedrockRouteConfig;
+  bedrockRoutes?: readonly BedrockRouteConfig[];
   platformBaseUrl: string;
   relayControlToken: string;
   metadataSecret: string;
@@ -181,8 +182,9 @@ export function resolveFundedRelayConfig(
   const workersAiToken = env.CLOUDFLARE_WORKERS_AI_TOKEN?.trim()
     ? readSecret(env, "CLOUDFLARE_WORKERS_AI_TOKEN") : undefined;
   const bedrockRoute = resolveBedrockRouteConfig(env);
-  if (bedrockRoute && reservationMode !== "usage") {
-    throw new Error("MATRIX_FUNDED_BEDROCK_ROUTE requires usage reservation mode");
+  const bedrockRoutes = resolveBedrockRouteConfigs(env);
+  if ((bedrockRoute || bedrockRoutes.length) && reservationMode !== "usage") {
+    throw new Error("Bedrock route configuration requires usage reservation mode");
   }
   if (workersAiToken === relayControlToken || workersAiToken === metadataSecret) {
     throw new Error("Workers AI credential must not reuse internal relay authority");
@@ -208,6 +210,7 @@ export function resolveFundedRelayConfig(
     reservationMode,
     workersAiToken,
     ...(bedrockRoute ? { bedrockRoute } : {}),
+    ...(bedrockRoutes.length ? { bedrockRoutes } : {}),
     platformBaseUrl,
     relayControlToken,
     metadataSecret,

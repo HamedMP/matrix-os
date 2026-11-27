@@ -26,13 +26,13 @@ import {
   assertBedrockInputWithinRoute,
   bedrockRouteProvenance,
   BedrockUpstreamError,
-  createBedrockFundedUpstream,
 } from "./funded-bedrock-upstream.js";
 import {
   estimateBedrockWorstCaseMicrousd,
   isBedrockPricingCurrent,
   priceBedrockUsageMicrousd,
 } from "./funded-bedrock-route.js";
+import { createBedrockRouteRegistry, type BedrockRouteRegistry } from "./funded-bedrock-route-registry.js";
 import { AdmissionController, type AdmissionLease } from "./funded-relay-admission.js";
 import { refundFundedCapacityAttempt } from "./funded-relay-capacity.js";
 import { COUNT_TOKENS_BODY_LIMIT_BYTES, fundedCloudflarePreviewUpstream,
@@ -82,6 +82,7 @@ interface FundedRelayDependencies extends FundedRelayConfig {
   requestIdFactory?: () => string;
   platformClient?: FundedPlatformClient;
   bedrockUpstream?: FundedGenerationUpstream;
+  bedrockRegistry?: BedrockRouteRegistry;
 }
 
 interface ActiveRequestState {
@@ -292,9 +293,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
   const registryClient = config.pricingRegistryEnabled ? createControlClient() : undefined;
   const platform = config.platformClient ?? registryClient ?? createControlClient();
   const readGenerationIdentity = createGenerationIdentityReader({ platform, now, secret: config.metadataSecret });
-  const bedrockUpstream = config.bedrockRoute
-    ? dependencies.bedrockUpstream ?? createBedrockFundedUpstream(config.bedrockRoute)
-    : null;
+  const bedrockRegistry = config.bedrockRegistry ?? createBedrockRouteRegistry(config, config.bedrockUpstream);
   const shutdown = new AbortController();
   const pricingShutdown = new AbortController();
   const pricingRegistry = registryClient && createFundedPricingRegistry({
@@ -380,8 +379,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
     let model: ReturnType<typeof mapFundedModel>;
     let cloudflareModel: ReturnType<typeof mapFundedModel> | null = null;
     const isOpenAi = c.req.path === CHAT_COMPLETIONS_PATH;
-    let isBedrock = false;
-    let isBedrockCandidate = false;
+    let bedrockCandidate: ReturnType<typeof bedrockRegistry.get>;
     const requestSearch = new URL(c.req.url).search;
     try {
       const body: unknown = JSON.parse(await c.req.text());
@@ -389,28 +387,23 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
       // prefix, while the relay route may use a private client alias. Accept
       // only those three exact, configuration-bound spellings and normalize
       // to the private client ID before provider dispatch.
-      const allowedOpenAiModels = new Set(config.bedrockRoute ? [
-        config.bedrockRoute.clientModelId,
-        config.bedrockRoute.canonicalModelId,
-        config.bedrockRoute.canonicalModelId.replace(/^anthropic\//, ""),
-      ] : []);
       const serialized = isOpenAi
-        ? serializeFundedOpenAiRequest(body, allowedOpenAiModels)
+        ? serializeFundedOpenAiRequest(body, bedrockRegistry.aliases)
         : serializeFundedRequest(body);
       parsedBody = serialized.request;
       requestBody = serialized.body;
       anthropicBeta = resolveRequestedBetas(c.req.header("anthropic-beta"), config.allowedBetas);
       if (!isOpenAi) assertFundedSystemMessageBeta(parsedBody as FundedRequest, anthropicBeta);
-      isBedrockCandidate = isOpenAi && allowedOpenAiModels.has(parsedBody.model);
-      if (isBedrockCandidate && parsedBody.stream !== true) {
+      bedrockCandidate = isOpenAi ? bedrockRegistry.get(parsedBody.model) : undefined;
+      if (bedrockCandidate && parsedBody.stream !== true) {
         throw new Error("Bedrock funded requests require streaming");
       }
       try { cloudflareModel = mapFundedModel(parsedBody.model); }
-      catch (error) { if (!isBedrockCandidate) throw error; }
-      model = isBedrockCandidate
-        ? { nativeModelId: config.bedrockRoute!.clientModelId, canonicalModelId: config.bedrockRoute!.canonicalModelId }
+      catch (error) { if (!bedrockCandidate) throw error; }
+      model = bedrockCandidate
+        ? { nativeModelId: bedrockCandidate.route.clientModelId, canonicalModelId: bedrockCandidate.route.canonicalModelId }
         : cloudflareModel!;
-      if ((isManagedFundedOpenAiModel(model.nativeModelId) || isBedrockCandidate) !== isOpenAi) {
+      if ((isManagedFundedOpenAiModel(model.nativeModelId) || bedrockCandidate !== undefined) !== isOpenAi) {
         throw new Error("Unsupported funded AI model");
       }
     } catch (error) {
@@ -443,14 +436,16 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
     const boundsInputTokens = c.req.path !== COUNT_TOKENS_PATH && (isOpenAi || config.reservationMode === "usage");
     let checked: Awaited<ReturnType<typeof readGenerationIdentity>>;
     try {
-      checked = await readGenerationIdentity(checkInput.data, state.lifetimeSignal, boundsInputTokens && !isBedrockCandidate);
+      checked = await readGenerationIdentity(checkInput.data, state.lifetimeSignal, boundsInputTokens && !bedrockCandidate);
     } catch (error) {
       return controlPlaneError(c, error);
     }
     const supportsUpstreamSelection = checked.upstreamSelectionVersion === 1;
-    isBedrock = isBedrockCandidate && supportsUpstreamSelection
-      && checked.upstreamSelection?.upstream === "aws_bedrock";
-    if (isBedrockCandidate && !isBedrock) {
+    const bedrock = supportsUpstreamSelection && checked.upstreamSelection?.upstream === "aws_bedrock"
+      ? bedrockCandidate
+      : undefined;
+    const isBedrock = bedrock !== undefined;
+    if (bedrockCandidate && !isBedrock) {
       if (!cloudflareModel || cloudflareModel.canonicalModelId !== model.canonicalModelId) {
         return errorResponse(c, 403, "permission_error", "This model is not enabled");
       }
@@ -467,14 +462,14 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
       try {
         parsedBody = {
           ...parsedBody as ReturnType<typeof serializeFundedOpenAiRequest>["request"],
-          model: config.bedrockRoute!.clientModelId,
+          model: bedrock.route.clientModelId,
         };
         // Validate provider translation and its conservative input ceiling
         // only after the platform has bound this request to Bedrock, but still
         // before an owner hold is reserved or a request is started.
         assertBedrockInputWithinRoute(
           parsedBody as ReturnType<typeof serializeFundedOpenAiRequest>["request"],
-          config.bedrockRoute!,
+          bedrock.route,
         );
       } catch (error) {
         console.warn("[proxy] Funded AI request rejected", requestRejectionDiagnostic(error));
@@ -482,8 +477,8 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
       }
     }
     const isPreviewModel = isFundedCloudflarePreviewModel(model.nativeModelId);
-    const openAiRouteConfigured = isBedrock ? bedrockUpstream !== undefined
-      : isPreviewModel ? preview !== undefined : config.workersAiToken !== undefined;
+    const openAiRouteConfigured = isBedrock
+      || (isPreviewModel ? preview !== undefined : config.workersAiToken !== undefined);
     if (isOpenAi && !openAiRouteConfigured) {
       return errorResponse(c, 503, "api_error", "AI access is temporarily unavailable");
     }
@@ -531,7 +526,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
       if (boundsInputTokens) {
         // Bound provider liability without requiring an unavailable tokenizer.
         // This is not an observed count and never substitutes for actual usage.
-        inputTokens = isBedrock ? config.bedrockRoute!.maxInputTokens : maximumFundedInputTokens(model.canonicalModelId);
+        inputTokens = isBedrock ? bedrock.route.maxInputTokens : maximumFundedInputTokens(model.canonicalModelId);
       } else {
         const counted = await countTokens({
           requestBody: serializeCountTokensRequest(parsedBody as FundedRequest),
@@ -559,7 +554,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
     try {
       estimate = isBedrock
         ? estimateBedrockWorstCaseMicrousd({
-          route: config.bedrockRoute!, inputTokens, maxOutputTokens: parsedBody.max_tokens!, now: now(),
+          route: bedrock.route, inputTokens, maxOutputTokens: parsedBody.max_tokens!, now: now(),
         })
         : estimateWorstCaseMicrousd({
           canonicalModelId: model.canonicalModelId,
@@ -613,7 +608,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
     // untouched reservation before start rather than dispatching stale pricing.
     const startReviews = !isBedrock && pricingRegistry
       ? await pricingReviewsFor(model.canonicalModelId, state.lifetimeSignal) : reviews;
-    if (isBedrock ? !isBedrockPricingCurrent(config.bedrockRoute!, now())
+    if (isBedrock ? !isBedrockPricingCurrent(bedrock.route, now())
       : startReviews === null || !isFundedModelPriceCurrent(model.canonicalModelId, now(), startReviews)) {
       await releaseBeforeStart(reservation.reservationId, authorization.identity.tokenId);
       return errorResponse(c, 503, "api_error", "AI access is temporarily unavailable");
@@ -710,7 +705,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
       let upstreamProvenance: FundedUpstreamProvenance | undefined;
       let upstream: Response;
       if (isBedrock) {
-        const dispatchedResult = await bedrockUpstream!.dispatch({
+        const dispatchedResult = await bedrock.upstream.dispatch({
           request: parsedBody as ReturnType<typeof serializeFundedOpenAiRequest>["request"],
           requestId,
           signal: generationSignal,
@@ -768,7 +763,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
             maxCaptureBytes: config.maxResponseBytes,
             ...(isBedrock ? {
               priceUsage: (usage) => priceBedrockUsageMicrousd({
-                route: config.bedrockRoute!, pricingVersion: estimate.pricingVersion, usage,
+                route: bedrock.route, pricingVersion: estimate.pricingVersion, usage,
               }),
             } : {}),
           });
@@ -804,7 +799,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
         ? {
             mode: "exact",
             actualCostMicrousd: 0,
-            upstreamProvenance: bedrockRouteProvenance(config.bedrockRoute!),
+            upstreamProvenance: bedrockRouteProvenance(bedrock.route),
           }
         : { mode: "conservative" }, "failed");
       resourceLease.release();
@@ -1147,7 +1142,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
           const acknowledged = await settlementQueue.close(signal);
           return ended && acknowledged && terminalComplete && !signal.aborted;
         } finally {
-          bedrockUpstream?.close();
+          bedrockRegistry.close();
           signal.removeEventListener("abort", abort);
         }
       })();

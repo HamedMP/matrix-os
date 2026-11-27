@@ -10,9 +10,7 @@ import {
 } from "./funded-relay.js";
 import { FUNDED_SONNET, probeFundedModel } from "./funded-relay-readiness.js";
 import { fundedModelPriceValidThrough, isFundedModelPriceCurrent } from "./funded-relay-model.js";
-import {
-  createBedrockFundedUpstream,
-} from "./funded-bedrock-upstream.js";
+import { createBedrockRouteRegistry } from "./funded-bedrock-route-registry.js";
 import { isBedrockPricingCurrent, priceBedrockUsageMicrousd } from "./funded-bedrock-route.js";
 import { RELAY_SHUTDOWN_TIMEOUT_MS, waitForRelayWork } from "./funded-relay-lifecycle.js";
 import { serializeFundedOpenAiRequest } from "./funded-relay-openai-request.js";
@@ -58,14 +56,12 @@ export function createFundedRelayService(config: FundedRelayServiceConfig, optio
     service: "matrix-funded-ai-relay",
   });
   const now = options.now ?? config.now ?? (() => new Date());
-  const bedrockUpstream = config.bedrockRoute
-    ? options.bedrockUpstream ?? config.bedrockUpstream ?? createBedrockFundedUpstream(config.bedrockRoute)
-    : undefined;
+  const bedrockRoutes = createBedrockRouteRegistry(config, options.bedrockUpstream ?? config.bedrockUpstream);
   const relay = createFundedRelay({
     ...config,
     ...(options.fetchFn ? { fetch: options.fetchFn } : {}),
     now,
-    bedrockUpstream,
+    bedrockRegistry: bedrockRoutes,
   });
 
   app.get("/health", (c) => c.json({ status: "ok" }));
@@ -80,12 +76,13 @@ export function createFundedRelayService(config: FundedRelayServiceConfig, optio
     const query = ReadinessQuerySchema.safeParse(Object.fromEntries(new URL(c.req.url).searchParams));
     if (!query.success) return c.json({ ready: false }, 400);
     const { model } = query.data;
-    const bedrockRoute = config.bedrockRoute;
-    if (query.data.upstream === "aws_bedrock"
-      && bedrockRoute && (model === bedrockRoute.clientModelId || model === bedrockRoute.canonicalModelId)) {
-      if (config.reservationMode !== "usage" || !bedrockUpstream || !isBedrockPricingCurrent(bedrockRoute, now())) {
+    if (query.data.upstream === "aws_bedrock") {
+      const entry = bedrockRoutes.get(model);
+      if (!entry || (model !== entry.route.clientModelId && model !== entry.route.canonicalModelId)
+        || config.reservationMode !== "usage" || !isBedrockPricingCurrent(entry.route, now())) {
         return c.json({ ready: false }, 503);
       }
+      const { route: bedrockRoute, upstream: bedrockUpstream } = entry;
       const priceValidThrough = bedrockRoute.pricing.validThrough;
       try {
         const request = serializeFundedOpenAiRequest({ model: bedrockRoute.clientModelId,
@@ -124,7 +121,6 @@ export function createFundedRelayService(config: FundedRelayServiceConfig, optio
         return c.json({ ready: false }, 503);
       }
     }
-    if (query.data.upstream === "aws_bedrock") return c.json({ ready: false }, 503);
     if ((!model || !isManagedFundedOpenAiModel(model)) && model !== FUNDED_SONNET) return c.json({ ready: false }, 400);
     if (isFundedThirdPartyPreviewModel(model)
       || config.cloudflarePreview && !isFundedCloudflarePreviewCohortModel(model)) return c.json({ ready: false }, 400);

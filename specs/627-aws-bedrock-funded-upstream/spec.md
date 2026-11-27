@@ -16,9 +16,15 @@ owner, choose a funded model, reserve credit, or settle a charge.
 
 The route is absent by default. Merely deploying this code does not advertise
 or enable a Bedrock model. Enablement requires a strict
-`MATRIX_FUNDED_BEDROCK_ROUTE` value, current reviewed prices, a successful
-authenticated readiness probe, and the existing platform global/runtime model
-allowlists.
+`MATRIX_FUNDED_BEDROCK_ROUTE` object or `MATRIX_FUNDED_BEDROCK_ROUTES` list,
+current reviewed prices, a successful authenticated readiness probe, and the
+existing platform global/runtime model allowlists. Configure exactly one form.
+
+The catalog recognizes Nova Pro, GPT-OSS 120B, Qwen3 Next 80B, and Nemotron 3
+Super 120B by exact model ID. Each entry is independently eligible only after
+Platform observes a healthy, priced route. GPT-OSS 120B uses a 118,000-token
+relay input ceiling and a 16,384-token Matrix Pi context window to keep the
+request and ordinary output budget inside its reviewed 128K provider window.
 
 ## Source of truth and invariants
 
@@ -40,10 +46,11 @@ allowlists.
   readiness probes. Only the authenticated readiness route may refresh that
   cache. Account deletion erases the owner's preference and its audit history
   inside the existing platform-data transaction.
-- The relay route JSON is operator configuration. It binds one client model ID
+- The relay route JSON is operator configuration. Each entry binds one client model ID
   to one canonical Matrix model, resolved Bedrock model/inference profile,
   region, context/output ceilings, and a time-bounded reviewed integer price
-  table. Unknown keys, endpoints, and embedded credentials are rejected.
+  table. The relay accepts up to eight entries with distinct route IDs and
+  unambiguous model aliases. Unknown keys, endpoints, and embedded credentials are rejected.
 - The existing $5 starter-credit campaign is unchanged. Authoritative campaign
   total caps, claim limits, and pause/revision controls are tracked separately
   in ENG-275 and are not inferred from this provider route.
@@ -99,8 +106,8 @@ never authority.
    healthy Bedrock model IDs into Provider V3. Shared Chat and Settings
    projections consume that field rather than inferring eligibility. Bedrock
    models are exposed through Matrix Pi's OpenAI-compatible route. The bundled
-   Nova Pro descriptor appears only for the exact qualified
-   `bedrock/amazon.nova-pro-v1:0` model in Platform policy and readiness.
+   descriptors for Nova Pro, Nemotron 3 Super 120B, and Qwen3 Next 80B appear only
+   for their exact qualified model IDs in Platform policy and readiness.
    The Claude SDK instance and standalone Pi and OpenCode Anthropic launchers
    exclude
    those exact routes while Matrix AI still lists the models. Settings clients must

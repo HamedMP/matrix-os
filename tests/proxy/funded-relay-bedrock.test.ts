@@ -102,6 +102,64 @@ function request(model = MODEL) {
 }
 
 describe("funded Bedrock relay", () => {
+  it("checks and meters the exact second configured Bedrock route", async () => {
+    const secondRoute = {
+      ...ROUTE,
+      routeId: "bedrock-eu-second",
+      clientModelId: "bedrock-second",
+      canonicalModelId: "bedrock/second",
+      resolvedModel: "second",
+      inferenceProfile: "second",
+      pricing: { ...ROUTE.pricing, version: "bedrock-second-review", inputRateHundredths: 250 },
+    };
+    const multi = config({ MATRIX_FUNDED_BEDROCK_ROUTE: "", MATRIX_FUNDED_BEDROCK_ROUTES: JSON.stringify([ROUTE, secondRoute]) });
+    const control = platform();
+    const bedrockUpstream: FundedGenerationUpstream = {
+      dispatch: vi.fn(async () => ({ response: response(secondRoute.clientModelId), provenance: {
+        upstream: "aws_bedrock", routeId: secondRoute.routeId, resolvedModel: secondRoute.resolvedModel,
+        inferenceProfile: secondRoute.inferenceProfile, region: secondRoute.region,
+        pricingVersion: secondRoute.pricing.version, providerRequestId: "aws-second-model",
+      } })), close: vi.fn(),
+    };
+    const service = createFundedRelayService({
+      ...multi, requestIdFactory: () => "request_1", platformClient: control as unknown as FundedPlatformClient,
+    }, { now: () => NOW, bedrockUpstream });
+    try {
+      const ready = await service.app.request("/ready?model=bedrock%2Fsecond&upstream=aws_bedrock", {
+        headers: { authorization: `Bearer ${multi.relayControlToken}` },
+      });
+      expect(ready.status).toBe(200);
+      const streamed = await service.app.fetch(request(secondRoute.canonicalModelId));
+      expect(streamed.status).toBe(200);
+      expect(await streamed.text()).toContain('"content":"ok"');
+      expect(control.check).toHaveBeenCalledWith(expect.objectContaining({ modelId: secondRoute.canonicalModelId }), expect.any(AbortSignal));
+      expect(control.finalize).toHaveBeenCalledWith(expect.objectContaining({
+        mode: "exact", actualCostMicrousd: 318,
+        upstreamProvenance: expect.objectContaining({ routeId: secondRoute.routeId, pricingVersion: secondRoute.pricing.version }),
+      }), expect.any(AbortSignal));
+    } finally {
+      await service.close();
+    }
+    expect(bedrockUpstream.close).toHaveBeenCalledOnce();
+  });
+
+  it("requires the reviewed input ceiling for the 128K GPT-OSS route", () => {
+    const gpt = { ...ROUTE, routeId: "bedrock-gpt-oss-120b-eu", clientModelId: "openai.gpt-oss-120b-1:0",
+      canonicalModelId: "bedrock/openai.gpt-oss-120b-1:0", maxInputTokens: 118_000 };
+    const load = (route: typeof gpt) => config({ MATRIX_FUNDED_BEDROCK_ROUTE: "", MATRIX_FUNDED_BEDROCK_ROUTES: JSON.stringify([ROUTE, route]) });
+    expect(load(gpt).bedrockRoutes).toContainEqual(gpt);
+    expect(() => load({ ...gpt, maxInputTokens: 200_000 })).toThrow(/configuration/i);
+    expect(() => load({ ...gpt, canonicalModelId: "bedrock/unreviewed" })).toThrow(/configuration/i);
+  });
+
+  it("rejects a model alias that can match two configured Bedrock routes", () => {
+    const collision = { ...ROUTE, routeId: "different", canonicalModelId: "bedrock/other" };
+    expect(() => config({
+      MATRIX_FUNDED_BEDROCK_ROUTE: "",
+      MATRIX_FUNDED_BEDROCK_ROUTES: JSON.stringify([ROUTE, collision]),
+    })).toThrow(/configuration/i);
+  });
+
   it("does not probe Bedrock when the relay cannot admit Bedrock requests", async () => {
     const dispatch = vi.fn();
     const service = createFundedRelayService({ ...config(), reservationMode: "cloudflare-count" }, {
