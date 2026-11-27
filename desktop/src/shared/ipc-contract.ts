@@ -393,6 +393,8 @@ export const INVOKE_CHANNELS = {
     response: ZoomFactorResultSchema,
   },
   "window:toggle-maximize": { request: Empty, response: Ok },
+  /** The main renderer is signed in with its app, Chat and task listeners attached. */
+  "window:native-actions-ready": { request: Empty, response: Ok },
   "window:set-titlebar-overlay": {
     request: z.strictObject({ color: z.string().regex(/^#[\da-f]{6}$/i), symbolColor: z.string().regex(/^#[\da-f]{6}$/i) }),
     response: Ok,

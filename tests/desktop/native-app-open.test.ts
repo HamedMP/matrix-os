@@ -101,7 +101,7 @@ describe("native installed-app opening", () => {
     });
     bridge.register(1, "gallery");
     await bridge.openChat(sender, { view: "recipes", recipeId: "company-brain" });
-    expect(openChat).toHaveBeenCalledWith({ view: "recipes", recipeId: "company-brain" }, expect.any(AbortSignal));
+    expect(openChat).toHaveBeenCalledWith({ view: "recipes", recipeId: "company-brain" }, expect.any(AbortSignal), expect.any(Function));
     expect(f.resolveApp).not.toHaveBeenCalled();
 
     const handle = vi.fn(); bridge.registerIpc({ handle });
@@ -137,7 +137,7 @@ describe("native installed-app opening", () => {
     const f = fixture(); f.bridge.register(1, "matrix-browser", "browser-lab");
     await f.bridge.openApp({ id: 1, url: "https://gateway.test/apps/browser-lab/?surface=browser" }, { name: "ignored", path: `matrix-app:${appIdentity}` });
     expect(f.resolveApp).not.toHaveBeenCalled();
-    expect(f.openApp).toHaveBeenCalledWith({ slug: "browser-lab", appIdentity, name });
+    expect(f.openApp).toHaveBeenCalledWith({ slug: "browser-lab", appIdentity, name }, expect.any(Function));
   });
   it("retains a void launch-request contract and catches asynchronous rejection", async () => {
     const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
@@ -154,7 +154,7 @@ describe("native installed-app opening", () => {
     const { bridge, openApp, resolveApp } = fixture();
     await bridge.openApp(sender, request);
     expect(resolveApp).toHaveBeenCalledWith(request);
-    expect(openApp).toHaveBeenCalledWith(app);
+    expect(openApp).toHaveBeenCalledWith(app, expect.any(Function));
   });
   it.each(["https://evil.test", "//evil.test", "__settings__", "/etc/passwd", "apps/planner/../../system/config.json",
     "apps/planner/%2e%2e/index.html", "apps/planner/index.html?token=forged", "apps/planner\\index.html"])("rejects unsafe destinations before lookup: %s", async (path) => {
@@ -252,6 +252,48 @@ describe("native installed-app opening", () => {
   });
 });
 
+describe("deferred app launch delivery", () => {
+  it("lets a deferred launch check that the same app document under the same session still asks", async () => {
+    const f = fixture();
+    let isCurrent!: () => boolean;
+    f.openApp.mockImplementationOnce((_app: unknown, current: () => boolean) => { isCurrent = current; });
+    await f.bridge.openApp(sender, request);
+    expect(isCurrent()).toBe(true);
+    f.advance();
+    expect(isCurrent()).toBe(false);
+
+    const g = fixture();
+    let unregistered!: () => boolean;
+    g.openApp.mockImplementationOnce((_app: unknown, current: () => boolean) => { unregistered = current; });
+    await g.bridge.openApp(sender, request);
+    g.bridge.unregister(1);
+    expect(unregistered()).toBe(false);
+
+    const h = fixture();
+    const live = { id: 1, url: sender.url };
+    let navigated!: () => boolean;
+    h.openApp.mockImplementationOnce((_app: unknown, current: () => boolean) => { navigated = current; });
+    await h.bridge.openApp(live, request);
+    live.url = "https://gateway.test/apps/other/";
+    expect(navigated()).toBe(false);
+  });
+
+  it("waits for the launch to reach the main window and reports its failure", async () => {
+    const f = fixture();
+    let release!: () => void;
+    f.openApp.mockImplementationOnce(() => new Promise<void>((resolve) => { release = resolve; }));
+    let settled = false;
+    const pending = f.bridge.openApp(sender, request).then(() => { settled = true; });
+    for (let index = 0; index < 5; index += 1) await Promise.resolve();
+    expect(f.openApp).toHaveBeenCalledWith(app, expect.any(Function));
+    expect(settled).toBe(false);
+    release();
+    await pending;
+    f.openApp.mockImplementationOnce(() => Promise.reject(new Error("App launch is unavailable")));
+    await expect(f.bridge.openApp(sender, request)).rejects.toThrow("App launch is unavailable");
+  });
+});
+
 describe("installed app catalog resolution", () => {
   it("matches exact installed roots and entries and never trusts the requested name", async () => {
     const fetchFn = vi.fn(async () => new Response(JSON.stringify([{ slug: "planner", name: "Planner", file: "planner/index.html", path: "/files/apps/planner/index.html" }])));
@@ -276,6 +318,18 @@ describe("installed app catalog resolution", () => {
     const signedOut = createNativeAppOpenResolver({ getGatewayOrigin: () => "https://gateway.test", getToken: () => null, fetchFn });
     await expect(signedOut(request)).rejects.toThrow(); expect(fetchFn).toHaveBeenCalledTimes(3);
   });
+  it("tells a missing app apart from signed-out and unreachable catalogs", async () => {
+    const fetchFn = vi.fn(async () => new Response(JSON.stringify([{ slug: "planner", name: "Planner", path: "/files/apps/planner/index.html" }])));
+    const resolveApp = createNativeAppOpenResolver({ getGatewayOrigin: () => "https://gateway.test", getToken: () => "token", fetchFn });
+    await expect(resolveApp({ name: "Gone", path: "matrix-app:gone" })).rejects.toMatchObject({ name: "NativeAppOpenError", reason: "not-found" });
+    fetchFn.mockResolvedValueOnce(new Response("failed", { status: 503 }));
+    await expect(resolveApp({ name: "Planner", path: "matrix-app:planner" })).rejects.toMatchObject({ reason: "catalog-unavailable" });
+    fetchFn.mockRejectedValueOnce(new TypeError("fetch failed"));
+    await expect(resolveApp({ name: "Planner", path: "matrix-app:planner" })).rejects.toMatchObject({ reason: "catalog-unavailable" });
+    const signedOut = createNativeAppOpenResolver({ getGatewayOrigin: () => "https://gateway.test", getToken: () => null, fetchFn });
+    await expect(signedOut({ name: "Planner", path: "matrix-app:planner" })).rejects.toMatchObject({ reason: "auth-required" });
+    await expect(resolveApp({ name: "Planner", path: "matrix-app:planner" })).resolves.toEqual(app);
+  });
 });
 
 
@@ -290,7 +344,7 @@ describe("manifest-backed moved owner app launch", () => {
       await bridge.openApp(sender, { name: "Forged", path: entry });
     }
     expect(openApp).toHaveBeenCalledTimes(4);
-    expect(openApp).toHaveBeenLastCalledWith({ slug: "folio", name: "Owner Ledger", appIdentity: "folio" });
+    expect(openApp).toHaveBeenLastCalledWith({ slug: "folio", name: "Owner Ledger", appIdentity: "folio" }, expect.any(Function));
     await expect(bridge.openApp(sender, { name: "Other", path: "apps/not-installed" })).rejects.toThrow();
     expect(openApp).toHaveBeenCalledTimes(4);
   });
@@ -310,9 +364,9 @@ describe("explicit manifest launch identities", () => {
     bridge.register(1, "gallery");
     const open = createNativeAppOpenClient(value => bridge.openApp(sender, value));
     open("Forged", "matrix-app:folio");
-    await vi.waitFor(() => expect(openApp).toHaveBeenCalledWith({ slug: "folio", name: "Folio", appIdentity: "folio" }));
+    await vi.waitFor(() => expect(openApp).toHaveBeenCalledWith({ slug: "folio", name: "Folio", appIdentity: "folio" }, expect.any(Function)));
     await bridge.openApp(sender, { name: "Forged", path: "apps/folio" });
-    expect(openApp).toHaveBeenLastCalledWith({ slug: "ledger", name: "Ledger", appIdentity: "ledger" });
+    expect(openApp).toHaveBeenLastCalledWith({ slug: "ledger", name: "Ledger", appIdentity: "ledger" }, expect.any(Function));
   });
   it.each(["matrix-app:missing", "matrix-app:../folio", "matrix-app:folio?x", "matrix-app:folio/other", "matrix-app://folio"])("keeps invalid or unavailable identity %s closed", async path => {
     const resolveApp = createNativeAppOpenResolver({ getGatewayOrigin: () => "https://gateway.test", getToken: () => "owner-token", fetchFn: vi.fn(async () => new Response(JSON.stringify(catalog))) });

@@ -15,7 +15,7 @@ afterEach(() => vi.restoreAllMocks());
 it("binds legacy tasks to the registered identity and preserves context", () => {
   const { bridge, generate } = fixture();
   bridge.generate(sender, "Read my notes");
-  expect(generate).toHaveBeenCalledWith("owner/brain", "Read my notes");
+  expect(generate).toHaveBeenCalledWith("owner/brain", "Read my notes", expect.any(Function));
 });
 it("rejects forged identities, navigated and retired views, and malformed context", () => {
   const { bridge, generate } = fixture();
@@ -39,17 +39,17 @@ it("bounds kernel submissions without affecting the new text API", async () => {
   bridge.generate(sender, "hello");
   expect(generate).toHaveBeenCalledTimes(11);
 });
-it("rejects child-frame IPC and normalizes dispatcher failures", () => {
+it("rejects child-frame IPC and normalizes dispatcher failures", async () => {
   const { bridge, generate } = fixture();
   const handle = vi.fn();
   bridge.registerIpc({ handle } as Pick<IpcMain, "handle">);
   const handler = handle.mock.calls.find(([channel]) => channel === APP_GENERATE_CHANNEL)![1];
   const frame = {};
-  const event = { senderFrame: frame, sender: { id: 1, mainFrame: frame, getURL: () => sender.url } };
-  expect(handler(event, "hello")).toEqual({ ok: true });
-  expect(() => handler({ ...event, senderFrame: {} }, "hello")).toThrow("App task is unavailable");
+  const event = { senderFrame: frame, sender: { id: 1, mainFrame: frame, getURL: () => sender.url, isDestroyed: () => false } };
+  await expect(handler(event, "hello")).resolves.toEqual({ ok: true });
+  await expect(handler({ ...event, senderFrame: {} }, "hello")).rejects.toThrow("App task is unavailable");
   generate.mockImplementation(() => { throw new Error("secret provider error"); });
-  expect(() => handler(event, "hello")).toThrow(/^App task is unavailable$/);
+  await expect(handler(event, "hello")).rejects.toThrow(/^App task is unavailable$/);
 });
 it("handles asynchronous rejection without changing the legacy void return", async () => {
   const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
@@ -77,4 +77,37 @@ it("revokes every app capability when the authenticated account generation chang
   bridge.register(1, "brain");
   bridge.generate(sender, "newly registered account");
   expect(generate).toHaveBeenCalledTimes(2);
+});
+it("waits for a deferred task dispatch so a reopened main window can still receive it", async () => {
+  let release!: () => void;
+  const generate = vi.fn(() => new Promise<void>((resolve) => { release = resolve; }));
+  const bridge = new NativeAppBridge({ authGeneration: () => 0, generate, aiRequest: vi.fn(), request: vi.fn(), gatewayRequest: vi.fn(), gatewayOrigin: () => "https://gateway.test" });
+  bridge.register(1, "owner/brain", "brain");
+  const handlers = new Map<string, (event: unknown, context: unknown) => Promise<unknown>>();
+  bridge.registerIpc({ handle: (channel: string, handler: never) => handlers.set(channel, handler) } as unknown as IpcMain);
+  const frame = {};
+  const event = { senderFrame: frame, sender: { id: 1, mainFrame: frame, getURL: () => sender.url, isDestroyed: () => false } };
+  let settled = false;
+  const pending = handlers.get(APP_GENERATE_CHANNEL)!(event, "Read my notes").then(() => { settled = true; });
+  await Promise.resolve();
+  expect(settled).toBe(false);
+  release();
+  await pending;
+  generate.mockImplementationOnce(() => Promise.reject(new Error("main window closed")));
+  vi.spyOn(console, "warn").mockImplementation(() => undefined);
+  await expect(handlers.get(APP_GENERATE_CHANNEL)!(event, "again")).rejects.toThrow("App task is unavailable");
+});
+it("lets a deferred task check that the same app document under the same session still asks", () => {
+  let generation = 0;
+  const generate = vi.fn();
+  const bridge = new NativeAppBridge({ authGeneration: () => generation, generate, aiRequest: vi.fn(), request: vi.fn(), gatewayRequest: vi.fn(), gatewayOrigin: () => "https://gateway.test" });
+  bridge.register(1, "owner/brain", "brain");
+  bridge.generate(sender, "Read my notes");
+  const isCurrent = generate.mock.calls[0]![2] as () => boolean;
+  expect(isCurrent()).toBe(true);
+  generation++;
+  expect(isCurrent()).toBe(false);
+  generation--;
+  bridge.unregister(1);
+  expect(isCurrent()).toBe(false);
 });

@@ -217,5 +217,9 @@ export function wireKernel(): () => void {
     if (cleanupKernel === cleanup) cleanupKernel = null;
   };
   cleanupKernel = cleanup;
+  // App windows that outlive this one wait for this before sending app actions here.
+  void invoke("window:native-actions-ready", {}).catch((error: unknown) => {
+    console.warn("[kernel-wiring] native action readiness unavailable", error instanceof Error ? error.name : "UnknownError");
+  });
   return cleanup;
 }

@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { registerIpcHandlers, type HandlerContext } from "../../desktop/src/main/ipc/handlers";
 import { AppError } from "../../desktop/src/shared/app-error";
 import { resolveShortcuts } from "@matrix-os/contracts/keyboard-shortcuts";
+import { createSenderPolicy } from "../../desktop/src/main/ipc/sender-policy";
+import { createMainWindowActionGate } from "../../desktop/src/main/installed-apps/main-window-actions";
 
 const SHORTCUT_SNAPSHOT = {
   platform: "mac",
@@ -50,6 +52,7 @@ function makeHarness(overrides: Partial<HandlerContext> = {}) {
     getUpdateSnapshot: vi.fn(() => ({ status: "disabled" })),
     installUpdate: vi.fn(() => false),
     toggleWindowMaximize: vi.fn(),
+    nativeActionsReady: vi.fn(),
     authorizeSender: vi.fn(() => true),
     openTerminalWindow: vi.fn(async () => undefined),
     focusMainWindow: vi.fn(),
@@ -1329,6 +1332,29 @@ describe("registerIpcHandlers", () => {
 
     sender.getZoomFactor.mockReturnValue(5);
     await expect(harness.invoke("app:get-zoom", {}, { sender })).resolves.toEqual({ factor: 2 });
+  });
+
+  it("marks the main renderer ready for installed-app actions only from the main window", async () => {
+    const trustedWindow = (url: string) => {
+      const mainFrame = {};
+      return { isDestroyed: () => false, webContents: { isDestroyed: () => false, getURL: () => url, mainFrame } };
+    };
+    const main = trustedWindow("file:///renderer/index.html");
+    const terminal = trustedWindow("file:///renderer/index.html?window=terminal");
+    const authorizeSender = createSenderPolicy({ mainWindow: () => main, terminalWindow: () => terminal,
+      mainUrl: main.webContents.getURL(), terminalUrl: terminal.webContents.getURL() });
+    const gate = createMainWindowActionGate({ hasMainWindow: () => true, authority: () => ({ runtimeSlot: "primary", authGeneration: 1 }),
+      reopenMainWindow: async () => undefined, showMainWindow: vi.fn() });
+    const harness = makeHarness({ authorizeSender, nativeActionsReady: gate.rendererReady });
+    const from = (win: typeof main, frame: unknown = win.webContents.mainFrame) => ({ sender: win.webContents, senderFrame: frame });
+
+    await expect(harness.invoke("window:native-actions-ready", {}, from(terminal))).rejects.toThrow("invalid request");
+    await expect(harness.invoke("window:native-actions-ready", {}, from(main, {}))).rejects.toThrow("invalid request");
+    await expect(harness.invoke("window:native-actions-ready", {}, {})).rejects.toThrow("invalid request");
+    await expect(harness.invoke("window:native-actions-ready", { ready: true }, from(main))).rejects.toThrow("invalid request");
+    expect(gate.isReady()).toBe(false);
+    await expect(harness.invoke("window:native-actions-ready", {}, from(main))).resolves.toEqual({ ok: true });
+    expect(gate.isReady()).toBe(true);
   });
 
   it("toggles the native window maximize state", async () => {

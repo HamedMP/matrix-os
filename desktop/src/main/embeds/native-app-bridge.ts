@@ -70,7 +70,8 @@ function isSafeAppIdentity(value: string): boolean {
 
 interface NativeAppBridgeOptions {
   authGeneration: () => number;
-  generate: (app: string, context: string) => void;
+  /** `isCurrent` reports whether the same registered app document, under the same session, still asks. */
+  generate: (app: string, context: string, isCurrent: () => boolean) => void | Promise<void>;
   aiRequest: (slug: string, input: AppAiInput, signal?: AbortSignal) => Promise<unknown>;
   capabilityRequest?: (app: string, input: AppCapabilityInput, signal?: AbortSignal) => Promise<unknown>;
   aiRoutesRequest?: (app: string, signal?: AbortSignal) => Promise<unknown>;
@@ -79,8 +80,8 @@ interface NativeAppBridgeOptions {
   gatewayRequest: (slug: string, request: NativeAppGatewayRequest, routeSlug?: string) => Promise<unknown>;
   gatewayOrigin: () => string;
   resolveApp?: (request: NativeAppOpenRequest) => Promise<NativeAppOpenTarget>;
-  openApp?: (app: NativeAppOpenTarget) => void;
-  openChat?: (request: NativeAppOpenChatRequest, signal: AbortSignal) => Promise<void>;
+  openApp?: (app: NativeAppOpenTarget, isCurrent: () => boolean) => void | Promise<void>;
+  openChat?: (request: NativeAppOpenChatRequest, signal: AbortSignal, isCurrent: () => boolean) => Promise<void>;
   maxSenders?: number;
   getSenderLifecycle?: (senderId: number) => NativeAppDocumentLifecycle | undefined;
 }
@@ -442,9 +443,13 @@ export class NativeAppBridge {
     } finally { this.pendingCapabilities--; }
   }
 
-  generate(sender: NativeAppSender, rawContext: unknown): void {
+  /** Validation and rate limits fail synchronously; delivery may wait for a reopened main window. */
+  generate(sender: NativeAppSender, rawContext: unknown): void | Promise<void> {
     const identity = this.senders.get(sender.id);
-    if (!identity || identity.authGeneration !== this.options.authGeneration() || !isSenderAtApp(sender, this.options.gatewayOrigin(), identity.routeSlug)) {
+    const authorized = () => !!identity && this.senders.get(sender.id) === identity
+      && identity.authGeneration === this.options.authGeneration()
+      && isSenderAtApp(sender, this.options.gatewayOrigin(), identity.routeSlug);
+    if (!identity || !authorized()) {
       throw new Error("not authorized");
     }
     const context = AppGenerateContextSchema.parse(rawContext);
@@ -452,12 +457,12 @@ export class NativeAppBridge {
     if (now - this.generateWindow >= 60_000) { this.generateWindow = now; this.generateCount = 0; }
     if (this.generateCount >= 10) throw new Error("App task rate limit exceeded");
     this.generateCount++;
-    this.options.generate(identity.appIdentity, context);
+    return this.options.generate(identity.appIdentity, context, authorized);
   }
 
   async openApp(sender: NativeAppSender, rawRequest: unknown): Promise<void> {
     const identity = this.senders.get(sender.id);
-    const authorized = () => identity && this.senders.get(sender.id) === identity
+    const authorized = () => !!identity && this.senders.get(sender.id) === identity
       && identity.authGeneration === this.options.authGeneration()
       && isSenderAtApp(sender, this.options.gatewayOrigin(), identity.routeSlug);
     if (!identity || !authorized()) throw new Error("not authorized");
@@ -477,7 +482,7 @@ export class NativeAppBridge {
         ? { slug: "browser-lab", appIdentity: productIdentity, name: product.name }
         : await this.options.resolveApp(request));
       if (!authorized()) throw new Error("not authorized");
-      this.options.openApp(app);
+      await this.options.openApp(app, authorized);
     } finally {
       this.pendingOpens--;
     }
@@ -485,7 +490,7 @@ export class NativeAppBridge {
 
   async openChat(sender: NativeAppSender, rawRequest: unknown): Promise<void> {
     const identity = this.senders.get(sender.id);
-    const authorized = () => identity && this.senders.get(sender.id) === identity
+    const authorized = () => !!identity && this.senders.get(sender.id) === identity
       && identity.authGeneration === this.options.authGeneration()
       && isSenderAtApp(sender, this.options.gatewayOrigin(), identity.routeSlug);
     if (!identity || !authorized()) throw new Error("not authorized");
@@ -497,7 +502,7 @@ export class NativeAppBridge {
     identity.openCount++;
     this.pendingChatOpens++;
     try {
-      await this.options.openChat(request, identity.controller.signal);
+      await this.options.openChat(request, identity.controller.signal, authorized);
       if (!authorized()) throw new Error("not authorized");
     } finally {
       this.pendingChatOpens--;
@@ -555,10 +560,13 @@ export class NativeAppBridge {
         }
       });
     }
-    ipcMain.handle(APP_GENERATE_CHANNEL, (event: IpcMainInvokeEvent, rawContext: unknown) => {
+    ipcMain.handle(APP_GENERATE_CHANNEL, async (event: IpcMainInvokeEvent, rawContext: unknown) => {
       try {
         if (event.senderFrame !== event.sender.mainFrame) throw new Error("not authorized");
-        this.generate({ id: event.sender.id, url: event.sender.getURL() }, rawContext);
+        await this.generate({ id: event.sender.id, get url() {
+          if (event.senderFrame !== event.sender.mainFrame || event.sender.isDestroyed()) return "";
+          return event.sender.getURL();
+        } }, rawContext);
         return { ok: true };
       } catch (error) {
         console.warn("[native-app-bridge] task failed:", error instanceof Error ? error.name : "UnknownError");

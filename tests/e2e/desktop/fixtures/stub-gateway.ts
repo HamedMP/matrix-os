@@ -49,6 +49,8 @@ export interface StubGateway {
 }
 
 export interface StubGatewayOptions {
+  /** Serve one app through the owner launch path: catalog path, session token, and its page. */
+  installedApp?: { slug: string; title: string };
   /** Serve real Files endpoints behind the isolated fixture's bearer check. */
   ownerFiles?: RequestListener;
   appSharing?: {
@@ -752,6 +754,14 @@ export async function startStubGateway(options: StubGatewayOptions = {}): Promis
       return;
     }
 
+    // The launch URL is a session-token capability, not a bearer route.
+    if (options.installedApp && req.method === "GET" && path === `/apps/${options.installedApp.slug}/`) {
+      if (url.searchParams.get("launch") !== "stub-launch") { json(res, 403, { error: "forbidden" }); return; }
+      html(res, 200, `<!doctype html><html><head><title>${options.installedApp.title} page</title></head>`
+        + `<body><h1>${options.installedApp.title} app</h1></body></html>`);
+      return;
+    }
+
     // Everything below requires the bearer header (verifies header injection).
     const syntheticOrganizationRoute = organizationManagement && path.startsWith("/api/organizations");
     if (req.headers.authorization !== `Bearer ${currentToken}` && !syntheticOrganizationRoute) {
@@ -1442,14 +1452,21 @@ export async function startStubGateway(options: StubGatewayOptions = {}): Promis
       });
       return;
     }
+    if (options.installedApp && req.method === "POST" && path === `/api/apps/${options.installedApp.slug}/session-token`) {
+      await readBody(req);
+      json(res, 200, { launchUrl: `/apps/${options.installedApp.slug}/?launch=stub-launch`, expiresAt: Date.now() + 120_000 });
+      return;
+    }
     if (path === "/api/apps") {
+      const apps: Array<Record<string, unknown>> = [
+        { slug: "notes", name: "Notes", category: "productivity" },
+        { slug: "pomodoro", name: "Pomodoro", category: "productivity" },
+        // An app the owner built: Matrix default apps cannot start sharing.
+        { slug: "team-tracker", name: "Team Tracker", category: "productivity" },
+      ];
       json(res, 200, {
-        apps: [
-          { slug: "notes", name: "Notes", category: "productivity" },
-          { slug: "pomodoro", name: "Pomodoro", category: "productivity" },
-          // An app the owner built: Matrix default apps cannot start sharing.
-          { slug: "team-tracker", name: "Team Tracker", category: "productivity" },
-        ],
+        apps: apps.map((app) => app.slug === options.installedApp?.slug
+          ? { ...app, path: `/files/apps/${app.slug}/index.html` } : app),
       });
       return;
     }

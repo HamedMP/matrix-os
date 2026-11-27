@@ -70,6 +70,11 @@ const PanelLayoutSchema = z
 
 const PanelLayoutsSchema = z.record(z.string().max(256), PanelLayoutSchema);
 
+export const MAX_INSTALLED_APP_WINDOW_STATES = 64;
+const InstallIdKeySchema = z.uuid();
+const InstalledAppWindowBoundsSchema = z.record(InstallIdKeySchema, WindowBoundsSchema)
+  .refine((value) => Object.keys(value).length <= MAX_INSTALLED_APP_WINDOW_STATES);
+
 const RecentsSchema = z.array(z.string().max(512)).max(50);
 
 const ProfileSchema = z
@@ -93,6 +98,7 @@ const KEY_SCHEMAS = {
   profile: ProfileSchema,
   windowBounds: WindowBoundsSchema,
   terminalWindowBounds: WindowBoundsSchema,
+  installedAppWindowBounds: InstalledAppWindowBoundsSchema,
   lastProjectSlug: z.string().max(256),
   panelLayouts: PanelLayoutsSchema,
   appearance: AppearanceSchema,
@@ -120,6 +126,9 @@ export interface LocalStore {
   setUnknown(key: LocalStoreKey, value: unknown): Promise<void>;
   delete(key: LocalStoreKey): Promise<void>;
   setPanelLayout(taskKey: string, layout: PanelLayout): Promise<void>;
+  getInstalledAppWindowBounds(installId: string): Promise<LocalStoreValue<"windowBounds"> | null>;
+  /** Saves (or, with null, forgets) one installed app's window state; the oldest beyond the cap are dropped. */
+  setInstalledAppWindowBounds(installId: string, bounds: LocalStoreValue<"windowBounds"> | null): Promise<void>;
   acknowledgeDesktopUpdateRelease(version: string): Promise<boolean>;
 }
 
@@ -218,6 +227,25 @@ export function createLocalStore(options: LocalStoreOptions): LocalStore {
         const layouts = existing.success ? existing.data : {};
         layouts[taskKey.slice(0, 256)] = parsedLayout;
         state.panelLayouts = prunePanelLayouts(layouts, clock());
+      });
+    },
+
+    async getInstalledAppWindowBounds(installId) {
+      if (!InstallIdKeySchema.safeParse(installId).success) return null;
+      const state = await readState();
+      const all = InstalledAppWindowBoundsSchema.safeParse(state.installedAppWindowBounds);
+      return all.success ? all.data[installId] ?? null : null;
+    },
+
+    async setInstalledAppWindowBounds(installId, bounds) {
+      const id = InstallIdKeySchema.parse(installId);
+      const parsedBounds = bounds === null ? null : WindowBoundsSchema.parse(bounds);
+      await enqueue((state) => {
+        const existing = InstalledAppWindowBoundsSchema.safeParse(state.installedAppWindowBounds);
+        // Insertion order is recency: re-adding moves an install to the end.
+        const entries = Object.entries(existing.success ? existing.data : {}).filter(([key]) => key !== id);
+        if (parsedBounds) entries.push([id, parsedBounds]);
+        state.installedAppWindowBounds = Object.fromEntries(entries.slice(-MAX_INSTALLED_APP_WINDOW_STATES));
       });
     },
 

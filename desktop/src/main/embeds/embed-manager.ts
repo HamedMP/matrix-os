@@ -51,6 +51,14 @@ export const MAX_TOTAL_EMBEDS = 12;
 const DEFAULT_MAX_LIVE = 3;
 const EMBED_SNAPSHOT_TIMEOUT_MS = 400;
 const SAFE_SLUG = /^[a-zA-Z0-9][a-zA-Z0-9_-]*$/;
+
+/** Persistent per-app session partition, shared by embedded and installed-app views of one app. */
+export function appEmbedPartition(slug: string | null): string {
+  if (!slug || !SAFE_SLUG.test(slug)) {
+    throw new Error("invalid app slug for embed partition");
+  }
+  return `persist:app-${slug}`;
+}
 const ERR_ABORTED = -3;
 
 interface EmbedRecord {
@@ -329,10 +337,7 @@ export class EmbedManager {
   }
 
   private appPartition(slug: string | null): string {
-    if (!slug || !SAFE_SLUG.test(slug)) {
-      throw new Error("invalid app slug for embed partition");
-    }
-    return `persist:app-${slug}`;
+    return appEmbedPartition(slug);
   }
 
   private sharedAppPartition(scopeId: string | null, embedId: string): string {

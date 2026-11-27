@@ -35,16 +35,18 @@ function authHooks(cancelChatElectronPreview?: () => void, cancelChatMacTerminal
   const nativeAppChatNavigation = { cancelAll: vi.fn() };
   const refreshMacActivity = vi.fn();
   const cancelDesktopPairing = vi.fn();
+  const installedApps = { authChanged: vi.fn() };
   return new Function("navigationCache", "chatgptPlan", "fileDownloads", "organizationDriveTransfers", "localChatImports", "localUsage",
-    "nativeAppChatNavigation", "sendEvent", "cancelChatElectronPreview", "cancelChatMacTerminal", "refreshMacActivity", "cancelDesktopPairing", `
+    "nativeAppChatNavigation", "sendEvent", "cancelChatElectronPreview", "cancelChatMacTerminal", "refreshMacActivity", "cancelDesktopPairing", "installedApps", `
     let invalidateAppCapabilities;
     const onAuthChanged = ${callback};
-    return { nativeAppChatNavigation, refreshMacActivity, cancelDesktopPairing, onAuthChanged, bind(nativeAppBridge) { ${binding}; } };
+    return { nativeAppChatNavigation, refreshMacActivity, cancelDesktopPairing, installedApps, onAuthChanged, bind(nativeAppBridge) { ${binding}; } };
   `)(undefined, undefined, undefined, undefined, undefined, undefined, nativeAppChatNavigation, vi.fn(),
-    cancelChatElectronPreview, cancelChatMacTerminal, refreshMacActivity, cancelDesktopPairing) as {
+    cancelChatElectronPreview, cancelChatMacTerminal, refreshMacActivity, cancelDesktopPairing, installedApps) as {
     nativeAppChatNavigation: typeof nativeAppChatNavigation;
     refreshMacActivity: typeof refreshMacActivity;
     cancelDesktopPairing: typeof cancelDesktopPairing;
+    installedApps: typeof installedApps;
     onAuthChanged(status: { signedIn: boolean; handle?: string }): void;
     bind(bridge: NativeAppBridge): void;
   };
@@ -265,6 +267,8 @@ describe("Electron capability registration cancellation", () => {
     expect(hooks.nativeAppChatNavigation.cancelAll).toHaveBeenCalledOnce();
     expect(hooks.refreshMacActivity).toHaveBeenCalledOnce();
     expect(hooks.cancelDesktopPairing).toHaveBeenCalledOnce();
+    // Installed app windows see the same session change (sign-out closes them).
+    expect(hooks.installedApps.authChanged).toHaveBeenCalledWith({ signedIn: false });
     const f = fixture();
     hooks.bind(f.bridge);
     const pending = f.handlers.get(APP_CAPABILITY_CHANNEL)!(f.event(), { kind: "capabilities" }).catch(error => error);

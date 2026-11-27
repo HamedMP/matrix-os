@@ -10,7 +10,7 @@ function harness() {
     downloadOrganizationDrive: vi.fn(async () => ({ status: "cancelled" })),
     cancelOrganizationDriveTransfer: vi.fn(() => ({ ok: true })),
     authorizeSender: vi.fn(() => true), openTerminalWindow: vi.fn(async () => undefined), focusMainWindow: vi.fn(),
-    setTitlebarOverlay: vi.fn(), shortcuts: { snapshot: vi.fn(), set: vi.fn(), setRecording: vi.fn(), setTerminalClaims: vi.fn() } } as unknown as HandlerContext;
+    setTitlebarOverlay: vi.fn(), nativeActionsReady: vi.fn(), shortcuts: { snapshot: vi.fn(), set: vi.fn(), setRecording: vi.fn(), setTerminalClaims: vi.fn() } } as unknown as HandlerContext;
   registerIpcHandlers({ handle(channel, listener) { listeners[channel] = listener as typeof listeners[string]; } }, ctx);
   return { listeners, downloadFile, cancelFileDownload };
 }

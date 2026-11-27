@@ -4,7 +4,8 @@
 // the launch URL against the gateway origin, then loads it. Emits embed:state
 // so the renderer can show an inline re-auth prompt without ever touching the
 // native principal (L1).
-import { net, session, type BaseWindow } from "electron";
+import { session, type BaseWindow } from "electron";
+import { requestGateway } from "./gateway-request";
 import { randomUUID } from "node:crypto";
 import {
   startPortForward as startMatrixPortForward,
@@ -16,8 +17,8 @@ import {
   resolveRuntimeBrowserNavigation,
 } from "../../shared/runtime-browser-url";
 import { EmbedManager, type Bounds } from "./embed-manager";
-import { LaunchTokenCache } from "./launch-token-cache";
-import { AppLaunchError, requestAppLaunchToken } from "./app-launch";
+import { LaunchTokenCache, type LaunchToken } from "./launch-token-cache";
+import { fetchAppLaunchToken, resolveAppLaunchUrl } from "./app-launch";
 import {
   HOSTED_SHELL_SESSION_REFRESH_RETRY_MS,
   computeHostedShellSessionRefreshDelay,
@@ -26,12 +27,10 @@ import {
   type HandoffResult,
   type ParsedCookie,
 } from "./app-session";
-import { resolveLaunchUrl } from "./origin-policy";
 import { createWebContentsView } from "./web-contents-view";
 import type { NativeAppBridge } from "./native-app-bridge";
 import { createBrowserLabViewerAdmission, type BrowserLabViewerAuth } from "./browser-lab-viewer-admission";
 import { nativeBrowserProduct } from "../../shared/browser-products";
-import { browserProductLaunchUrl } from "./browser-product-launch";
 import type { CollaborativeAppDirectoryItem } from "@matrix-os/contracts";
 
 export type EmbedState = "loading" | "ready" | "auth-required" | "host-offline" | "access-ended" | "needs-recheck" | "failed";
@@ -67,6 +66,7 @@ const MAX_PENDING_HOSTED_SHELLS = 12;
 const MAX_PENDING_APPS = 12;
 const MAX_PENDING_CODE_EDITORS = 12;
 const MAX_PENDING_BROWSERS = 12;
+const MAX_BRIDGE_SENDERS = 64;
 const HOSTED_SHELL_PARTITION = "persist:hosted-shell";
 const CODE_EDITOR_PARTITION = "persist:code-editor";
 const CODE_EDITOR_ORIGIN = "https://code.matrix-os.com";
@@ -90,6 +90,8 @@ export class EmbedService {
   private readonly codeEditorIds = new Set<string>();
   private readonly pendingBrowsers = new Set<string>();
   private readonly browserForwards = new Map<string, PortForwardHandle>();
+  // Bridge senders registered by embed views; the bridge itself caps senders at 64.
+  private readonly bridgeSenders = new Set<number>();
   private hostedShellRefreshTimer: ReturnType<typeof setTimeout> | null = null;
   private hostedShellHandoffInFlight: Promise<HandoffResult> | null = null;
   private hostedShellHandoffInFlightGeneration: number | null = null;
@@ -125,9 +127,14 @@ export class EmbedService {
               routeSlug: routeSlug ?? slug,
               preloadPath: this.deps.appPreloadPath,
               participant: ownerAppParticipant ?? null,
-              register: (senderId: number, appIdentity: string, appRouteSlug: string) =>
-                this.deps.appBridge!.register(senderId, appIdentity, appRouteSlug),
-              unregister: (senderId: number) => this.deps.appBridge!.unregister(senderId),
+              register: (senderId: number, appIdentity: string, appRouteSlug: string) => {
+                this.deps.appBridge!.register(senderId, appIdentity, appRouteSlug);
+                this.rememberBridgeSender(senderId);
+              },
+              unregister: (senderId: number) => {
+                this.bridgeSenders.delete(senderId);
+                this.deps.appBridge!.unregister(senderId);
+              },
             }
           : undefined;
         return createWebContentsView({
@@ -267,7 +274,12 @@ export class EmbedService {
       || wasPendingBrowser || Boolean(browserForward);
   }
 
-  closeAll(): void {
+  /**
+   * Closes every embed. By default it also revokes every app-bridge sender (a
+   * runtime switch). `appBridge: "own"` revokes only this service's senders,
+   * so installed-app windows that outlive the main window keep their bridge.
+   */
+  closeAll(options: { appBridge?: "all" | "own" } = {}): void {
     this.viewerAdmission?.close();
     this.hostedShellGeneration += 1;
     this.browserGeneration += 1;
@@ -285,7 +297,22 @@ export class EmbedService {
     for (const [embedId, forward] of this.browserForwards) {
       this.disposeBrowserForward(embedId, forward);
     }
-    this.deps.appBridge?.clear();
+    if (options.appBridge === "own") {
+      for (const senderId of [...this.bridgeSenders]) this.deps.appBridge?.unregister(senderId);
+    } else {
+      this.deps.appBridge?.clear();
+    }
+    this.bridgeSenders.clear();
+  }
+
+  private rememberBridgeSender(senderId: number): void {
+    this.bridgeSenders.delete(senderId);
+    this.bridgeSenders.add(senderId);
+    while (this.bridgeSenders.size > MAX_BRIDGE_SENDERS) {
+      const oldest = this.bridgeSenders.values().next().value as number | undefined;
+      if (oldest === undefined) break;
+      this.bridgeSenders.delete(oldest);
+    }
   }
 
   private async openCodeEditor(
@@ -899,30 +926,13 @@ export class EmbedService {
     active = true,
     shouldAttach: () => boolean = () => true,
   ): Promise<"loading" | "auth-required" | "failed"> {
-    const product = nativeBrowserProduct(appIdentity, slug);
-    let cached = product ? null : this.tokenCache.get(slug);
-    if (!cached) {
-      let token;
-      try {
-        token = await this.fetchLaunchToken(gatewayOrigin, slug);
-      } catch (err: unknown) {
-        console.warn("[embed-service] app launch failed:", err instanceof Error ? err.name : "UnknownError");
-        return err instanceof AppLaunchError ? err.state : "failed";
-      }
-      if (token) {
-        if (!product) this.tokenCache.set(slug, token);
-        cached = token;
-      }
-    }
-    if (!cached) return "failed";
+    const launch = await resolveAppLaunchUrl({
+      gatewayOrigin, slug, appIdentity, cache: this.tokenCache,
+      fetchToken: () => this.fetchLaunchToken(gatewayOrigin, slug),
+    });
+    if (!launch.ok) return launch.state;
     if (!shouldAttach()) return "failed";
-    const initial = resolveLaunchUrl(cached.launchUrl, gatewayOrigin);
-    const resolved = initial ? browserProductLaunchUrl(initial, slug, appIdentity) : null;
-    if (!resolved) {
-      console.warn("[embed-service] app launch url failed origin check");
-      this.tokenCache.delete(slug);
-      return "failed";
-    }
+    const resolved = launch.url;
     const ownerAppParticipant = await this.deps.appBridge?.initialParticipant(slug).catch((error: unknown) => {
       console.warn("[embed-service] owner collaboration state unavailable", error instanceof Error ? error.name : "UnknownError");
       return null;
@@ -938,56 +948,15 @@ export class EmbedService {
     return "loading";
   }
 
-  private async fetchLaunchToken(
-    gatewayOrigin: string,
-    slug: string,
-  ): Promise<{ launchUrl: string; expiresAt: number } | null> {
-    return requestAppLaunchToken(() => this.gatewayRequest(
-      `${gatewayOrigin}/api/apps/${encodeURIComponent(slug)}/session-token`,
-      { method: "POST", headers: { "content-type": "application/json" }, body: "{}" },
-    ));
+  private fetchLaunchToken(gatewayOrigin: string, slug: string): Promise<LaunchToken> {
+    return fetchAppLaunchToken((url, init) => this.gatewayRequest(url, init), gatewayOrigin, slug);
   }
 
   private gatewayRequest(
     url: string,
     init: { method: string; headers: Record<string, string>; body: string },
   ): Promise<{ status: number; setCookieHeaders: string[]; body: string }> {
-    return new Promise((resolve, reject) => {
-      const token = this.deps.getToken();
-      const request = net.request({ method: init.method, url });
-      for (const [key, value] of Object.entries(init.headers)) request.setHeader(key, value);
-      if (token) request.setHeader("Authorization", `Bearer ${token}`);
-      const timeout = setTimeout(() => {
-        request.abort();
-        reject(new Error("gateway request timed out"));
-      }, 10_000);
-      request.on("response", (response) => {
-        const chunks: Buffer[] = [];
-        response.on("data", (chunk) => chunks.push(chunk));
-        response.on("error", (err) => {
-          clearTimeout(timeout);
-          reject(err);
-        });
-        response.on("end", () => {
-          clearTimeout(timeout);
-          const rawSetCookie = response.headers["set-cookie"];
-          const setCookieHeaders = Array.isArray(rawSetCookie)
-            ? rawSetCookie
-            : typeof rawSetCookie === "string"
-              ? [rawSetCookie]
-              : [];
-          resolve({
-            status: response.statusCode,
-            setCookieHeaders,
-            body: Buffer.concat(chunks).toString("utf8"),
-          });
-        });
-      });
-      request.on("error", (err) => {
-        clearTimeout(timeout);
-        reject(err);
-      });
-      request.end(init.body);
-    });
+    return requestGateway(this.deps.getToken(), url, init);
   }
+
 }

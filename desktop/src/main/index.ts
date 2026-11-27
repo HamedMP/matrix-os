@@ -104,6 +104,9 @@ import { createNativeAppChatNavigationBroker, registerNativeAppChatCompletionIpc
 import { configureDesktopIdentity } from "./desktop-identity";
 import { isDesktopDeepLink, resolveDesktopChannelIdentity } from "../shared/channel-identity";
 import { createDesktopDeepLinkHandler, createSharedAppDeepLinks, registerSharedAppDeepLinkIpc } from "./shared-app-deep-link";
+import { createInstalledAppDeepLinks } from "./installed-apps/deep-link";
+import { installInstalledApps } from "./installed-apps/wiring";
+import { createMainWindowActionGate } from "./installed-apps/main-window-actions";
 import { createSenderPolicy, senderRole } from "./ipc/sender-policy";
 import { createTerminalWindowController } from "./terminal-window/controller";
 import { createTerminalBrowserWindow } from "./terminal-window/window";
@@ -185,6 +188,10 @@ let drainingImports=false;
 let organizationDriveTransfers: ReturnType<typeof createOrganizationDriveTransferService> | null = null;
 let downloadsDrained = false;
 let drainingDownloads = false;
+let installedApps: ReturnType<typeof installInstalledApps> | null = null;
+let disposeMainWindowActions: (() => void) | null = null;
+let installedAppsDrained = false;
+let drainingInstalledApps = false;
 let closeCodingAgentThreadEvents: (() => void) | null = null;
 let handleUpdateBeforeQuit: ((event: { preventDefault(): void }) => void) | null = null;
 let handleAnalyticsBeforeQuit: ((event: { preventDefault(): void }) => boolean) | null = null;
@@ -215,10 +222,12 @@ const sharedAppDeepLinks = createSharedAppDeepLinks({
     return true;
   },
 });
+// `matrixos://app/<installId>` (spec 2711): held until install records and auth are loaded.
+const installedAppDeepLinks = createInstalledAppDeepLinks({ schemes: channelIdentity.deepLinkSchemes });
 {
   // Windows/Linux cold start passes the link in argv; the renderer takes it once it listens.
   const coldStartLink = process.argv.find(isMatrixOsDeepLink);
-  if (coldStartLink) sharedAppDeepLinks.handle(coldStartLink);
+  if (coldStartLink && !installedAppDeepLinks.handle(coldStartLink)) sharedAppDeepLinks.handle(coldStartLink);
 }
 
 /** Set once the app is ready: reopens the main window through the single-flight path. */
@@ -232,6 +241,11 @@ const handleDeepLink = createDesktopDeepLinkHandler({
   reopenMainWindow: () => restoreMainWindowForDeepLink?.(),
   links: sharedAppDeepLinks,
 });
+/** Installed-app links open their own window without raising the main one. */
+function routeDeepLink(url: string): void {
+  if (installedAppDeepLinks.handle(url)) return;
+  handleDeepLink(url);
+}
 
 function sendEvent<C extends EventChannel>(channel: C, payload: EventPayload<C>): void {
   const parsed = EVENT_CHANNELS[channel].safeParse(payload);
@@ -344,7 +358,7 @@ if (!gotLock) {
     }
     const deepLink = argv.find(isMatrixOsDeepLink);
     if (deepLink) {
-      handleDeepLink(deepLink);
+      routeDeepLink(deepLink);
       return;
     }
     focusMainWindow();
@@ -352,7 +366,7 @@ if (!gotLock) {
 
   app.on("open-url", (event, url) => {
     event.preventDefault();
-    handleDeepLink(url);
+    routeDeepLink(url);
   });
 
   void app
@@ -407,6 +421,7 @@ if (!gotLock) {
         saveProfile: (profile) => store.set("profile", profile),
         clearProfile: () => store.delete("profile"),
         onAuthChanged: (status) => {
+          installedApps?.authChanged(status);
           void cancelChatElectronPreview?.();
           void cancelChatMacTerminal?.();
           refreshMacActivity?.();
@@ -513,30 +528,39 @@ if (!gotLock) {
       const nativeAppQuery = createNativeAppQueryRequester({
         getGatewayOrigin: () => auth.getGatewayOrigin(), getToken: () => auth.getToken(),
       });
+      // Installed app windows can outlive the main window; reopen it before delivering their actions.
+      const mainWindowActions = createMainWindowActionGate({
+        hasMainWindow: () => Boolean(mainWindow && !mainWindow.isDestroyed()),
+        authority: () => {
+          const status = auth.getStatus();
+          return status.signedIn ? { runtimeSlot: status.runtimeSlot, authGeneration: status.authGeneration } : null;
+        },
+        reopenMainWindow: () => reopenMainWindow?.() ?? Promise.reject(new Error("main window unavailable")),
+        showMainWindow: () => restoreMainWindowForDeepLink?.(),
+      });
+      disposeMainWindowActions = mainWindowActions.dispose;
+      // Each action is delivered under the session captured before any wait for the main window.
       const nativeAppBridge = new NativeAppBridge({
         getSenderLifecycle: (senderId) => webContents.fromId(senderId) ?? undefined,
         resolveApp: createNativeAppOpenResolver({ getGatewayOrigin: () => auth.getGatewayOrigin(), getToken: () => auth.getToken() }),
-        openApp: (app) => {
-          const status = auth.getStatus();
-          if (!status.signedIn || !mainWindow || mainWindow.isDestroyed()) throw new Error("App launch is unavailable");
-          sendEvent("app:open", { ...app, runtimeSlot: status.runtimeSlot, authGeneration: status.authGeneration });
+        openApp: async (app, isCurrent) => {
+          const authority = await mainWindowActions.ensure("App launch is unavailable", isCurrent);
+          if (!mainWindow || mainWindow.isDestroyed()) throw new Error("App launch is unavailable");
+          sendEvent("app:open", { ...app, ...authority });
         },
-        openChat: async (request, signal) => {
-          const status = auth.getStatus();
-          if (!status.signedIn || !mainWindow || mainWindow.isDestroyed() || !nativeAppChatNavigation) {
+        openChat: async (request, signal, isCurrent) => {
+          const authority = await mainWindowActions.ensure("Chat navigation is unavailable", isCurrent);
+          if (!mainWindow || mainWindow.isDestroyed() || !nativeAppChatNavigation) {
             throw new Error("Chat navigation is unavailable");
           }
           focusMainWindow();
-          await nativeAppChatNavigation.request(request, {
-            runtimeSlot: status.runtimeSlot,
-            authGeneration: status.authGeneration,
-          }, signal);
+          await nativeAppChatNavigation.request(request, authority, signal);
         },
         authGeneration: () => auth.getStatus().authGeneration,
-        generate: (app, context) => {
-          const status = auth.getStatus();
-          if (!status.signedIn || !mainWindow || mainWindow.isDestroyed()) throw new Error("App task is unavailable");
-          sendEvent("app:generate", { app, context, runtimeSlot: status.runtimeSlot, authGeneration: status.authGeneration });
+        generate: async (app, context, isCurrent) => {
+          const authority = await mainWindowActions.ensure("App task is unavailable", isCurrent);
+          if (!mainWindow || mainWindow.isDestroyed()) throw new Error("App task is unavailable");
+          sendEvent("app:generate", { app, context, ...authority });
         },
         capabilityRequest: createNativeAppCapabilityRequester({
           getGatewayOrigin: () => auth.getGatewayOrigin(),
@@ -871,6 +895,7 @@ if (!gotLock) {
           // Switching runtime invalidates embed cookies/tokens; tear them down so
           // they re-handshake against the new slot (Integration Wiring rule).
           embeds.closeAll();
+          installedApps?.authChanged(auth.getStatus());
           codingAgentThreadEvents.closeAll();
           sendEvent("runtime:changed", { slot });
         },
@@ -880,6 +905,7 @@ if (!gotLock) {
         },
         getUpdateSnapshot: () => updater.snapshot(),
         installUpdate: () => updater.install(),
+        nativeActionsReady: () => mainWindowActions.rendererReady(),
         toggleWindowMaximize: () => {
           if (!mainWindow || mainWindow.isDestroyed()) return;
           if (mainWindow.isMaximized()) mainWindow.unmaximize();
@@ -978,9 +1004,10 @@ if (!gotLock) {
         // A reloaded or crashed renderer must take held org links again before they are sent.
         const releaseRenderer = () => {
           sharedAppDeepLinks.rendererReset();
+          mainWindowActions.rendererReset();
           chatElectronPreview.clearFullAccessSelection();
         };
-        mainWindow.webContents.on("did-start-loading", () => sharedAppDeepLinks.rendererReset());
+        mainWindow.webContents.on("did-start-loading", () => { sharedAppDeepLinks.rendererReset(); mainWindowActions.rendererReset(); });
         mainWindow.webContents.on("did-start-navigation", (details) => {
           if (details.isMainFrame && !details.isSameDocument) chatElectronPreview.clearFullAccessSelection();
         });
@@ -989,7 +1016,8 @@ if (!gotLock) {
         mainWindow.on("move", persistBounds);
         mainWindow.on("closed", () => {
           if (boundsSaveTimer) clearTimeout(boundsSaveTimer);
-          embeds.closeAll();
+          // Installed app windows outlive the main window and keep their bridge senders.
+          embeds.closeAll({ appBridge: "own" });
           codingAgentThreadEvents.closeAll();
           nativeAppChatNavigation?.cancelAll();
           mainWindow = null;
@@ -1009,6 +1037,10 @@ if (!gotLock) {
       restoreMainWindowForDeepLink = () => {
         void reopenMainWindow?.().catch((error: unknown) => logMainError("window restore failed", error));
       };
+      installedApps = installInstalledApps({
+        userData, store, auth, appBridge: nativeAppBridge, preloadPath: join(__dirname, "../preload/index.cjs"),
+        focusMain: () => restoreMainWindowForDeepLink?.(), deepLinks: installedAppDeepLinks,
+      });
       if (previewContext) reopenPreviewWindow = createPreviewWindowReopener({
         current: () => mainWindow, open: openMainWindow, focus: focusMainWindow,
       });
@@ -1073,6 +1105,15 @@ if (!gotLock) {
     // Fence Mac activity before waiting for the renderer analytics flush.
     if (macActivityQuit?.beforeQuit(event)) return;
     if (handleAnalyticsBeforeQuit?.(event)) return;
+    if (!installedAppsDrained && installedApps) {
+      event.preventDefault();
+      if (!drainingInstalledApps) {
+        drainingInstalledApps = true;
+        void installedApps.dispose().catch((error: unknown) => logMainError("installed app cleanup failed", error))
+          .finally(() => { installedAppsDrained = true; app.quit(); });
+      }
+      return;
+    }
     if (!navigationCacheDrained && navigationCache) {
       event.preventDefault();
       if (!drainingNavigationCache) {
@@ -1131,6 +1172,7 @@ if (!gotLock) {
     closeCodingAgentThreadEvents?.();
     closeCodingAgentThreadEvents = null;
     terminalWindows?.dispose();
+    disposeMainWindowActions?.();
     terminalWindows = null;
     shortcutWiring?.dispose();
     shortcutWiring = null;

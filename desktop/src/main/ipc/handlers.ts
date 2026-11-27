@@ -36,6 +36,8 @@ export interface HandlerContext {
   getUpdateSnapshot: () => DesktopUpdateSnapshot;
   installUpdate: () => Promise<boolean> | boolean;
   toggleWindowMaximize: () => void;
+  /** The main renderer is signed in with its app, Chat and task listeners attached. */
+  nativeActionsReady: () => void;
   /** Rejects invokes from any frame that is not a trusted window allowed on that channel. */
   authorizeSender: (event: unknown, channel: string, payload?: unknown) => boolean;
   openTerminalWindow: () => Promise<void>;
@@ -211,7 +213,8 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
     throw new Error("download service unavailable");
   }
   if (typeof ctx.authorizeSender !== "function" || typeof ctx.openTerminalWindow !== "function"
-    || typeof ctx.focusMainWindow !== "function" || typeof ctx.setTitlebarOverlay !== "function") {
+    || typeof ctx.focusMainWindow !== "function" || typeof ctx.setTitlebarOverlay !== "function"
+    || typeof ctx.nativeActionsReady !== "function") {
     throw new Error("window services unavailable");
   }
   const { shortcuts } = ctx;
@@ -342,6 +345,11 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
   });
   handle("terminal-window:focus-main", ({ to }) => {
     ctx.focusMainWindow(to);
+    return { ok: true };
+  });
+  // authorizeSender admits only the main window here: the channel is not in the Terminal window's allowlist.
+  handle("window:native-actions-ready", () => {
+    ctx.nativeActionsReady();
     return { ok: true };
   });
   handle("window:toggle-maximize", () => {
