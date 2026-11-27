@@ -46,14 +46,13 @@ export function useSshMachines() {
 
   // A machine still dialling settles soon; others change rarely. Only while the window is visible.
   const settling = state.status === "ready" && state.machines.some((machine) => machine.state === "connecting");
-  const any = standalone.length > 0 || (state.status === "ready" && state.machines.length > 0);
   useEffect(() => {
-    if (!any) return;
+    // The independent Core can return or register its first machine while the window stays open.
     const timer = setInterval(() => {
       if (document.visibilityState === "visible") void refresh();
     }, settling ? SETTLING_REFRESH_MS : STEADY_REFRESH_MS);
     return () => clearInterval(timer);
-  }, [any, refresh, settling]);
+  }, [refresh, settling]);
 
   const add = useCallback(async (target: string, name?: string, ssh?: SshOptions): Promise<AddMachineOutcome> => {
     let outcome: AddMachineOutcome = { ok: false, reason: "unavailable" };

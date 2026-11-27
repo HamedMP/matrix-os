@@ -95,6 +95,32 @@ describe("Terminal window ssh machines", () => {
     expect(within(machinesList()).getByText("same-name")).toBeTruthy();
   });
 
+  it("rediscovers a standalone machine after its only Core disappears and returns while the window stays visible", async () => {
+    vi.useFakeTimers();
+    try {
+      const machine = { name: "remote", state: "connected" };
+      let rows = [machine];
+      installOperator({ standalone: () => rows });
+      const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+      const { result } = renderHook(() => useSshMachines());
+      const tick = (ms: number) => act(async () => { await vi.advanceTimersByTimeAsync(ms); });
+      await tick(0);
+      expect(result.current.standalone).toEqual([machine]);
+      rows = [];
+      await tick(20_000);
+      expect(result.current.standalone).toEqual([]);
+      rows = [machine];
+      visibility.mockReturnValue("hidden");
+      await tick(20_000);
+      expect(result.current.standalone).toEqual([]);
+      visibility.mockReturnValue("visible");
+      await tick(20_000);
+      expect(result.current.standalone).toEqual([machine]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("adds a machine by its ssh address and lists it", async () => {
     const invoke = installOperator({ add: ({ target, name }) => ({ ok: true, machine: { name: name ?? "10.0.0.7", target, state: "connected", temporary: false } }) });
     render(<TerminalWindowApp />);
