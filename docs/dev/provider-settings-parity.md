@@ -91,7 +91,7 @@ credential, by recording `system/ai-providers/codex-consent-alias.json`
 so session bindings and live native runners keep their identity; the alias is
 inert once the row changes. A different account still needs an explicit
 Reconnect. A saved login that needs
-sign-in shows "Needs sign-in" with one primary Reconnect on every surface.
+sign-in shows "Needs sign-in" with one primary reconnect action before verification starts.
 
 When the selected computer reports an existing ChatGPT sign-in, Settings
 offers **Use existing Codex account**. The v2 workflow exposes the native
@@ -103,8 +103,14 @@ The Gateway can use a fresh, source-matched local observation to offer this
 action. Completion requires fresh private proof of the current ChatGPT
 principal and the expected Settings revision. Success binds the owner source
 without launching a login process. Missing or changed proof fails in Settings.
-Only a verified ChatGPT subscription qualifies for this action. Terminal
-remains available for other callers and for a Settings sign-in that needs it.
+Only a verified ChatGPT subscription qualifies for binding. A rejected reuse
+start or a failed or expired reuse receipt opens the qualified Settings sign-in
+choices for new and saved connections. The choices survive **Check again** if
+the same local sign-in hint is still reported. Use device code where qualified
+and Terminal where both the runtime and the surface support it. Settings
+starts a fallback only when the owner chooses it. It drops unavailable choices
+on capability refresh and resets recovery when the account scope changes or
+the binding is confirmed.
 
 After device authorization captures the native account proof, the explicit
 workflow defers automatic Codex recovery until its Settings binding resolves.

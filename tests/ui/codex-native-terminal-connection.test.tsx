@@ -3,7 +3,7 @@ import React from "react";
 import "@testing-library/jest-dom/vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import type { ProviderWorkflowConnectionOption } from "@matrix-os/contracts";
+import type { ProviderAccessSource, ProviderWorkflowConnectionOption } from "@matrix-os/contracts";
 import { HarnessWorkflowPanel } from "../../packages/ui/src/agents-providers/HarnessWorkflowPanel";
 import { managedConnectionCapability } from "../../packages/ui/src/agents-providers/managed-connection-capability";
 import type { ProviderWorkflowClient, ProviderWorkflowUICapability } from "../../packages/ui/src/agents-providers/types";
@@ -13,13 +13,26 @@ const option = { id: "openai_terminal", providerId: "openai", authKind: "subscri
 const device = { ...option, id: "openai_device_code", method: "device_code" } as const;
 const existing = { ...option, id: "openai_existing_codex", method: "existing_codex" } as const;
 const capability: ProviderWorkflowUICapability = { harnessInstanceId: "codex", harness: "codex", displayName: "Codex", installState: "installed", loginMethods: ["terminal"], apiKeyProviders: [], install: false, uninstall: false, logs: false, connectionOptions: [option] };
-function setup({ disabled = false, restored = false, advertised = capability, receiptOption = option, state = "running" }: { disabled?: boolean; restored?: boolean; advertised?: ProviderWorkflowUICapability; receiptOption?: ProviderWorkflowConnectionOption; state?: "running" | "succeeded" | "failed" } = {}) {
+const savedSource: ProviderAccessSource = {
+  id: "owner_openai_profile", kind: "provider_account", fundingKind: "owner_account", providerId: "openai",
+  accountId: "owner_codex", displayName: "Codex account", eligibleModelIds: [],
+  readiness: { state: "auth_required", checkedAt: null, staleAfter: null, action: "open_terminal", safeReason: "auth" },
+  usage: { kind: "unavailable", authority: "unavailable", state: "unavailable", scope: "account", reason: "not_authenticated", asOf: null },
+};
+function setup({ disabled = false, restored = false, advertised = capability, receiptOption = option, state = "running", terminalAvailable = true, saved = false }: { disabled?: boolean; restored?: boolean; advertised?: ProviderWorkflowUICapability; receiptOption?: ProviderWorkflowConnectionOption; state?: "running" | "succeeded" | "failed"; terminalAvailable?: boolean; saved?: boolean } = {}) {
   const operation = { id: "native-login", harnessInstanceId: "codex", kind: "login", state, expiresAt: new Date(Date.now() + 60000).toISOString(), terminalSessionId: "tws_owner:tt_codex", deviceCode: receiptOption.method === "device_code" ? "ABCD-EFGHI" : null, authorizationUrl: receiptOption.method === "device_code" ? "https://auth.openai.com/codex/device" : null, safeFailure: state === "failed" ? "unavailable" : null, connectionOption: receiptOption } as const;
   const client = { capabilities: vi.fn(), start: vi.fn(), startConnection: vi.fn().mockResolvedValue(operation), get: vi.fn().mockResolvedValue(operation), cancel: vi.fn().mockResolvedValue({ ...operation, state: "cancelled" }), submitKey: vi.fn(), logs: vi.fn() } as unknown as ProviderWorkflowClient;
   const open = vi.fn();
   const refreshConnection = vi.fn(async () => {});
-  render(<HarnessWorkflowPanel harness={{ id: "codex", harness: "codex", displayName: "Codex", installState: "installed", authState: "unauthenticated" }} capability={advertised} client={client} disabled={disabled} onRefresh={vi.fn()} onRefreshAfterLogin={refreshConnection} onOpenTerminal={open} operationId={restored ? operation.id : null} />);
-  return { client, open, refreshConnection };
+  const connectSaved = vi.fn(async () => {});
+  const onRefresh = vi.fn();
+  const panel = (currentCapability: ProviderWorkflowUICapability) => <HarnessWorkflowPanel
+    harness={{ id: "codex", harness: "codex", displayName: "Codex", installState: "installed", authState: saved ? "expired" : "unauthenticated" }}
+    source={saved ? savedSource : undefined} capability={currentCapability} client={client} disabled={disabled}
+    onRefresh={onRefresh} onRefreshAfterLogin={refreshConnection} onOpenTerminal={open} onConnectSaved={saved ? connectSaved : undefined}
+    operationId={restored ? operation.id : null} terminalAvailable={terminalAvailable} />;
+  const view = render(panel(advertised));
+  return { client, open, refreshConnection, refreshCapability: (next: ProviderWorkflowUICapability) => view.rerender(panel(next)) };
 }
 it("starts only the exact native terminal option and cancels its continuation", async () => {
   const { client, open } = setup();
@@ -72,6 +85,35 @@ it.each([option, device])("restores and cancels an already active $method login 
   await waitFor(() => expect(screen.queryByRole("button", { name: "Cancel" })).not.toBeInTheDocument());
   expect(client.cancel).toHaveBeenCalledExactlyOnceWith("native-login", expect.any(AbortSignal));
   expect(client.startConnection).not.toHaveBeenCalled();
+});
+it("offers device-code recovery alone when the surface cannot open Terminal", async () => {
+  const advertised: ProviderWorkflowUICapability = { ...capability, loginMethods: ["terminal", "device_code", "existing_codex"], connectionOptions: [option, device, existing] };
+  const { client } = setup({ advertised, receiptOption: existing, state: "failed", terminalAvailable: false });
+  fireEvent.click(screen.getByRole("button", { name: /^Use existing Codex account/ }));
+  await screen.findByRole("alert");
+  expect(screen.getByRole("button", { name: /Sign in with a code/ })).toBeEnabled();
+  expect(screen.queryByRole("button", { name: /Sign in with Codex CLI/ })).not.toBeInTheDocument();
+  expect(client.startConnection).toHaveBeenCalledOnce();
+});
+it.each([true, false])("keeps saved verification recovery explicit when the reuse option disappears (device available: %s)", async deviceAvailable => {
+  const advertised: ProviderWorkflowUICapability = { ...capability, loginMethods: ["terminal", "device_code", "existing_codex"], connectionOptions: [option, device, existing] };
+  const { client, open, refreshCapability } = setup({ advertised, receiptOption: existing, state: "failed", terminalAvailable: false, saved: true });
+  fireEvent.click(screen.getByRole("button", { name: "Use existing Codex account" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("Could not verify the existing Codex account");
+  refreshCapability(deviceAvailable ? { ...capability, loginMethods: ["terminal", "device_code"], connectionOptions: [option, device] } : capability);
+
+  expect(screen.queryByRole("button", { name: /^Reconnect$/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Sign in with Codex CLI/ })).not.toBeInTheDocument();
+  if (deviceAvailable) expect(screen.getByRole("button", { name: /Sign in with a code/ })).toBeEnabled();
+  expect(client.startConnection).toHaveBeenCalledOnce();
+  expect(open).not.toHaveBeenCalled();
+});
+it("still reports a restored CLI attempt on a surface without Terminal", async () => {
+  const { client, open } = setup({ restored: true, terminalAvailable: false });
+  expect(await screen.findByRole("status", { name: "Checking Codex connection" })).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Continue in Terminal" })).not.toBeInTheDocument();
+  expect(client.startConnection).not.toHaveBeenCalled();
+  expect(open).not.toHaveBeenCalled();
 });
 it("does not start or continue login for read-only users", async () => {
   const { client, open } = setup({ disabled: true, restored: true });

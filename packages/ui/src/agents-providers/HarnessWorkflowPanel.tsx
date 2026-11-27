@@ -16,6 +16,10 @@ export function HarnessWorkflowPanel(props: HarnessWorkflowPanelProps) {
   const reconnectOption = harness.harness === "codex" && source?.fundingKind === "owner_account"
     ? existingCodexAccount ?? capability.connectionOptions?.find(isCodexDeviceOption) ?? capability.connectionOptions?.find(isCodexTerminalOption) : undefined;
   const reconnectExistingCodex = reconnectOption?.method === "existing_codex";
+  const recoveringCodexSignIn = state.existingCodexVerificationFailed;
+  const codexFallbackOptions = recoveringCodexSignIn
+    ? capability.connectionOptions?.filter(option => isCodexDeviceOption(option) || (terminalAvailable && isCodexTerminalOption(option)))
+    : undefined;
   const codexDeviceOperation = codexDevice && isCodexDeviceOption(operation?.connectionOption);
   const codexTerminalOperation = codexTerminal && isCodexTerminalOption(operation?.connectionOption);
   const existingCodexOperation = harness.harness === "codex" && isCodexExistingAccountOption(operation?.connectionOption);
@@ -28,7 +32,7 @@ export function HarnessWorkflowPanel(props: HarnessWorkflowPanelProps) {
       && option.executionKind === "native" && option.billingKind === "subscription" && option.availability === "available"
       && (option.method === "browser" || option.method === "terminal")) : undefined;
   const showConnectionChoices = harness.harness === "codex"
-    ? !connectionPresent && (!onConnectSaved || (failed && !existingCodexOperation && !reconnectExistingCodex))
+    ? !connectionPresent && (recoveringCodexSignIn || !onConnectSaved || (failed && !existingCodexOperation && !reconnectExistingCodex))
     : !adoptOption && (!connectionPresent || method !== null || failed);
   const canChangeAccount = capability.connectionOptions
     ? capability.connectionOptions.some(option => option.availability === "available" && (option.authKind === "api_key" ? Boolean(client.submitConnectionKey) : Boolean(client.startConnection)))
@@ -51,7 +55,7 @@ export function HarnessWorkflowPanel(props: HarnessWorkflowPanelProps) {
   const accountActions = renderAccountActions?.(disabled || pending || connecting || reconciling
     || (operationId !== null && operation?.id !== operationId));
   // Codex has one primary action per state: Reconnect only while its saved login needs sign-in.
-  const savedConnectionAction = onConnectSaved && !connected ? <button type="button"
+  const savedConnectionAction = onConnectSaved && !connected && (!recoveringCodexSignIn || reconnectExistingCodex) ? <button type="button"
     className={harness.harness === "codex" ? "matrix-ap-button matrix-ap-button-primary" : "matrix-ap-button"}
     disabled={disabled || connectSavedDisabled || pending || connecting || reconciling || (harness.harness === "codex" && operationId !== null && operation?.id !== operationId)}
     onClick={() => reconnectOption ? void start("login", reconnectOption.method === "terminal", reconnectOption) : void run(onConnectSaved)}>{reconnectExistingCodex ? "Use existing Codex account" : harness.harness === "codex" ? "Reconnect" : "Connect saved connection"}</button> : null;
@@ -146,7 +150,7 @@ export function HarnessWorkflowPanel(props: HarnessWorkflowPanelProps) {
           {harness.authState === "expired" && !connecting ? (
             <div className="matrix-ap-notice" data-tone="warning">
               <span>{harness.harness === "codex" ? "Sign-in expired. Check your connection to continue." : "Sign-in expired. Reconnect to continue."}</span>
-              {inlineLogin && !existingCodexAccount ? (
+              {inlineLogin && !existingCodexAccount && !recoveringCodexSignIn ? (
                 <button
                   type="button"
                   className="matrix-ap-button"
@@ -158,7 +162,7 @@ export function HarnessWorkflowPanel(props: HarnessWorkflowPanelProps) {
               ) : null}
             </div>
           ) : null}
-          {capability.connectionOptions ? (showConnectionChoices ? <WorkflowConnectionChooser state={state} /> : null) : (inlineLogin ||
+          {capability.connectionOptions ? (showConnectionChoices ? <WorkflowConnectionChooser state={state} codexFallbackOptions={codexFallbackOptions} /> : null) : (inlineLogin ||
             capability.apiKeyProviders.length > 0) &&
           showConnectionChoices ? (
             <div className="matrix-ap-login-choices">
@@ -198,7 +202,7 @@ export function HarnessWorkflowPanel(props: HarnessWorkflowPanelProps) {
       {harness.harness === "claude" || showCodexLoginProgress ? <WorkflowLoginProgress state={state} /> : null}
         </>
       )}
-      <WorkflowFailure state={state} canRetryLogin={harness.harness === "claude" || !existingCodexAccount && Boolean(codexTerminalOperation || codexDeviceOperation)} />
+      <WorkflowFailure state={state} canRetryLogin={harness.harness === "claude" || !recoveringCodexSignIn && !existingCodexAccount && Boolean(codexTerminalOperation || codexDeviceOperation)} />
       <div className="matrix-ap-workflow-actions">
         {failure && (connecting || operation?.state === "succeeded") ? (
           <button

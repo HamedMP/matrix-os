@@ -17,7 +17,7 @@ export function codexFixture(state: "connected" | "off" | "consent" | "none" | "
     accounts: ["owner_codex", "old-alias"].map(id => ({ id, providerId: "openai", accessSourceId: "owner_openai_profile", displayName: id === "owner_codex" ? "Synthetic owner" : "Connected ChatGPT account", authMethod: state === "key" ? "api_key" : "terminal", authState: state === "none" ? "unauthenticated" : "authenticated", dependencies: { activeChatCount: 0, resumableChatCount: 0, harnessInstanceCount: 1 } })),
     accessSources: [{ id: "owner_openai_profile", kind: "provider_account", accountId: "owner_codex", providerId: "openai", displayName: "Native account", fundingKind: state === "key" ? "owner_api_key" : "owner_account", eligibleModelIds: ["codex:test"], readiness: { state: state === "consent" || state === "none" ? "auth_required" : "ready" }, usage: { kind: "unavailable", reason: "unknown" } }], modelProviders: [], gatewayPolicy: null } as unknown as ProviderSettingsSnapshot;
 }
-function workflow(connectionOption: typeof device | typeof existing = device, state: "running" | "succeeded" | "failed" = "running") {
+function workflow(connectionOption: typeof device | typeof existing = device, state: "running" | "succeeded" | "failed" | "expired" = "running") {
   const receipt = { id: "login", harnessInstanceId: "codex", kind: "login", state, expiresAt: new Date(Date.now() + 60000).toISOString(), authorizationUrl: connectionOption === device ? "https://auth.openai.com/codex/device" : null, deviceCode: connectionOption === device ? "SYNTHETIC" : null, terminalSessionId: null, safeFailure: state === "failed" ? "unavailable" : null, connectionOption };
   return { receipt, capabilities: vi.fn().mockResolvedValue([{ harnessInstanceId: "codex", harness: "codex", displayName: "Codex", installState: "installed", loginMethods: ["device_code", "terminal"], apiKeyProviders: ["openai"], connectionOptions: [device, terminal, key], install: false, uninstall: false, logs: false }]), startConnection: vi.fn().mockResolvedValue(receipt), submitConnectionKey: vi.fn().mockResolvedValue({ verified: true }), start: vi.fn(), get: vi.fn().mockResolvedValue(receipt), cancel: vi.fn().mockResolvedValue({ ...receipt, state: "cancelled" }), logs: vi.fn(), submitKey: vi.fn() };
 }
@@ -27,7 +27,11 @@ async function mount(initial = codexFixture(), rejectLogout = false, client = wo
     capabilityRefreshRevision?: number; workflowClient?: ReturnType<typeof workflow>;
   }) {
     const [snapshot, setSnapshot] = useState(initial);
-    return <AgentsProvidersView snapshot={snapshot} capabilityRefreshRevision={capabilityRefreshRevision} selectedHarnessId="codex" onSelectHarness={vi.fn()} onRefresh={() => { refresh(); }} onRefreshForConnection={async receipt => {
+    const [refreshRevision, setRefreshRevision] = useState(0);
+    return <AgentsProvidersView snapshot={snapshot} capabilityRefreshRevision={(capabilityRefreshRevision ?? 0) + refreshRevision} selectedHarnessId="codex" onSelectHarness={vi.fn()} onRefresh={() => {
+      refresh();
+      setRefreshRevision(value => value + 1);
+    }} onRefreshForConnection={async receipt => {
       refreshConnection(receipt);
       if (receipt?.state === "succeeded" && afterLogin) {
         setSnapshot(afterLogin);
@@ -45,7 +49,7 @@ async function mount(initial = codexFixture(), rejectLogout = false, client = wo
   });
   return { client, mutate, refresh, refreshConnection, openTerminal, openAuthorization, refreshWorkflowCapabilities, ...view };
 }
-async function existingWorkflow(state: "succeeded" | "failed" = "succeeded") {
+async function existingWorkflow(state: "succeeded" | "failed" | "expired" = "succeeded") {
   const client = workflow(existing, state), capability = (await client.capabilities())[0]!;
   client.capabilities.mockResolvedValue([{ ...capability, loginMethods: ["device_code", "terminal", "existing_codex"], connectionOptions: [device, terminal, existing, key] }]);
   return client;
@@ -172,21 +176,37 @@ it.each(["none", "consent"] as const)("uses the verified existing account only a
   expect(openTerminal).not.toHaveBeenCalled();
   expect(openAuthorization).not.toHaveBeenCalled();
 });
-it("keeps one saved-account action and its existing refresh after a verification failure", async () => {
-  const client = await existingWorkflow("failed");
-  const { mutate, refresh } = await mount(codexFixture("consent"), false, client);
+it.each(["failed", "expired"] as const)("restores explicit sign-in after a saved account's %s verification", async state => {
+  const client = await existingWorkflow(state);
+  const initial = codexFixture("consent");
+  initial.harnesses[0]!.authState = "expired";
+  const { mutate, refresh, openTerminal, openAuthorization } = await mount(initial, false, client);
   const row = screen.getByRole("group", { name: "Codex connection actions" });
+  expect(screen.getByRole("region", { name: "Codex saved account" })).toBeVisible();
   fireEvent.click(within(row).getByRole("button", { name: "Use existing Codex account" }));
   const alert = await screen.findByRole("alert");
   expect(alert).toHaveTextContent("Could not verify the existing Codex account");
   expect(within(alert).queryByRole("button")).not.toBeInTheDocument();
-  const adopt = screen.getByRole("button", { name: /^Use existing Codex account/ });
-  expect(adopt).toBeEnabled();
-  expect(adopt).toHaveClass("matrix-ap-button-primary");
-  fireEvent.click(within(row).getByRole("button", { name: "Check again" }));
+  const adoptionActions = screen.getAllByRole("button", { name: /^Use existing Codex account/ });
+  expect(adoptionActions).toHaveLength(1);
+  expect(adoptionActions[0]).toBeEnabled();
+  expect(adoptionActions[0]).toHaveClass("matrix-ap-button-primary");
+  expect(screen.getByRole("button", { name: /Sign in with Codex CLI/ })).toBeEnabled();
+  const reads = client.capabilities.mock.calls.length;
+  await act(async () => fireEvent.click(within(row).getByRole("button", { name: "Check again" })));
   expect(refresh).toHaveBeenCalledOnce();
+  expect(client.capabilities).toHaveBeenCalledTimes(reads + 1);
+  expect(screen.getByRole("button", { name: /Sign in with Codex CLI/ })).toBeEnabled();
   expect(client.startConnection).toHaveBeenCalledOnce();
   expect(mutate).not.toHaveBeenCalled();
+  expect(openTerminal).not.toHaveBeenCalled();
+  expect(openAuthorization).not.toHaveBeenCalled();
+
+  client.startConnection.mockResolvedValueOnce({ ...workflow().receipt, id: "device-recovery" });
+  fireEvent.click(screen.getByRole("button", { name: /Sign in with a code/ }));
+  expect(await screen.findByRole("button", { name: "Open sign-in page" })).toBeEnabled();
+  expect(client.startConnection).toHaveBeenNthCalledWith(2, expect.objectContaining({ optionId: "openai_device_code" }), expect.any(AbortSignal));
+  expect(openAuthorization).not.toHaveBeenCalled();
 });
 it("offers one saved existing-account action after a previous sign-in attempt failed", async () => {
   const client = await existingWorkflow();
@@ -200,19 +220,67 @@ it("offers one saved existing-account action after a previous sign-in attempt fa
   expect(screen.queryByRole("button", { name: /Sign in with a code|Sign in with Codex CLI/ })).not.toBeInTheDocument();
   expect(client.startConnection).not.toHaveBeenCalled();
 });
-it.each(["workflow", "start"] as const)("shows a failed existing-account %s with a Settings refresh and no sign-in fallback", async failure => {
+it.each(["workflow", "start"] as const)("keeps qualified sign-in options after a failed existing-account %s and a repeated reuse hint", async failure => {
   const client = await existingWorkflow("failed");
-  if (failure === "start") client.startConnection.mockRejectedValueOnce(new Error("fixture preflight failed"));
+  if (failure === "start") {
+    const capability = (await client.capabilities())[0]!;
+    client.capabilities.mockResolvedValue([{ ...capability, loginMethods: ["terminal", "existing_codex"], connectionOptions: [terminal, existing, key] }]);
+    client.startConnection.mockRejectedValueOnce(new ProviderWorkflowClientError("unavailable"));
+  }
   const { refresh, refreshConnection, openTerminal, openAuthorization } = await mount(codexFixture("none"), false, client);
   fireEvent.click(screen.getByRole("button", { name: /^Use existing Codex account/ }));
   const alert = await screen.findByRole("alert");
   expect(alert).toHaveTextContent(failure === "workflow" ? "Could not verify the existing Codex account" : "The connection could not be updated.");
-  fireEvent.click(within(alert).getByRole("button", { name: "Check again" }));
+  expect(screen.getByRole("button", { name: /Sign in with Codex CLI/ })).toBeEnabled();
+  const reads = client.capabilities.mock.calls.length;
+  await act(async () => fireEvent.click(within(alert).getByRole("button", { name: "Check again" })));
   expect(refresh).toHaveBeenCalledOnce();
+  expect(client.capabilities).toHaveBeenCalledTimes(reads + 1);
+  expect(screen.getByRole("button", { name: /^Use existing Codex account/ })).toBeEnabled();
+  if (failure === "workflow") expect(screen.getByRole("button", { name: /Sign in with a code/ })).toBeEnabled();
+  else expect(screen.queryByRole("button", { name: /Sign in with a code/ })).not.toBeInTheDocument();
   expect(client.startConnection).toHaveBeenCalledOnce();
   expect(refreshConnection).not.toHaveBeenCalled();
   expect(openTerminal).not.toHaveBeenCalled();
   expect(openAuthorization).not.toHaveBeenCalled();
+
+  client.startConnection.mockResolvedValueOnce({
+    ...workflow().receipt, id: "terminal-recovery", connectionOption: terminal,
+    authorizationUrl: null, deviceCode: null, terminalSessionId: "tws_owner:tt_codex",
+  });
+  fireEvent.click(screen.getByRole("button", { name: /Sign in with Codex CLI/ }));
+  expect(await screen.findByRole("button", { name: "Continue in Terminal" })).toBeEnabled();
+  expect(client.startConnection).toHaveBeenNthCalledWith(2, expect.objectContaining({ optionId: "openai_terminal" }), expect.any(AbortSignal));
+  expect(openTerminal).not.toHaveBeenCalled();
+});
+it.each(["failed receipt", "rejected start"] as const)("keeps the CLI choice after a device fallback's %s until the capability is withdrawn", async result => {
+  const client = await existingWorkflow("failed");
+  const { refreshWorkflowCapabilities } = await mount(codexFixture("none"), false, client);
+  fireEvent.click(screen.getByRole("button", { name: /^Use existing Codex account/ }));
+  await screen.findByRole("alert");
+  const started = Promise.withResolvers<typeof client.receipt>();
+  client.startConnection.mockReturnValueOnce(started.promise);
+  fireEvent.click(screen.getByRole("button", { name: /Sign in with a code/ }));
+  expect(screen.getByRole("button", { name: /Sign in with Codex CLI/ })).toBeDisabled();
+  await act(async () => {
+    if (result === "rejected start") started.reject(new ProviderWorkflowClientError("unavailable"));
+    else started.resolve({ ...workflow(device, "failed").receipt, id: "device-failed" });
+  });
+  const cliFallback = screen.getByRole("button", { name: /Sign in with Codex CLI/ });
+  expect(cliFallback).toBeEnabled();
+  expect(client.startConnection).toHaveBeenCalledTimes(2);
+
+  client.startConnection.mockResolvedValueOnce({
+    ...workflow(device, "failed").receipt, id: "terminal-failed", connectionOption: terminal, deviceCode: null, authorizationUrl: null,
+  });
+  await act(async () => fireEvent.click(cliFallback));
+  expect(client.startConnection).toHaveBeenNthCalledWith(3, expect.objectContaining({ optionId: "openai_terminal" }), expect.any(AbortSignal));
+
+  const [current] = await client.capabilities();
+  client.capabilities.mockResolvedValue([{ ...current, loginMethods: ["existing_codex"], connectionOptions: [existing, key] }]);
+  await refreshWorkflowCapabilities(1);
+  expect(screen.queryByRole("button", { name: /Sign in with Codex CLI/ })).not.toBeInTheDocument();
+  expect(client.startConnection).toHaveBeenCalledTimes(3);
 });
 it("cannot mutate or reconnect a read-only saved account", async () => {
   const initial = codexFixture("consent"); initial.access = { mode: "read_only", reason: "remote_policy" };
@@ -299,7 +367,7 @@ it("shows connected Codex secondary actions in one row without a primary action"
   expect(buttons.map(button => button.textContent)).toEqual(["Check again", "Change account", "Log out"]);
   expect(row.querySelector(".matrix-ap-button-primary")).toBeNull();
   expect(screen.queryByRole("button", { name: "Check account again" })).toBeNull();
-  fireEvent.click(within(row).getByRole("button", { name: "Check again" }));
+  await act(async () => fireEvent.click(within(row).getByRole("button", { name: "Check again" })));
   expect(refresh).toHaveBeenCalled();
 });
 it("explains a saved Codex account that is only Off without asking to sign in again", async () => {

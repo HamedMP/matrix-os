@@ -1,3 +1,4 @@
+import type { ProviderWorkflowConnectionOption } from "@matrix-os/contracts";
 import { ConnectionMethodCard } from "./ConnectionMethodCard.js";
 import { isCodexExistingAccountOption } from "./managed-connection-capability.js";
 import type { HarnessWorkflowController } from "./use-harness-workflow-controller.js";
@@ -7,16 +8,22 @@ const methodNames = {device_code: "Sign in with a code", browser: "Sign in in br
 const unavailable = {not_installed: "Install this agent on this computer to connect.", unsupported_runtime: "This connection requires a supported agent version.", provider_access_required: "This connection requires provider access for this deployment."};
 
 /** Only exact, qualified server options can start a provider-aware connection. */
-export function WorkflowConnectionChooser({state}: {state: HarnessWorkflowController}) {
+export function WorkflowConnectionChooser({state, codexFallbackOptions}: {
+ state: HarnessWorkflowController;
+ codexFallbackOptions: readonly ProviderWorkflowConnectionOption[] | undefined;
+}) {
  const {capability, harness, disabled, pending, startingLogin, connecting, selectedOption, setSelectedOption,
    operationId, operation, setMethod, setProviderId, setApiKey, setOperation, setFailure, pendingStart: pendingStartRef, start} = state;
  const { connectionOptions } = capability;
  if (!connectionOptions?.length) return <p className="matrix-ap-help" role="status">Connection in Settings is unavailable for this agent on this computer.</p>;
  const codex = harness.harness === "codex";
  const useExistingCodexAccount = codex && connectionOptions.some(isCodexExistingAccountOption);
- const options = useExistingCodexAccount
-   ? connectionOptions.filter(option => option.authKind === "api_key" || isCodexExistingAccountOption(option))
-   : connectionOptions;
+ const options = connectionOptions.filter(option => {
+   const reuseOrKey = option.authKind === "api_key" || isCodexExistingAccountOption(option);
+   if (codexFallbackOptions) return codexFallbackOptions.includes(option) || (!state.onConnectSaved && reuseOrKey);
+   return !useExistingCodexAccount || reuseOrKey;
+ });
+ if (!options.length) return null;
  const restoringCodex = codex && operationId !== null && operation?.id !== operationId;
  return <div className="matrix-ap-login-choices">
    <h3>Connect {harness.displayName} with</h3>
