@@ -7,7 +7,7 @@
 import { act, cleanup, fireEvent, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { openXlsx } from "../../../../home/apps/_shared/office-engine/index";
-import { flush, renderApp, renderWithWorkbook } from "./harness";
+import { flush, renderApp, renderWithWorkbook, workbookBytes } from "./harness";
 
 afterEach(cleanup);
 
@@ -110,6 +110,37 @@ describe("Back to the Sheets start screen", () => {
     await flush();
     fileClose();
     await startScreen();
+  });
+
+  it("does not close a workbook Files opened while the start screen list was being updated", async () => {
+    const app = await renderWithWorkbook("Budget.xlsx");
+    app.bridge.fileStore.put("Other.xlsx", await workbookBytes());
+    // Hold the first recent-files read, the one Close waits on before it leaves the workbook.
+    const find = app.bridge.db.find.bind(app.bridge.db);
+    let release: () => void = () => undefined;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let first = true;
+    app.bridge.db.find = async (...args: Parameters<typeof find>) => {
+      if (first) {
+        first = false;
+        await held;
+      }
+      return find(...args);
+    };
+
+    goHome();
+    await flush();
+    act(() => app.bridge.requestOpen("Other.xlsx"));
+    await flush();
+    expect(app.session().getState().path).toBe("Other.xlsx");
+
+    release();
+    await flush();
+    expect(app.host.session).not.toBeNull();
+    expect(app.session().getState().path).toBe("Other.xlsx");
+    expect(screen.getByRole("heading", { name: "Other.xlsx" })).toBeTruthy();
   });
 
   describe("with text in the cell editor that cannot be stored", () => {

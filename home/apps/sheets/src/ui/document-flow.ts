@@ -71,8 +71,11 @@ export function useDocumentFlow(host: SessionHost, recents: RecentFiles, downloa
     async (action: DocumentAction, discardUnsaved = false): Promise<void> => {
       if (action.kind === "close") {
         // The start screen lists the document it comes back from.
-        const path = host.session?.getState().path ?? null;
+        const session = host.session;
+        const path = session?.getState().path ?? null;
         if (path !== null && !discardUnsaved) await recents.touch(path);
+        // Another workbook took the window while the list was updated: this Close was not asked for it.
+        if (host.session !== session) return;
         // A refused cell editor keeps its text and message on screen: nothing else to ask.
         if ((await host.close({ discardUnsaved })).status === "unsaved") setPending(action);
         return;
