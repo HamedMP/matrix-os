@@ -4,7 +4,7 @@ import { checkoutUnavailablePresentation } from "./checkout-unavailable-presenta
 import { useDialogFocus } from "./use-dialog-focus.js";
 import { useGettingStartedBlocker } from "../getting-started-visibility.js";
 import { useLocalObservationExpiry } from "../local-observation-expiry.js";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../Select.js";
+import { Button } from "../Button.js";
 import type {
   ProviderAccessSource,
   ProviderGatewayPolicy,
@@ -15,6 +15,11 @@ import type {
 } from "@matrix-os/contracts";
 import type { ProviderSettingsMutationIntent } from "./types.js";
 import { gatewayChatAvailableMicrousd, gatewayCreditLines, gatewayCreditStaleAfter, gatewayPolicyAllowsModel, localDateTimeWithZone, money, shortDate, titleCase } from "./utils.js";
+
+const upstreamOptions = [
+  ["cloudflare", "Cloudflare"],
+  ["aws_bedrock", "AWS Bedrock"],
+] as const;
 
 const capabilityLabels = {
   tools: "Tools",
@@ -180,6 +185,8 @@ export function GatewayPanel({
   const reservedBudget = source?.usage.kind === "managed_credit" && source.usage.budget.reservedThisMonthMicrousd > 0
     && source.usage.budget.reservedThisMonthMicrousd !== source.usage.credit.reservedMicrousd
     ? `${money(source.usage.budget.reservedThisMonthMicrousd, source.usage.currency)} monthly budget reserved${source.usage.state === "stale" ? " (last confirmed)" : ""}` : null;
+  const settledUsage = source?.usage.kind === "managed_credit" && source.usage.usedMicrousd > 0
+    ? `${money(source.usage.usedMicrousd, source.usage.currency)} used of ${money(source.usage.limitMicrousd, source.usage.currency)}` : null;
   const checkoutAvailable = Boolean(
     source &&
       policy?.topUpEnabled &&
@@ -348,231 +355,174 @@ export function GatewayPanel({
       {subscriptions ?? <p className="matrix-ap-gateway-footer">
         Already have Claude or ChatGPT? Connect it on the agent instead.
       </p>}
-      {!policy || !source ? <details className="matrix-ap-advanced"><summary>Advanced Matrix AI settings</summary>
-          {!ready ? (
-            <button
-              type="button"
-              className="matrix-ap-button"
-              disabled={disabled}
-              onClick={onRefresh}
-              title={source?.readiness.safeReason === "policy" || source?.readiness.action === "contact_owner"
-                ? "Matrix AI is restricted by your workspace. Ask your administrator."
-                : "Check Matrix AI availability"}
-            >
-              Check again
-            </button>
-          ) : null}
-      </details> : null}
-
-      {policy && source ? (
-        <details className="matrix-ap-advanced">
-          <summary>Advanced Matrix AI settings</summary>
-          {!ready ? (
-            <button
-              type="button"
-              className="matrix-ap-button"
-              disabled={disabled}
-              onClick={onRefresh}
-              title={source?.readiness.safeReason === "policy" || source?.readiness.action === "contact_owner"
-                ? "Matrix AI is restricted by your workspace. Ask your administrator."
-                : "Check Matrix AI availability"}
-            >
-              Check again
-            </button>
-          ) : null}
-
-          {source.usage.kind === "managed_credit" ? <p className="matrix-ap-help">{money(source.usage.usedMicrousd, source.usage.currency)} used of {money(source.usage.limitMicrousd, source.usage.currency)}</p> : null}
-          {reservedBudget ? <p className="matrix-ap-help">{reservedBudget}</p> : null}
+      <div className="matrix-ap-gateway-settings">
+        {!ready ? (
           <div className="matrix-ap-actions">
-          {ready && onUseGateway && (!isSelected || !selectedAgentEnabled) ? (
             <button
               type="button"
-              className="matrix-ap-button matrix-ap-button-primary"
+              className="matrix-ap-button"
               disabled={disabled}
-              onClick={onUseGateway}
+              onClick={onRefresh}
+              title={source?.readiness.safeReason === "policy" || source?.readiness.action === "contact_owner"
+                ? "Matrix AI is restricted by your workspace. Ask your administrator."
+                : "Check Matrix AI availability"}
             >
+              Check again
+            </button>
+          </div>
+        ) : null}
+
+        {ready && onUseGateway && (!isSelected || !selectedAgentEnabled) ? (
+          <div className="matrix-ap-actions">
+            <button type="button" className="matrix-ap-button matrix-ap-button-primary" disabled={disabled} onClick={onUseGateway}>
               Use Matrix AI
             </button>
-          ) : null}
-          {ready && isSelected && selectedAgentEnabled ? (
-            <span className="matrix-ap-selected-tag">
-              Selected for {selectedAgentName}
-            </span>
-          ) : null}
-          {ready && !onUseGateway && !isSelected && onChooseAgent
-            ? compatibleAgents.map((agent) => (
-                <button
-                  key={agent.id}
-                  type="button"
-                  className="matrix-ap-button"
-                  onClick={() => onChooseAgent(agent.id)}
-                >
-                  Choose {agent.displayName}
-                </button>
-              ))
-            : null}
+            {!isSelected && selectedAgentName && selectedModelName ? (
+              <span className="matrix-ap-selected-tag">{selectedAgentName} · {selectedModelName}</span>
+            ) : null}
           </div>
-      {ready && onUseGateway && !isSelected ? (
-        <p className="matrix-ap-help">
-          {selectedAgentName} · {selectedModelName}
-        </p>
-      ) : null}
-      {ready && savedRouteUnavailable ? (
-        <p className="matrix-ap-help">
-          Saved Matrix model unavailable. Choose an allowed model.
-        </p>
-      ) : null}
-      {ready &&
-      !onUseGateway &&
-      !isSelected &&
-      compatibleAgents.length === 0 ? (
-        <p className="matrix-ap-help">
-          Connect Pi or OpenCode to use Matrix AI.
-        </p>
-      ) : null}
+        ) : null}
+        {ready && isSelected && selectedAgentEnabled ? (
+          <span className="matrix-ap-selected-tag">Selected for {selectedAgentName}</span>
+        ) : null}
+        {ready && !onUseGateway && !isSelected && onChooseAgent && compatibleAgents.length > 0 ? (
+          <div className="matrix-ap-actions">
+            {compatibleAgents.map(agent => (
+              <button key={agent.id} type="button" className="matrix-ap-button" onClick={() => onChooseAgent(agent.id)}>
+                Choose {agent.displayName}
+              </button>
+            ))}
+          </div>
+        ) : null}
+        {ready && savedRouteUnavailable ? (
+          <p className="matrix-ap-help">Saved Matrix model unavailable. Choose an allowed model.</p>
+        ) : null}
 
-
-          {upstreamPreference ? (
-            <div
-              role="group"
-              aria-labelledby={`${upstreamId}-label`}
-              style={{
-                display: "flex", flexWrap: "wrap", alignItems: "center", gap: "8px 16px",
-                marginBlock: 12, padding: "12px 14px", borderRadius: 12,
-                border: "1px solid var(--matrix-ap-border)", background: "var(--matrix-ap-surface)",
-              }}
-            >
-              <div style={{ flex: "1 1 240px", minWidth: 0 }}>
-                <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "6px 8px", fontSize: 13 }}>
-                  <strong id={`${upstreamId}-label`}>Matrix AI upstream</strong>
-                  <span id={`${upstreamId}-access`} className="matrix-ap-selected-tag">Developer access</span>
-                </div>
-                <p id={`${upstreamId}-help`} className="matrix-ap-help" style={{ marginTop: 4 }}>
-                  Choose where Matrix AI sends requests for eligible models.
-                </p>
-              </div>
-              <Select
-                value={upstreamPreference.selectedUpstream}
-                disabled={disabled || !canSetUpstream}
-                onValueChange={(selectedUpstream) => {
-                  if (selectedUpstream !== "aws_bedrock" && selectedUpstream !== "cloudflare") return;
-                  onMutate({ type: "set_gateway_upstream",
-                    expectedUpstreamRevision: upstreamPreference.revision, selectedUpstream });
-                }}
-              >
-                <SelectTrigger
-                  style={{ minWidth: "min(100%, 144px)" }}
-                  aria-labelledby={`${upstreamId}-label`}
-                  aria-describedby={`${upstreamId}-access ${upstreamId}-help`}
-                >
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent position="popper">
-                  <SelectItem value="cloudflare">Cloudflare</SelectItem>
-                  <SelectItem value="aws_bedrock">AWS Bedrock</SelectItem>
-                </SelectContent>
-              </Select>
-              {upstreamPreference.selectedUpstream !== upstreamPreference.effectiveUpstream ? (
-                <p className="matrix-ap-help" role="status" style={{
-                  flexBasis: "100%", margin: 0, paddingTop: 8,
-                  borderTop: "1px solid var(--matrix-ap-border)", color: "var(--matrix-ap-warning-text)",
-                }}>
-                  Cloudflare remains active until the selected route is available.
-                </p>
-              ) : null}
+        {upstreamPreference && policy && source ? (
+          <div
+            className="matrix-ap-upstream"
+            role="group"
+            aria-labelledby={`${upstreamId}-label`}
+            aria-describedby={`${upstreamId}-access`}
+          >
+            <div className="matrix-ap-upstream-label">
+              <strong id={`${upstreamId}-label`}>Matrix AI upstream</strong>
+              <span id={`${upstreamId}-access`} className="matrix-ap-selected-tag">Developer access</span>
             </div>
-          ) : null}
-
-          <div className="matrix-ap-policy-grid">
-            {canSetBudget ? (
-              <>
-                <label className="matrix-ap-field">
-                  <span>Monthly budget</span>
-                  <span className="matrix-ap-money-input">
-                    <i aria-hidden="true">$</i>
-                    <input
-                      aria-label="Monthly budget in USD"
-                      inputMode="decimal"
-                      value={budgetUsd}
-                      onChange={(event) => setBudgetUsd(event.target.value)}
-                      disabled={disabled || !canSetBudget}
-                      title={
-                        canSetBudget
-                          ? undefined
-                          : "Changing the Matrix AI budget is not available"
-                      }
-                      placeholder="No limit"
-                    />
-                  </span>
-                </label>
-                <button
-                  type="button"
-                  className="matrix-ap-button"
-                  disabled={disabled || !canSetBudget}
-                  title={
-                    canSetBudget
-                      ? undefined
-                      : "Changing the Matrix AI budget is not available"
-                  }
-                  onClick={saveBudget}
-                >
-                  Save budget
-                </button>
-              </>
-            ) : (
-              <div className="matrix-ap-field">
-                <span>Monthly budget</span>
-                <strong>
-                  {budget === null ? "No monthly limit" : money(budget)}
-                </strong>
-                <span>Managed by your workspace</span>
-              </div>
-            )}
-            {canSetAllowlist ? (
-              <fieldset
-                className="matrix-ap-allowlist"
-                disabled={disabled || !canSetAllowlist}
-                title={
-                  canSetAllowlist
-                    ? undefined
-                    : "Changing the Matrix AI model list is not available"
-                }
-              >
-                <legend>Models available through Matrix</legend>
-                {provider?.models
-                  .filter((model) => source.eligibleModelIds.includes(model.id))
-                  .map((model) => {
-                    const checked = policy.allowedModelIds.includes(model.id);
-                    return (
-                      <label key={model.id}>
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          aria-label={`Allow ${model.displayName}`}
-                          onChange={() =>
-                            onMutate({
-                              type: "set_gateway_allowlist",
-                              allowedModelIds: checked
-                                ? policy.allowedModelIds.filter(
-                                    (id) => id !== model.id,
-                                  )
-                                : [...policy.allowedModelIds, model.id],
-                            })
-                          }
-                        />
-                        <span>{model.displayName}</span>
-                      </label>
-                    );
-                  })}
-              </fieldset>
-            ) : (
-              <p className="matrix-ap-help">
-                Model availability is managed by your workspace.
-              </p>
-            )}
+            <div className="matrix-ap-upstream-options">
+              {upstreamOptions.map(([value, label]) => {
+                const selected = value === upstreamPreference.selectedUpstream;
+                return (
+                  <Button
+                    key={value}
+                    size="sm"
+                    variant="ghost"
+                    aria-pressed={selected}
+                    disabled={disabled || !canSetUpstream}
+                    style={{
+                      outline: undefined, // Keep the panel's :focus-visible outline.
+                      ...(selected ? { background: "var(--matrix-ap-overlay)", color: "var(--matrix-ap-text)" } : {}),
+                    }}
+                    onClick={() => {
+                      if (!selected) onMutate({ type: "set_gateway_upstream",
+                        expectedUpstreamRevision: upstreamPreference.revision, selectedUpstream: value });
+                    }}
+                  >
+                    {label}
+                  </Button>
+                );
+              })}
+            </div>
+            {upstreamPreference.selectedUpstream !== upstreamPreference.effectiveUpstream ? (
+              <p className="matrix-ap-upstream-fallback" role="status">Using Cloudflare until Bedrock is ready.</p>
+            ) : null}
           </div>
-        </details>
-      ) : null}
+        ) : null}
+
+        {policy && source ? (
+          <>
+            {!canSetBudget || settledUsage || reservedBudget ? (
+              <div className="matrix-ap-gateway-budget">
+                {!canSetBudget ? (
+                  <div>
+                    <span>Monthly budget</span>
+                    <strong>{budget === null ? "No monthly limit" : money(budget)}</strong>
+                    <small>Managed by your workspace</small>
+                  </div>
+                ) : null}
+                {settledUsage ? <span>{settledUsage}</span> : null}
+                {reservedBudget ? <span>{reservedBudget}</span> : null}
+              </div>
+            ) : null}
+            {canSetBudget || canSetAllowlist ? (
+              <details className="matrix-ap-advanced">
+                <summary>Workspace controls</summary>
+                <div className="matrix-ap-policy-grid">
+                  {canSetBudget ? (
+                    <>
+                      <label className="matrix-ap-field">
+                        <span>Monthly budget</span>
+                        <span className="matrix-ap-money-input">
+                          <i aria-hidden="true">$</i>
+                          <input
+                            aria-label="Monthly budget in USD"
+                            inputMode="decimal"
+                            value={budgetUsd}
+                            onChange={(event) => setBudgetUsd(event.target.value)}
+                            disabled={disabled}
+                            placeholder="No limit"
+                          />
+                        </span>
+                      </label>
+                      <button
+                        type="button"
+                        className="matrix-ap-button"
+                        disabled={disabled}
+                        onClick={saveBudget}
+                      >
+                        Save budget
+                      </button>
+                    </>
+                  ) : null}
+                  {canSetAllowlist ? (
+                    <fieldset
+                      className="matrix-ap-allowlist"
+                      disabled={disabled}
+                    >
+                      <legend>Models available through Matrix</legend>
+                      {provider?.models
+                        .filter((model) => source.eligibleModelIds.includes(model.id))
+                        .map((model) => {
+                          const checked = policy.allowedModelIds.includes(model.id);
+                          return (
+                            <label key={model.id}>
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                aria-label={`Allow ${model.displayName}`}
+                                onChange={() =>
+                                  onMutate({
+                                    type: "set_gateway_allowlist",
+                                    allowedModelIds: checked
+                                      ? policy.allowedModelIds.filter(
+                                          (id) => id !== model.id,
+                                        )
+                                      : [...policy.allowedModelIds, model.id],
+                                  })
+                                }
+                              />
+                              <span>{model.displayName}</span>
+                            </label>
+                          );
+                        })}
+                    </fieldset>
+                  ) : null}
+                </div>
+              </details>
+            ) : null}
+          </>
+        ) : null}
+      </div>
 
       {creditDialogOpen ? (
         <div className="matrix-ap-dialog-backdrop" role="presentation">

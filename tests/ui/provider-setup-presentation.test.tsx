@@ -125,7 +125,6 @@ describe("provider setup presentation", () => {
     expect(within(gateway).getAllByText("$1.00")[0]).toBeVisible();
     expect(within(gateway).getByText("Sonnet")).toBeVisible();
     expect(within(gateway).queryByRole("textbox", { name: "Monthly budget in USD" })).not.toBeInTheDocument();
-    fireEvent.click(within(gateway).getByText("Advanced Matrix AI settings"));
     fireEvent.click(within(gateway).getByRole("button", { name: "Use Matrix AI" }));
     expect(onMutate).toHaveBeenCalledWith({ type: "set_route", harnessInstanceId: "pi",
       route: { kind: "configurable", providerId: "anthropic", modelId: "sonnet" }, accessSourceId: "matrix_included", accountId: null,
@@ -209,8 +208,6 @@ describe("provider setup presentation", () => {
     const { onMutate } = setup(value);
     const gateway = screen.getByRole("region", { name: "Matrix AI" });
     expect(within(gateway).queryByText("Selected for Pi")).not.toBeInTheDocument();
-    expect(within(gateway).getByText(/Saved Matrix model unavailable/)).not.toBeVisible();
-    fireEvent.click(within(gateway).getByText("Advanced Matrix AI settings"));
     expect(within(gateway).getByText(/Saved Matrix model unavailable/)).toBeVisible();
     fireEvent.click(within(gateway).getByRole("button", { name: "Use Matrix AI" }));
     expect(onMutate).toHaveBeenCalledWith(expect.objectContaining({ route: { kind: "configurable", providerId: "anthropic", modelId: "sonnet" } }));

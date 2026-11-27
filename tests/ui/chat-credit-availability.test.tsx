@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import React from "react";
 import { afterEach, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import type { ProviderAccessSource, ProviderSettingsSnapshot } from "@matrix-os/contracts";
 import { AddHarnessDialog } from "../../packages/ui/src/agents-providers/AddHarnessDialog";
@@ -63,20 +63,30 @@ it("shows and mutates the platform-projected upstream preference only when suppl
   const view = render(<GatewayPanel source={matrixSource} policy={policy} provider={provider} disabled={false}
     canSetBudget={false} canSetAllowlist={false} canAddCredit={false} canSetUpstream
     upstreamPreference={preference} onMutate={onMutate} onAddCredit={vi.fn()} onRefresh={vi.fn()} />);
-  const choice = screen.getByRole("combobox", { name: "Matrix AI upstream" });
-  expect(screen.getByText("Developer access")).toBeInTheDocument();
-  expect(choice).toHaveAccessibleDescription("Developer access Choose where Matrix AI sends requests for eligible models.");
-  expect(choice).toHaveAttribute("data-slot", "select-trigger");
-  expect(choice).toHaveTextContent("Cloudflare");
-  fireEvent.keyDown(choice, { key: "Enter" });
-  fireEvent.click(screen.getByRole("option", { name: "AWS Bedrock" }));
+  const upstream = screen.getByRole("group", { name: "Matrix AI upstream" });
+  expect(upstream).toHaveAccessibleDescription("Developer access");
+  const cloudflare = within(upstream).getByRole<HTMLButtonElement>("button", { name: "Cloudflare", pressed: true });
+  const bedrock = within(upstream).getByRole<HTMLButtonElement>("button", { name: "AWS Bedrock", pressed: false });
+  expect(cloudflare).toBeVisible();
+  for (const button of [cloudflare, bedrock]) {
+    // An inline outline overrides the panel's keyboard focus ring.
+    expect(button.style.outline).toBe("");
+  }
+  expect(screen.queryByText("Choose where Matrix AI sends requests for eligible models.")).toBeNull();
+  fireEvent.click(bedrock);
   expect(onMutate).toHaveBeenCalledWith({ type: "set_gateway_upstream", expectedUpstreamRevision: 2,
     selectedUpstream: "aws_bedrock" });
+  onMutate.mockClear();
+  fireEvent.click(cloudflare);
+  expect(onMutate).not.toHaveBeenCalled();
   view.unmount();
   render(<GatewayPanel source={matrixSource} policy={policy} provider={provider} disabled={false}
     canSetBudget={false} canSetAllowlist={false} canAddCredit={false}
     upstreamPreference={undefined} onMutate={onMutate} onAddCredit={vi.fn()} onRefresh={vi.fn()} />);
-  expect(screen.queryByRole("combobox", { name: "Matrix AI upstream" })).toBeNull();
+  expect(screen.queryByRole("group", { name: "Matrix AI upstream" })).toBeNull();
+  expect(screen.queryByText("Advanced Matrix AI settings")).toBeNull();
+  expect(screen.queryByText("Workspace controls")).toBeNull();
+  expect(screen.getByText("Monthly budget")).toBeVisible();
   expect(screen.queryByText("Developer access")).toBeNull();
 });
 it.each(["Pi", "OpenCode"] as const)("excludes only the effective Bedrock model from the %s setup picker", label => {

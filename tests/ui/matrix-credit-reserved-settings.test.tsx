@@ -36,7 +36,6 @@ it("separates spendable credit, reserved credit and settled usage without offeri
   expect(screen.getByText("Your credit is reserved while usage is confirmed.")).toBeVisible();
   expect(screen.getByText("$0.00")).toBeVisible();
   expect(screen.getByText("$4.80 reserved")).toBeVisible();
-  fireEvent.click(screen.getByText("Advanced Matrix AI settings"));
   expect(screen.getByText("$0.30 used of $5.10")).toBeVisible();
   expect(screen.queryByText("Matrix AI connection not verified. Check again.")).toBeNull();
   expect(screen.queryByRole("button", { name: "Use Matrix AI" })).toBeNull();
@@ -65,7 +64,6 @@ it("identifies a monthly budget reservation separately when its amount differs f
   source.usage.credit.reservedMicrousd = 0;
   source.usage.credit.remainingBalanceMicrousd = source.usage.credit.creditBalanceMicrousd;
   show(source);
-  fireEvent.click(screen.getByText("Advanced Matrix AI settings"));
   expect(screen.getByText("$4.80 monthly budget reserved")).toBeVisible();
   expect(screen.queryByText("$4.80 reserved")).toBeNull();
   expect(screen.getByText("$0.00")).toBeVisible();

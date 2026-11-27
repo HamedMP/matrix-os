@@ -285,6 +285,30 @@
 .matrix-ap-preview-allowance > span { color: var(--matrix-ap-muted); font-size: 11px; font-weight: 600; }
 .matrix-ap-preview-allowance > strong { font-size: 13px; font-weight: 650; }
 .matrix-ap-preview-allowance > small { color: var(--matrix-ap-faint); font-size: 10px; }
+.matrix-ap-gateway-settings { align-items: flex-start; display: flex; flex-direction: column; gap: 12px; margin-top: 16px; }
+.matrix-ap-gateway-settings > .matrix-ap-advanced { width: 100%; }
+.matrix-ap-gateway-budget { color: var(--matrix-ap-muted); display: flex; flex-wrap: wrap; font-size: 12px; gap: 6px 16px; }
+.matrix-ap-gateway-budget > div { align-items: baseline; display: flex; flex-wrap: wrap; gap: 4px 8px; }
+.matrix-ap-gateway-budget strong { color: var(--matrix-ap-text); }
+.matrix-ap-gateway-budget small { font-size: inherit; }
+.matrix-ap-upstream {
+  align-items: center;
+  background: var(--matrix-ap-surface);
+  border: 1px solid var(--matrix-ap-border);
+  border-radius: 12px;
+  box-sizing: border-box;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  justify-content: space-between;
+  padding: 10px 12px;
+  width: 100%;
+}
+.matrix-ap-upstream-label { align-items: center; display: flex; flex-wrap: wrap; font-size: 13px; gap: 6px 8px; }
+.matrix-ap-upstream-options { background: var(--matrix-ap-sunken); border: 1px solid var(--matrix-ap-border); border-radius: 8px; display: inline-flex; flex-wrap: wrap; gap: 2px; padding: 2px; }
+.matrix-ap-upstream-options > button { min-height: 32px; white-space: nowrap; }
+.matrix-ap-upstream-options > button[aria-pressed="true"] { box-shadow: 0 0 0 1px var(--matrix-ap-border); }
+.matrix-ap-upstream-fallback { color: var(--matrix-ap-warning-text); flex-basis: 100%; font-size: 12px; margin: 0; }
 .matrix-ap-policy-grid { align-items: end; display: grid; gap: 10px; grid-template-columns: minmax(0, 1fr) auto; }
 .matrix-ap-money-input { align-items: center; display: flex; padding: 0; }
 .matrix-ap-money-input i { color: var(--matrix-ap-faint); font-style: normal; padding-left: 9px; }

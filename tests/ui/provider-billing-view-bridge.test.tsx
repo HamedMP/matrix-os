@@ -49,14 +49,13 @@ it("wires history to the current scope and keeps agent selection out of the over
   expect(newLoad).not.toHaveBeenCalled();
 });
 
-it("keeps configured agent choices in Advanced while Buy credit stays in the overview", () => {
+it("keeps agent choices and Buy credit available without an advanced disclosure", () => {
   const onChoose = vi.fn();
   render(<GatewayPanel {...props as Omit<React.ComponentProps<typeof GatewayPanel>, "source" | "onAddCredit">} source={source("a") as never} onAddCredit={vi.fn()} onUseGateway={undefined}
     compatibleAgents={[{id: "opencode", displayName: "OpenCode"}, {id: "pi", displayName: "Pi"}]} onChooseAgent={onChoose} />);
-  expect(screen.getByRole("button", {name: "Choose OpenCode"})).not.toBeVisible();
-  expect(screen.getByRole("button", {name: "Choose Pi"})).not.toBeVisible();
+  expect(screen.getByRole("button", {name: "Choose OpenCode"})).toBeVisible();
+  expect(screen.getByRole("button", {name: "Choose Pi"})).toBeVisible();
   expect(screen.getByRole("button", {name: "Buy credit"})).toBeVisible();
-  fireEvent.click(screen.getByText("Advanced Matrix AI settings"));
   fireEvent.click(screen.getByRole("button", {name: "Choose Pi"}));
   expect(onChoose).toHaveBeenCalledWith("pi");
 });
