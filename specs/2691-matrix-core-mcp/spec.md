@@ -70,7 +70,7 @@ probe; (3) record the real auth mode from each server's OAuth metadata.
 
 | Rank | Service | Auth | Rank | Service | Auth |
 | --- | --- | --- | --- | --- | --- |
-| 1 | Figma | DCR | 11 | Datadog | DCR |
+| 1 | Figma | DCR pending provider approval | 11 | Datadog | DCR |
 | 2 | GitHub | registered client | 12 | Google Drive | registered client |
 | 3 | Atlassian | DCR | 13 | Stripe | DCR |
 | 4 | Context7 | none | 14 | Gmail | registered client |
@@ -89,7 +89,7 @@ be verified.
 
 **Auth modes.** `oauth_dcr` and `none` entries are catalog-only: the vendor
 registers Matrix's client on the fly (or needs no auth), so no vendor-side
-setup is required. Most of the catalog (Linear, Notion, Atlassian, Figma,
+setup is required. Most of the catalog (Linear, Notion, Atlassian,
 Stripe, Sentry, Supabase, lemlist, and others) is in this group.
 `oauth_registered_client` entries (GitHub, Slack, HubSpot, Asana, Box) use
 **one Matrix-owned OAuth app per vendor** (decision 2026-11-12, option a).
@@ -100,15 +100,25 @@ but are hidden from the connect flow. A registered-client entry is shown only
 when its Matrix app is configured on the platform, so a missing secret never
 renders a Connect button that fails.
 
+Figma advertises DCR and requires approval of the Matrix client. Until that
+approval is available, hide the one-click preset and return an approval-required
+message when an existing connection would need to register a new client. A
+usable saved client can still reconnect. PostHog preset connections request the
+same bounded read scopes as managed PostHog. Explicit managed scopes continue
+to apply when the user opts in to managed writes. These rules run in the owner
+OAuth flow used by Web Canvas, Web Desktop, and Electron Desktop. Verify that
+the PostHog preset reaches consent and that Figma's saved connection explains the
+approval requirement. Track launch validation in [ENG-91](https://linear.app/matrix-os/issue/ENG-91/validate-launch-integrations-end-to-end).
+
 **Drift.** `bun run mcp-catalog:verify [id ...]` probes every endpoint and
 compares its live registration mode to the catalog. Its first run corrected
 two entries that a rough manual probe had wrong (Asana and monday.com). It
 treats vendor-advertised metadata URLs as untrusted: each one is
 SSRF-validated, DNS-pinned, not redirected, and byte-capped. Missing metadata
-is reported as unverified, never as verified. Exit codes: `0` all verified,
-`1` any failure or unknown id, `2` only unverified entries remain (today, the
-three Google servers that authorize each call). Re-run it before changing the
-catalog. It makes network calls, so it is a maintenance tool, not a CI gate.
+or required provider approval is reported as unverified. Exit codes: `0` all
+verified, `1` any failure or unknown id, `2` only unverified entries remain.
+Re-run it before changing the catalog. It makes network calls, so it runs as a
+maintenance tool outside CI.
 
 ## User journeys
 

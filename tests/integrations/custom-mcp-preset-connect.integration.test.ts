@@ -12,7 +12,10 @@ import { RegisteredMcpOAuthClients } from "../../packages/gateway/src/integratio
 // preset DCR connect and a Matrix-owned registered-client connect.
 
 const GITHUB_SECRET = "matrix-github-oauth-app-secret";
-const redirectUri = "https://app.matrix-os.com/api/mcp-servers/oauth/callback";
+const redirectUri = "https://api.matrix-os.com/api/mcp-servers/oauth/callback";
+const figmaUrl = "https://mcp.figma.com/mcp";
+const posthogUrl = "https://mcp.posthog.com/mcp";
+const posthogIssuer = "https://oauth.posthog.com";
 const validateUrl = async (url: string) => ({ url: new URL(url), address: "93.184.216.34", family: 4 as const });
 
 /** Fake vendors: OAuth endpoints answer the broker's pinned requester; MCP endpoints answer the MCP client. */
@@ -33,6 +36,28 @@ class FakeVendors {
         code_challenge_methods_supported: ["S256"] } };
     }
     if (url.href === "https://mcp.linear.app/register") return { status: 201, body: { client_id: "dcr-linear-client" } };
+    if (url.href === "https://mcp.posthog.com/.well-known/oauth-protected-resource/mcp") {
+      return { status: 200, body: { resource: posthogUrl, authorization_servers: [posthogIssuer],
+        scopes_supported: ["project:read", "organization:read", "insight:read", "insight:write", ...Array.from({ length: 156 }, (_, index) => `tool_${index}:read`)] } };
+    }
+    if (url.href === `${posthogIssuer}/.well-known/oauth-authorization-server`) {
+      return { status: 200, body: { issuer: posthogIssuer, authorization_endpoint: `${posthogIssuer}/oauth/authorize/`,
+        token_endpoint: `${posthogIssuer}/oauth/token/`, registration_endpoint: `${posthogIssuer}/oauth/register/`,
+        client_id_metadata_document_supported: true, token_endpoint_auth_methods_supported: ["none"], code_challenge_methods_supported: ["S256"] } };
+    }
+    if (url.href === `${posthogIssuer}/oauth/register/`) {
+      expect(JSON.parse(input.body!).redirect_uris).toEqual([redirectUri]);
+      return { status: 201, body: { client_id: "dcr-posthog-client" } };
+    }
+    if (url.href === "https://mcp.figma.com/.well-known/oauth-protected-resource/mcp") {
+      return { status: 200, body: { resource: figmaUrl, authorization_servers: ["https://api.figma.com"], scopes_supported: ["mcp:connect"] } };
+    }
+    if (url.href === "https://api.figma.com/.well-known/oauth-authorization-server") {
+      return { status: 200, body: { issuer: "https://api.figma.com", authorization_endpoint: "https://www.figma.com/oauth/mcp",
+        token_endpoint: "https://api.figma.com/v1/oauth/token", registration_endpoint: "https://api.figma.com/v1/oauth/mcp/register",
+        token_endpoint_auth_methods_supported: ["client_secret_basic", "client_secret_post"] } };
+    }
+    if (url.href === "https://api.figma.com/v1/oauth/mcp/register") return { status: 403, body: undefined };
     const fields = new URLSearchParams(input.body);
     if (url.href === "https://mcp.linear.app/token" && fields.get("client_id") === "dcr-linear-client") {
       return this.token("linear", fields.get("code"));
@@ -40,6 +65,9 @@ class FakeVendors {
     if (url.href === "https://github.com/login/oauth/access_token"
       && fields.get("client_id") === "gh-app" && fields.get("client_secret") === GITHUB_SECRET) {
       return this.token("github", fields.get("code"));
+    }
+    if (url.href === `${posthogIssuer}/oauth/token/` && fields.get("client_id") === "dcr-posthog-client") {
+      return this.token("posthog", fields.get("code"));
     }
     return { status: 401, body: undefined };
   };
@@ -53,7 +81,7 @@ class FakeVendors {
   }
 
   mcp = async (request: RemoteMcpRequest) => {
-    const vendor = request.url.includes("linear") ? "linear" : "github";
+    const vendor = request.url === posthogUrl ? "posthog" : request.url.includes("linear") ? "linear" : "github";
     if (request.headers.authorization !== `Bearer ${this.issued.get(vendor)}`) return { status: 401, headers: {}, body: undefined };
     const body = request.body as { id?: number; method?: string } | undefined;
     if (!body?.id) return { status: 202, headers: {}, body: undefined };
@@ -137,5 +165,30 @@ describe("preset connect through platform routes, broker, and fake vendors", () 
     const listed = await (await app.request("/")).text();
     expect(listed).not.toContain(GITHUB_SECRET);
     expect(listed).not.toContain("github-access-token");
+  });
+
+  it("connects PostHog with read scopes even when the provider advertises 160 scopes", async () => {
+    const { authorizationUrl, server } = await connectPreset("posthog");
+    expect(authorizationUrl.href).toMatch(/^https:\/\/oauth\.posthog\.com\/oauth\/authorize\//);
+    expect(authorizationUrl.searchParams.get("scope")).toBe("project:read organization:read insight:read");
+    expect(server).toMatchObject({ status: "ready", tools: [{ name: "posthog_list" }] });
+  });
+
+  it("withholds the Figma preset while Matrix needs provider approval", async () => {
+    const catalog = await (await app.request("/catalog")).json() as { presets: Array<{ id: string }> };
+    expect(catalog.presets.map(preset => preset.id)).not.toContain("figma");
+    expect((await post("/", { catalogId: "figma" })).status).toBe(400);
+    expect(vendors.oauthCalls).toEqual([]);
+  });
+
+  it("shows setup required for an existing Figma URL without attempting client registration", async () => {
+    const created = await post("/", { name: "Figma", url: figmaUrl, authMode: "oauth" });
+    expect(created.status).toBe(201);
+    const { id } = await created.json() as { id: string };
+    const connect = await post(`/${id}/connect`);
+    expect(connect.status).toBe(409);
+    expect(await connect.json()).toMatchObject({ code: "oauth_client_approval_required" });
+    expect(vendors.oauthCalls).not.toContain("POST https://api.figma.com/v1/oauth/mcp/register");
+    expect(await (await app.request(`/${id}`)).json()).toMatchObject({ status: "auth_required", tools: [] });
   });
 });

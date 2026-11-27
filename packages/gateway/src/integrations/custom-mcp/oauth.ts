@@ -3,6 +3,7 @@ import {
   randomBytes,
   timingSafeEqual,
 } from "node:crypto";
+import { remoteMcpCatalogEntryForUrl } from "@matrix-os/contracts/remote-mcp-catalog";
 import { createOAuthDeadline, withinOAuthDeadline, pinnedOAuthRequest as pinnedRequest } from "./oauth-request.js";
 import { resolveCustomMcpOAuthAuthorization } from "./oauth-refresh.js";
 import { registerOAuthClient, oauthClientRequest, type OAuthClientRegistration } from "./oauth-client.js";
@@ -289,9 +290,9 @@ export class CustomMcpOAuthManager {
       ...(metadata.registration_endpoint ? [validateUrl(metadata.registration_endpoint)] : []),
     ]);
 
-    // Advertising a scope is not a request to grant it. In particular PostHog
-    // publishes both read and write scopes; managed presets choose least privilege.
-    const scopes = requestedScopes ? [...requestedScopes] : this.options.scopes ?? resource.scopes_supported ?? metadata.scopes_supported ?? [];
+    const catalogEntry = remoteMcpCatalogEntryForUrl(row.url);
+    const scopes = requestedScopes ?? this.options.scopes ?? catalogEntry?.oauthScopes
+      ?? resource.scopes_supported ?? metadata.scopes_supported ?? [];
     if (!Array.isArray(scopes) || scopes.length > 100 || !scopes.every(scope =>
       typeof scope === "string" && scope.length > 0 && scope.length <= 256 && !/[\s\x00-\x1f\x7f]/.test(scope))) {
       throw new CustomMcpBrokerError("upstream");
@@ -307,6 +308,9 @@ export class CustomMcpOAuthManager {
     } : undefined;
     const configuredClientId = this.configuredClientId
       ?? (metadata.client_id_metadata_document_supported === true ? this.options.clientMetadataUrl : undefined);
+    if (!existingClient && !configuredClientId && catalogEntry?.oauthClientApprovalRequired) {
+      throw new CustomMcpBrokerError("oauth_client_approval_required");
+    }
     const client = existingClient ?? (configuredClientId ? { clientId: configuredClientId } : await registerOAuthClient({
       endpoint: metadata.registration_endpoint, methods: metadata.token_endpoint_auth_methods_supported,
       redirectUri: this.options.redirectUri, signal, request,
@@ -317,7 +321,7 @@ export class CustomMcpOAuthManager {
       revocationEndpoint: metadata.revocation_endpoint,
       resource: resource.resource,
       clientIssuer,
-      scopes,
+      scopes: [...scopes],
       client,
     };
   }

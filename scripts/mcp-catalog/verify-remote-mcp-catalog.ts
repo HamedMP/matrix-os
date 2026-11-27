@@ -6,8 +6,8 @@
 //   bun run mcp-catalog:verify [id ...]
 //
 // Exit codes: 0 all verified, 1 any failure, 2 no failures but some entries
-// could not have their auth mode verified (for example, Google Workspace
-// servers that authorize per call and publish no discovery metadata).
+// could not have their auth mode verified (for example, Figma's client approval
+// and Google Workspace's per-call authorization).
 import { request as httpsRequest } from "node:https";
 import { REMOTE_MCP_CATALOG, type RemoteMcpCatalogEntry } from "../../packages/contracts/src/remote-mcp-catalog.js";
 import type { RemoteMcpRequester } from "../../packages/gateway/src/integrations/custom-mcp/client.js";
@@ -62,7 +62,7 @@ export function authorizationMetadataCandidates(issuer: string): string[] {
 
 /** Compare the live registration mode to the catalog; missing metadata is never a pass. */
 export async function evaluateRegistration(
-  entry: Pick<RemoteMcpCatalogEntry, "auth" | "url" | "registeredOAuth">,
+  entry: Pick<RemoteMcpCatalogEntry, "auth" | "url" | "registeredOAuth" | "oauthClientApprovalRequired">,
   status: number,
   challenge: string | undefined,
   getJson: JsonGetter,
@@ -80,6 +80,7 @@ export async function evaluateRegistration(
   }
   const dcr = typeof (metadata as { registration_endpoint?: unknown }).registration_endpoint === "string";
   if (dcr !== (entry.auth === "oauth_dcr")) return { kind: "failed", status, reason: dcr ? "dcr_now_available" : "dcr_missing" };
+  if (entry.oauthClientApprovalRequired) return { kind: "unverified", status, reason: "oauth_client_approval_required" };
   const pinned = entry.registeredOAuth;
   if (pinned) {
     const live = metadata as { authorization_endpoint?: unknown; token_endpoint?: unknown };
