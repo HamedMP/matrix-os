@@ -243,4 +243,28 @@ describe("local store", () => {
     await expect(store.setUnknown("keyboardShortcuts", { version: 1, overrides: {}, extra: true })).rejects.toThrow();
     await expect(store.setUnknown("keyboardShortcuts", { version: 1, overrides: { "app.close": ["x".repeat(41)] } })).rejects.toThrow();
   });
+
+  it("keeps window state per installed app, bounded, and forgets it on uninstall", async () => {
+    const store = createLocalStore({ dir: await makeDir() });
+    const first = "6f1c2a4e-2b7d-4c1a-9f3e-000000000000";
+    const second = "6f1c2a4e-2b7d-4c1a-9f3e-000000000001";
+    await Promise.all([
+      store.setInstalledAppWindowBounds(first, { x: 1, y: 2, width: 700, height: 500 }),
+      store.setInstalledAppWindowBounds(second, { x: 3, y: 4, width: 800, height: 600 }),
+    ]);
+    expect(await store.getInstalledAppWindowBounds(first)).toEqual({ x: 1, y: 2, width: 700, height: 500 });
+    expect(await store.getInstalledAppWindowBounds(second)).toEqual({ x: 3, y: 4, width: 800, height: 600 });
+    await store.setInstalledAppWindowBounds(first, null);
+    expect(await store.getInstalledAppWindowBounds(first)).toBeNull();
+    expect(await store.getInstalledAppWindowBounds("notes")).toBeNull();
+    await expect(store.setInstalledAppWindowBounds("../notes", { x: 0, y: 0, width: 1, height: 1 })).rejects.toThrow();
+
+    for (let index = 0; index < 70; index += 1) {
+      await store.setInstalledAppWindowBounds(`6f1c2a4e-2b7d-4c1a-9f3e-${(index + 10).toString(16).padStart(12, "0")}`,
+        { x: index, y: 0, width: 400, height: 300 });
+    }
+    const all = await store.get("installedAppWindowBounds");
+    expect(Object.keys(all ?? {})).toHaveLength(64);
+    expect(all?.[second]).toBeUndefined();
+  });
 });

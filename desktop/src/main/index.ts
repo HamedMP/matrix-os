@@ -104,6 +104,8 @@ import { createNativeAppChatNavigationBroker, registerNativeAppChatCompletionIpc
 import { configureDesktopIdentity } from "./desktop-identity";
 import { isDesktopDeepLink, resolveDesktopChannelIdentity } from "../shared/channel-identity";
 import { createDesktopDeepLinkHandler, createSharedAppDeepLinks, registerSharedAppDeepLinkIpc } from "./shared-app-deep-link";
+import { createInstalledAppDeepLinks } from "./installed-apps/deep-link";
+import { installInstalledApps } from "./installed-apps/wiring";
 import { createSenderPolicy, senderRole } from "./ipc/sender-policy";
 import { createTerminalWindowController } from "./terminal-window/controller";
 import { createTerminalBrowserWindow } from "./terminal-window/window";
@@ -185,6 +187,9 @@ let drainingImports=false;
 let organizationDriveTransfers: ReturnType<typeof createOrganizationDriveTransferService> | null = null;
 let downloadsDrained = false;
 let drainingDownloads = false;
+let installedApps: ReturnType<typeof installInstalledApps> | null = null;
+let installedAppsDrained = false;
+let drainingInstalledApps = false;
 let closeCodingAgentThreadEvents: (() => void) | null = null;
 let handleUpdateBeforeQuit: ((event: { preventDefault(): void }) => void) | null = null;
 let handleAnalyticsBeforeQuit: ((event: { preventDefault(): void }) => boolean) | null = null;
@@ -215,10 +220,12 @@ const sharedAppDeepLinks = createSharedAppDeepLinks({
     return true;
   },
 });
+// `matrixos://app/<installId>` (spec 2711): held until install records and auth are loaded.
+const installedAppDeepLinks = createInstalledAppDeepLinks({ schemes: channelIdentity.deepLinkSchemes });
 {
   // Windows/Linux cold start passes the link in argv; the renderer takes it once it listens.
   const coldStartLink = process.argv.find(isMatrixOsDeepLink);
-  if (coldStartLink) sharedAppDeepLinks.handle(coldStartLink);
+  if (coldStartLink && !installedAppDeepLinks.handle(coldStartLink)) sharedAppDeepLinks.handle(coldStartLink);
 }
 
 /** Set once the app is ready: reopens the main window through the single-flight path. */
@@ -232,6 +239,11 @@ const handleDeepLink = createDesktopDeepLinkHandler({
   reopenMainWindow: () => restoreMainWindowForDeepLink?.(),
   links: sharedAppDeepLinks,
 });
+/** Installed-app links open their own window without raising the main one. */
+function routeDeepLink(url: string): void {
+  if (installedAppDeepLinks.handle(url)) return;
+  handleDeepLink(url);
+}
 
 function sendEvent<C extends EventChannel>(channel: C, payload: EventPayload<C>): void {
   const parsed = EVENT_CHANNELS[channel].safeParse(payload);
@@ -344,7 +356,7 @@ if (!gotLock) {
     }
     const deepLink = argv.find(isMatrixOsDeepLink);
     if (deepLink) {
-      handleDeepLink(deepLink);
+      routeDeepLink(deepLink);
       return;
     }
     focusMainWindow();
@@ -352,7 +364,7 @@ if (!gotLock) {
 
   app.on("open-url", (event, url) => {
     event.preventDefault();
-    handleDeepLink(url);
+    routeDeepLink(url);
   });
 
   void app
@@ -407,6 +419,7 @@ if (!gotLock) {
         saveProfile: (profile) => store.set("profile", profile),
         clearProfile: () => store.delete("profile"),
         onAuthChanged: (status) => {
+          installedApps?.authChanged(status);
           void cancelChatElectronPreview?.();
           void cancelChatMacTerminal?.();
           refreshMacActivity?.();
@@ -871,6 +884,7 @@ if (!gotLock) {
           // Switching runtime invalidates embed cookies/tokens; tear them down so
           // they re-handshake against the new slot (Integration Wiring rule).
           embeds.closeAll();
+          installedApps?.authChanged(auth.getStatus());
           codingAgentThreadEvents.closeAll();
           sendEvent("runtime:changed", { slot });
         },
@@ -989,7 +1003,8 @@ if (!gotLock) {
         mainWindow.on("move", persistBounds);
         mainWindow.on("closed", () => {
           if (boundsSaveTimer) clearTimeout(boundsSaveTimer);
-          embeds.closeAll();
+          // Installed app windows outlive the main window and keep their bridge senders.
+          embeds.closeAll({ appBridge: "own" });
           codingAgentThreadEvents.closeAll();
           nativeAppChatNavigation?.cancelAll();
           mainWindow = null;
@@ -1009,6 +1024,10 @@ if (!gotLock) {
       restoreMainWindowForDeepLink = () => {
         void reopenMainWindow?.().catch((error: unknown) => logMainError("window restore failed", error));
       };
+      installedApps = installInstalledApps({
+        userData, store, auth, appBridge: nativeAppBridge, preloadPath: join(__dirname, "../preload/index.cjs"),
+        focusMain: () => restoreMainWindowForDeepLink?.(), deepLinks: installedAppDeepLinks,
+      });
       if (previewContext) reopenPreviewWindow = createPreviewWindowReopener({
         current: () => mainWindow, open: openMainWindow, focus: focusMainWindow,
       });
@@ -1073,6 +1092,15 @@ if (!gotLock) {
     // Fence Mac activity before waiting for the renderer analytics flush.
     if (macActivityQuit?.beforeQuit(event)) return;
     if (handleAnalyticsBeforeQuit?.(event)) return;
+    if (!installedAppsDrained && installedApps) {
+      event.preventDefault();
+      if (!drainingInstalledApps) {
+        drainingInstalledApps = true;
+        void installedApps.dispose().catch((error: unknown) => logMainError("installed app cleanup failed", error))
+          .finally(() => { installedAppsDrained = true; app.quit(); });
+      }
+      return;
+    }
     if (!navigationCacheDrained && navigationCache) {
       event.preventDefault();
       if (!drainingNavigationCache) {

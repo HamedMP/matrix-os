@@ -99,6 +99,16 @@ describe('fast CI preserves validation while removing serialized work', () => {
     expect(steps[sharing]?.run).toBe('xvfb-run --auto-servernum bun run test:e2e:run -- tests/e2e/desktop/app-org-sharing.e2e.test.ts');
   });
 
+  it('runs the built installed app window journey in Electron CI', () => {
+    const steps = workflow.jobs.e2e.steps;
+    const build = steps.findIndex(step => step.name === 'Build Desktop for Electron E2E');
+    const installed = steps.findIndex(step => step.name === 'Run required Desktop installed app windows');
+    expect(installed).toBeGreaterThan(build);
+    expect(steps[installed]?.if).toContain("matrix.lane == 'electron'");
+    expect(steps[installed]?.env?.MATRIX_DESKTOP_E2E_REQUIRED).toBe('1');
+    expect(steps[installed]?.run).toBe('xvfb-run --auto-servernum bun run test:e2e:run -- tests/e2e/desktop/installed-app-window.e2e.test.ts');
+  });
+
   it('allows browser setup and general E2E execution to finish within the job budget', () => {
     // The current lane exhausted its old 15-minute budget after over 11 minutes
     // of browser setup, cancelling tests about 2.5 minutes into their execution.
