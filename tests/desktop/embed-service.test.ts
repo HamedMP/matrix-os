@@ -42,6 +42,29 @@ describe("EmbedService", () => {
     expect(close).toHaveBeenCalledOnce();
   });
 
+  it("can close its embeds without unregistering app senders it does not own", () => {
+    const create = vi.spyOn(viewAdapter, "createWebContentsView").mockReturnValue({
+      setBounds: vi.fn(), setScale: vi.fn(), loadUrl: vi.fn(), attach: vi.fn(), detach: vi.fn(), destroy: vi.fn(),
+    });
+    const appBridge = { register: vi.fn(), unregister: vi.fn(), clear: vi.fn(), initialParticipant: vi.fn() };
+    const service = new EmbedService({
+      getWindow: () => ({}) as never, getGatewayOrigin: () => "https://gateway.test", getToken: () => "synthetic",
+      emitState: vi.fn(), appBridge: appBridge as never, appPreloadPath: "/preload.cjs",
+    });
+    const internals = service as unknown as { manager: { createView: (options: unknown) => unknown } };
+    internals.manager.createView({ partition: "persist:app-notes", kind: "app", slug: "notes",
+      routeSlug: "notes", allowedOrigins: ["https://gateway.test"], onState: vi.fn() });
+    create.mock.calls[0]![0].appBridge!.register(7, "notes", "notes");
+    // An installed app window registered sender 9 directly on the shared bridge.
+    service.closeAll({ appBridge: "own" });
+    expect(appBridge.unregister).toHaveBeenCalledWith(7);
+    expect(appBridge.unregister).not.toHaveBeenCalledWith(9);
+    expect(appBridge.clear).not.toHaveBeenCalled();
+    // A runtime switch still revokes every sender.
+    service.closeAll();
+    expect(appBridge.clear).toHaveBeenCalledOnce();
+  });
+
   it("reloads a live embed through the existing bounded manager", async () => {
     const service = new EmbedService({
       getWindow: () => null,

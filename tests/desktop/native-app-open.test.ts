@@ -276,6 +276,18 @@ describe("installed app catalog resolution", () => {
     const signedOut = createNativeAppOpenResolver({ getGatewayOrigin: () => "https://gateway.test", getToken: () => null, fetchFn });
     await expect(signedOut(request)).rejects.toThrow(); expect(fetchFn).toHaveBeenCalledTimes(3);
   });
+  it("tells a missing app apart from signed-out and unreachable catalogs", async () => {
+    const fetchFn = vi.fn(async () => new Response(JSON.stringify([{ slug: "planner", name: "Planner", path: "/files/apps/planner/index.html" }])));
+    const resolveApp = createNativeAppOpenResolver({ getGatewayOrigin: () => "https://gateway.test", getToken: () => "token", fetchFn });
+    await expect(resolveApp({ name: "Gone", path: "matrix-app:gone" })).rejects.toMatchObject({ name: "NativeAppOpenError", reason: "not-found" });
+    fetchFn.mockResolvedValueOnce(new Response("failed", { status: 503 }));
+    await expect(resolveApp({ name: "Planner", path: "matrix-app:planner" })).rejects.toMatchObject({ reason: "catalog-unavailable" });
+    fetchFn.mockRejectedValueOnce(new TypeError("fetch failed"));
+    await expect(resolveApp({ name: "Planner", path: "matrix-app:planner" })).rejects.toMatchObject({ reason: "catalog-unavailable" });
+    const signedOut = createNativeAppOpenResolver({ getGatewayOrigin: () => "https://gateway.test", getToken: () => null, fetchFn });
+    await expect(signedOut({ name: "Planner", path: "matrix-app:planner" })).rejects.toMatchObject({ reason: "auth-required" });
+    await expect(resolveApp({ name: "Planner", path: "matrix-app:planner" })).resolves.toEqual(app);
+  });
 });
 
 

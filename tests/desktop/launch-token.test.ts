@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { requestAppLaunchToken, resolveAppLaunchUrl } from "@desktop/main/embeds/app-launch";
 import { LaunchTokenCache, type LaunchToken } from "@desktop/main/embeds/launch-token-cache";
 
 function token(expiresAt: number, launchUrl = "/apps/notes/"): LaunchToken {
@@ -95,5 +96,41 @@ describe("LaunchTokenCache", () => {
     cache.set("a", token(100_000));
     cache.clear();
     expect(cache.get("a")).toBeNull();
+  });
+});
+
+describe("resolveAppLaunchUrl", () => {
+  const gatewayOrigin = "https://gateway.test";
+  const fresh = (launchUrl = "/apps/notes/?launch=abc") => ({ launchUrl, expiresAt: Date.now() + 120_000 });
+
+  it("resolves a fresh session-token launch against the gateway origin", async () => {
+    const fetchToken = vi.fn(async () => fresh());
+    await expect(resolveAppLaunchUrl({ gatewayOrigin, slug: "notes", appIdentity: "notes", fetchToken }))
+      .resolves.toEqual({ ok: true, url: "https://gateway.test/apps/notes/?launch=abc" });
+    expect(fetchToken).toHaveBeenCalledOnce();
+  });
+
+  it("reuses a cached token and drops one whose launch URL leaves the gateway origin", async () => {
+    const cache = new LaunchTokenCache();
+    const fetchToken = vi.fn(async () => fresh());
+    await resolveAppLaunchUrl({ gatewayOrigin, slug: "notes", appIdentity: "notes", fetchToken, cache });
+    await resolveAppLaunchUrl({ gatewayOrigin, slug: "notes", appIdentity: "notes", fetchToken, cache });
+    expect(fetchToken).toHaveBeenCalledOnce();
+
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    cache.set("evil", fresh("//attacker.test/apps/evil/"));
+    await expect(resolveAppLaunchUrl({ gatewayOrigin, slug: "evil", appIdentity: "evil", fetchToken, cache }))
+      .resolves.toEqual({ ok: false, state: "failed" });
+    expect(cache.get("evil")).toBeNull();
+  });
+
+  it("maps a rejected owner credential to auth-required and anything else to failed", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    await expect(resolveAppLaunchUrl({ gatewayOrigin, slug: "notes", appIdentity: "notes",
+      fetchToken: () => requestAppLaunchToken(async () => ({ status: 401, body: "" })) }))
+      .resolves.toEqual({ ok: false, state: "auth-required" });
+    await expect(resolveAppLaunchUrl({ gatewayOrigin, slug: "notes", appIdentity: "notes",
+      fetchToken: async () => { throw new TypeError("net::ERR_CONNECTION_REFUSED"); } }))
+      .resolves.toEqual({ ok: false, state: "failed" });
   });
 });

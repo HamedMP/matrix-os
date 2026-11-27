@@ -98,6 +98,8 @@ export function createWebContentsView(options: {
   allowPublicNavigation?: boolean;
   onState: (state: "loading" | "ready" | "failed") => void;
   denyPermissions?: boolean;
+  /** Installed app windows run beside Matrix; they must not keep the machine awake. */
+  disableWakeLocks?: boolean;
   sharedAppAuth?: {
     target: CollaborativeAppDirectoryItem;
     getGatewayOrigin: () => string;
@@ -118,6 +120,7 @@ export function createWebContentsView(options: {
       contextIsolation: true,
       sandbox: true,
       nodeIntegration: false,
+      ...(options.disableWakeLocks ? { disableWakeLocks: true } : {}),
       ...(options.appBridge ? {
         preload: options.appBridge.preloadPath,
         additionalArguments: [

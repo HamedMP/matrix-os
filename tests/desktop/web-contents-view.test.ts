@@ -403,6 +403,14 @@ describe("createWebContentsView", () => {
     bridgedView.destroy();
     expect(unregister).toHaveBeenCalledWith(42);
   });
+  it("disables wake locks only for views that ask, such as installed app windows", () => {
+    const window = { contentView: { addChildView: vi.fn(), removeChildView: vi.fn() } } as never;
+    createWebContentsView({ window, partition: "persist:app-notes", allowedOrigins: ["https://gateway.test"], onState: vi.fn() });
+    createWebContentsView({ window, partition: "persist:app-notes", allowedOrigins: ["https://gateway.test"], onState: vi.fn(), disableWakeLocks: true });
+    const preferences = electronMock.viewOptions.map((options) => (options as { webPreferences: Record<string, unknown> }).webPreferences);
+    expect(preferences[0]).not.toHaveProperty("disableWakeLocks");
+    expect(preferences[1]).toEqual(expect.objectContaining({ disableWakeLocks: true, sandbox: true, contextIsolation: true }));
+  });
   it("blocks external server-side redirects", () => {
     createWebContentsView({
       window: {
