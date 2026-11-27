@@ -15,6 +15,7 @@ import { useConnection } from "../../stores/connection";
 import { useTabs } from "../../stores/tabs";
 import { trackDesktopEvent } from "../../lib/desktop-analytics";
 import { FIXED_DESKTOP_APPS, type DesktopAppConfig } from "../desktop-shell/desktop-apps";
+import { useInstallAppFlow } from "../installed-apps/use-install-app-flow";
 import { countGridColumns, isLauncherGridKey, launcherGridKeyNavigates, nextLauncherGridIndex } from "./launcher-grid-navigation";
 import {
   OS_VIEW_DESTINATION_PATHS,
@@ -137,6 +138,7 @@ export default function AppLauncher({
   const [contextMenu, setContextMenu] = useState<{ entry: LauncherEntry; x: number; y: number } | null>(null);
   const [contextError, setContextError] = useState<string | null>(null);
   const [placementPending, setPlacementPending] = useState(false);
+  const installFlow = useInstallAppFlow();
   const inputRef = useRef<HTMLInputElement>(null);
   const gridRef = useRef<HTMLDivElement>(null);
   const gridId = useId();
@@ -216,6 +218,13 @@ export default function AppLauncher({
     && (!q || entry.name.toLowerCase().includes(q) || (entry.type === "installed" && entry.app.slug.toLowerCase().includes(q))));
 
   const activeIndex = filtered.length === 0 ? 0 : Math.min(active, filtered.length - 1);
+  const contextApp = contextMenu?.entry.type === "installed" ? contextMenu.entry.app : null;
+  const installAction = contextApp ? installFlow.actionFor({
+    slug: contextApp.slug,
+    name: contextApp.name,
+    ...(contextApp.path ? { path: contextApp.path } : {}),
+    iconUrl: appIconUrl(platformHost, contextApp, runtimeSlot),
+  }) : null;
 
   const openInstalled = (app: MatrixApp) => {
     trackDesktopEvent({ name: "desktop_app_opened", appKind: "installed_app" });
@@ -422,7 +431,7 @@ export default function AppLauncher({
             })}
           </div>
         )}
-        {contextMenu && contextMenu.entry.type !== "os-view" && contextMenu.entry.type !== "shared" && onAddToDesktop ? (
+        {contextMenu && contextMenu.entry.type !== "os-view" && contextMenu.entry.type !== "shared" && (onAddToDesktop || installAction) ? (
           <div
             role="menu"
             data-launchpad-interactive
@@ -430,7 +439,7 @@ export default function AppLauncher({
             className="fixed z-50 min-w-48 max-w-64 rounded-xl border bg-[var(--bg-surface)] p-1 shadow-[var(--shadow-3)]"
             style={{ left: contextMenu.x, top: contextMenu.y }}
           >
-            <button
+            {onAddToDesktop ? <button
               type="button"
               role="menuitem"
               disabled={placementPending}
@@ -468,11 +477,30 @@ export default function AppLauncher({
               }}
             >
               Add {contextMenu.entry.name} to Desktop
-            </button>
+            </button> : null}
+            {installAction ? (
+              <button
+                type="button"
+                role="menuitem"
+                disabled={placementPending}
+                className="w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-[var(--bg-hover)]"
+                style={installAction.danger ? { color: "var(--danger-text)" } : undefined}
+                onClick={() => {
+                  setContextMenu(null);
+                  setContextError(null);
+                  // The sheet outlives the launcher, which stays mounted while hidden.
+                  onCloseLauncher?.();
+                  installAction.onSelect();
+                }}
+              >
+                {installAction.label}
+              </button>
+            ) : null}
             {contextError ? <p role="alert" className="max-w-60 px-3 pb-2 text-xs">{contextError}</p> : null}
           </div>
         ) : null}
       </div>
+      {installFlow.dialog}
     </div>
   );
 }

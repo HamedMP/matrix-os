@@ -107,6 +107,8 @@ import { registerSharedAppDeepLinkIpc } from "./shared-app-deep-link";
 import { createDesktopDeepLinkRouter } from "./deep-links/router";
 import { installInstalledApps } from "./installed-apps/wiring";
 import { createMainWindowActionGate } from "./installed-apps/main-window-actions";
+import { registerInstalledAppsIpc } from "./installed-apps/install-ipc";
+import { createInstallControl } from "./installed-apps/install-control";
 import { createSenderPolicy, senderRole } from "./ipc/sender-policy";
 import { createTerminalWindowController } from "./terminal-window/controller";
 import { createTerminalBrowserWindow } from "./terminal-window/window";
@@ -818,6 +820,13 @@ if (!gotLock) {
         clipboard,
         isTrustedSender: (event) => senderRole(windowSenders, event) !== null,
       });
+      // Registered before the main window loads with the control object itself;
+      // installInstalledApps wires it later, and it reports "unavailable" until then.
+      const installs = createInstallControl();
+      registerInstalledAppsIpc(ipcMain, {
+        isMainWindowSender: (event) => senderRole(windowSenders, event) === "main",
+        control: installs.control,
+      });
       registerSharedAppDeepLinkIpc(ipcMain, {
         isMainWindowSender: (event) => senderRole(windowSenders, event) === "main",
         take: () => deepLinks.sharedApps.take(),
@@ -1015,6 +1024,8 @@ if (!gotLock) {
         userData, store, auth, appBridge: nativeAppBridge, preloadPath: join(__dirname, "../preload/index.cjs"),
         focusMain: () => restoreMainWindowForDeepLink?.(), deepLinks: deepLinks.installedApps,
         openUrl: (url) => deepLinks.route(url), channel: channelIdentity.channel, previewHandle: previewContext?.handle,
+        scheme: channelIdentity.deepLinkSchemes[0] ?? "matrixos",
+        onChanged: () => sendEvent("installed-apps:changed", {}), installs,
       });
       if (previewContext) reopenPreviewWindow = createPreviewWindowReopener({
         current: () => mainWindow, open: openMainWindow, focus: focusMainWindow,

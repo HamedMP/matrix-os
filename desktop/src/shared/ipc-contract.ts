@@ -74,6 +74,7 @@ import { TerminalClipboardResultSchema } from "./terminal-clipboard";
 import { TERMINAL_WINDOW_EVENTS, TERMINAL_WINDOW_INVOKE } from "./terminal-window";
 import { LOCAL_TERMINAL_EVENTS, LOCAL_TERMINAL_INVOKE } from "./local-terminals";
 import { SHORTCUT_EVENTS, SHORTCUT_INVOKE } from "./shortcuts-ipc";
+import { INSTALLED_APPS_EVENTS, INSTALLED_APPS_INVOKE } from "./installed-apps-ipc";
 
 const Empty = z.object({}).strict();
 
@@ -175,6 +176,7 @@ export const INVOKE_CHANNELS = {
   ...MAC_TERMINAL_PROBE_INVOKE,
   ...AI_USAGE_INVOKE,
   ...SHORTCUT_INVOKE,
+  ...INSTALLED_APPS_INVOKE,
   "terminal:read-clipboard-files": { request: Empty, response: TerminalClipboardResultSchema },
   "analytics:flush-complete": { request: Empty, response: Ok },
   "app:open-chat-complete": { request: NativeAppChatCompletionSchema, response: Ok },
@@ -557,6 +559,7 @@ export const EVENT_CHANNELS = {
   ...SHARED_APP_DEEP_LINK_EVENTS,
   ...LOCAL_CHAT_IMPORT_EVENTS,
   ...SHORTCUT_EVENTS,
+  ...INSTALLED_APPS_EVENTS,
   "app:generate": AppGenerateEventSchema,
   "app:open": NativeAppOpenEventSchema,
   "app:open-chat": NativeAppOpenChatEventSchema,

@@ -7,6 +7,7 @@ import { readNativeEmbedBounds } from "./embed-bounds";
 import { nativeBrowserProduct } from "../../../../shared/browser-products";
 import { DesktopAppSiteButton } from "../app-sites/DesktopAppSiteButton";
 import { useSurfaceChromeHost } from "../desktop-shell/SurfaceChrome";
+import { InstalledAppWindowMenu } from "../installed-apps/InstalledAppWindowMenu";
 import type { CollaborativeAppDirectoryItem } from "@matrix-os/contracts";
 
 // Hosts a main-process WebContentsView positioned over this element's rect.
@@ -67,12 +68,15 @@ export default function EmbedHost({
   // Default apps keep the Share host: the button shows only while one is still shared.
   const publishingChrome = useMemo(() => slug && visible && !product ? ({
     rightActions: (
-      <DesktopAppSiteButton
-        key={`${runtimeSlot}:${authGeneration}:${slug}`}
-        appSlug={slug}
-        portalContainer={portalContainer}
-        buildEpoch={openedEmbedRevision}
-      />
+      <span className="flex items-center gap-1.5">
+        <DesktopAppSiteButton
+          key={`${runtimeSlot}:${authGeneration}:${slug}`}
+          appSlug={slug}
+          portalContainer={portalContainer}
+          buildEpoch={openedEmbedRevision}
+        />
+        <InstalledAppWindowMenu slug={slug} portalContainer={portalContainer} />
+      </span>
     ),
   }) : null, [authGeneration, openedEmbedRevision, portalContainer, product, runtimeSlot, slug, visible]);
 

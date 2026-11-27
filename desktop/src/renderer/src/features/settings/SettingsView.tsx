@@ -1,5 +1,6 @@
 import MessagingSection from "./sections/MessagingSection";
 import {
+  AppWindow,
   Blocks,
   Bot,
   Clock,
@@ -33,6 +34,8 @@ import "@matrix-os/ui/ai-usage.css";
 import "@matrix-os/ui/shortcuts.css";
 import ShortcutsSection from "./sections/ShortcutsSection";
 import ChatImportSection from "./sections/ChatImportSection";
+import InstalledAppsSection from "./sections/InstalledAppsSection";
+import { useInstalledApps } from "../installed-apps/installed-apps";
 import { useUi } from "../../stores/ui";
 import OrganizationSection from "../organization/OrganizationSection";
 
@@ -40,6 +43,7 @@ export type SettingsSectionId =
   | "account"
   | "appearance"
   | "shortcuts"
+  | "installed-apps"
   | "organization"
   | "billing"
   | "runtime"
@@ -66,6 +70,7 @@ const SECTIONS: { id: SettingsSectionId; label: string; icon: React.ReactNode; g
   { id: "cli", label: "CLI", icon: <SquareTerminal size={15} />, group: "Integrations" },
   { id: "appearance", label: "Appearance", icon: <Palette size={15} />, group: "You" },
   { id: "shortcuts", label: "Shortcuts", icon: <KeyboardIcon size={15} />, group: "You" },
+  { id: "installed-apps", label: "Installed apps", icon: <AppWindow size={15} />, group: "You" },
   { id: "account", label: "Account", icon: <UserRound size={15} />, group: "You" },
   { id: "billing", label: "Billing", icon: <CreditCard size={15} />, group: "You" },
   { id: "organization", label: "Organization", icon: <UsersIcon size={15} />, group: "Organization" },
@@ -97,6 +102,8 @@ export function SettingsSidebar({
   section: SettingsSectionId;
   onSectionChange: (section: SettingsSectionId) => void;
 }) {
+  // Installed apps is listed only where this computer can install them.
+  const installsAvailable = useInstalledApps()?.available === true;
   return (
     <nav
       aria-label="Settings sections"
@@ -108,7 +115,7 @@ export function SettingsSidebar({
           <span className="px-2.5 pt-2 pb-1 text-xs font-normal" style={{ color: "var(--text-tertiary)" }}>
             {group}
           </span>
-          {SECTIONS_BY_GROUP[group]?.map((s) => {
+          {SECTIONS_BY_GROUP[group]?.filter((s) => installsAvailable || s.id !== "installed-apps").map((s) => {
             const active = s.id === section;
             return (
               <button
@@ -167,6 +174,7 @@ export default function SettingsView({
           {section === "billing" ? <BillingSection /> : null}
           {section === "appearance" ? <AppearanceSection /> : null}
           {section === "shortcuts" ? <ShortcutsSection /> : null}
+          {section === "installed-apps" ? <InstalledAppsSection /> : null}
           {section === "organization" ? <OrganizationSection /> : null}
           {section === "runtime" ? <RuntimeSection /> : null}
           {section === "agents-providers" ? <AgentsProvidersAdapter automaticCreditRefreshEnabled={automaticCreditRefreshEnabled} /> : null}

@@ -30,6 +30,8 @@ export interface MacInstalledAppsOptions {
   forgetWindowState(installId: string): Promise<void>;
   focusMain(): void;
   openUrl(url: string): void;
+  /** Installs changed: an app's own Uninstall… item or a start-up prune. */
+  onChanged?(): void;
 }
 
 function logFailure(label: string, error: unknown): void {
@@ -50,7 +52,9 @@ export function createMacInstalledApps(options: MacInstalledAppsOptions) {
     if (!installer) throw new Error("Installed apps are unavailable");
     service.close(installId);
     shims?.quitShim(installId);
-    return installer.uninstall(installId);
+    const removed = await installer.uninstall(installId);
+    if (removed) options.onChanged?.();
+    return removed;
   }
 
   async function confirmUninstall(record: InstalledAppRecord): Promise<void> {
@@ -114,7 +118,11 @@ export function createMacInstalledApps(options: MacInstalledAppsOptions) {
         forgetWindowState: options.forgetWindowState,
       });
       await installer.sweep().catch((error: unknown) => logFailure("bundle sweep failed", error));
-      await installer.prune().catch((error: unknown) => logFailure("install prune failed", error));
+      const pruned = await installer.prune().catch((error: unknown) => {
+        logFailure("install prune failed", error);
+        return [];
+      });
+      if (pruned.length > 0) options.onChanged?.();
       shims = createAppShimHost({
         app,
         platform: process.platform,
@@ -126,6 +134,11 @@ export function createMacInstalledApps(options: MacInstalledAppsOptions) {
         confirmRestart,
       });
       shims.start();
+    },
+
+    /** True once the installer and this channel's shim server are running. */
+    available(): boolean {
+      return installer !== null && Boolean(shims?.running());
     },
 
     install(request: MacInstallRequest): Promise<InstalledAppRecord> {
