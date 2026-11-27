@@ -14,6 +14,7 @@ import {
   DesktopUpdateVersionSchema,
 } from "../../shared/desktop-update";
 import { ProviderPreferencesSchema } from "../../shared/provider-preferences";
+import { InstalledAppsReopenSchema } from "../installed-apps/reopen";
 
 export const PANEL_LAYOUT_MAX_AGE_MS = 90 * 24 * 60 * 60 * 1000;
 
@@ -99,6 +100,7 @@ const KEY_SCHEMAS = {
   windowBounds: WindowBoundsSchema,
   terminalWindowBounds: WindowBoundsSchema,
   installedAppWindowBounds: InstalledAppWindowBoundsSchema,
+  installedAppsReopen: InstalledAppsReopenSchema,
   lastProjectSlug: z.string().max(256),
   panelLayouts: PanelLayoutsSchema,
   appearance: AppearanceSchema,

@@ -2,7 +2,7 @@
 // window shows is decided by the host. The window's own page is a static,
 // script-free state page; the app runs in a child view created through the
 // embedded-app path (same partition, preload, bridge and navigation policy).
-import { BrowserWindow, nativeTheme, type WebContents } from "electron";
+import { BrowserWindow, nativeTheme, type AppShimHost, type WebContents } from "electron";
 import type { FittedWindowBounds } from "../platform/window-bounds";
 import { createInstalledAppHost, type InstalledAppHostOptions, type InstalledAppView } from "./app-host";
 import type { InstalledAppRecord } from "./record";
@@ -15,6 +15,8 @@ export const INSTALLED_APP_STATE_PARTITION = "installed-app-state";
 export interface InstalledAppBrowserWindowOptions extends Omit<InstalledAppHostOptions, "record" | "window" | "createView"> {
   record: InstalledAppRecord;
   bounds: FittedWindowBounds;
+  /** macOS: the native window lives in this shim (fixed at creation; no parent, modal or titleBarOverlay). */
+  appShim?: AppShimHost;
   createView(
     window: BrowserWindow,
     target: NativeAppOpenTarget,
@@ -36,8 +38,9 @@ export function createInstalledAppBrowserWindow(options: InstalledAppBrowserWind
   const win = new BrowserWindow({
     ...bounds,
     title: record.name,
-    // App shims (macOS, later layer) lack titleBarOverlay; keep the platform title bar everywhere.
+    // App shim windows lack titleBarOverlay; keep the platform title bar everywhere.
     titleBarStyle: "default",
+    ...(options.appShim ? { appShim: options.appShim } : {}),
     backgroundColor: nativeTheme.shouldUseDarkColors ? "#0e0e13" : "#fafafa",
     show: false,
     webPreferences: {

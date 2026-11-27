@@ -124,14 +124,24 @@ existing path; add " 2" and so on).
   `matrix-preview-<slot>`) so channels never adopt each other's shims.
 - `Contents/Resources/app.icns`: built from the app's shipped icon
   (`/icons/{slug}.png`), with the Matrix icon as fallback.
-- `cdHashes` are read with `codesign -dvvv` after the move and stored in the
-  install record.
+- Signing, like Claude's: in the temp directory, before the move and before
+  any launch, the whole bundle is signed ad hoc with the hardened runtime and
+  one entitlement, `com.apple.security.cs.disable-library-validation` (so the
+  ad-hoc shim can load Matrix's Electron Framework):
+  `codesign --force --sign - --options runtime --entitlements <plist> <bundle>`,
+  then `codesign --verify --strict`. This binds the Info.plist, seals the
+  resources and gives each bundle its own cdhash, read with `codesign -dvvv`
+  and stored in the install record. A signing or verify failure aborts the
+  install and removes the temp directory.
 
 ### Trust check on `app-shim-connected`
 
-1. `shim.bundlePath` must match an install record.
-2. `shim.satisfiesCodeRequirement('anchor apple generic and certificate leaf[subject.OU] = "<TeamID>" and cdhash H"<recorded>"')`;
-   unsigned dev builds use the cdhash clause only.
+1. `shim.bundlePath` must match an install record (recorded as the real path,
+   which is what a launched shim reports), and `shim.bundleId` must be that
+   install's `com.matrix-os.app.<installId>`.
+2. `shim.satisfiesCodeRequirement('cdhash H"<recorded>"')` with that bundle's own
+   recorded cdhash. Shims are signed ad hoc, so there is no team anchor; another
+   bundle's code, or this bundle after an edit, fails the check.
 3. Otherwise call `shim.quit()` and log a coarse reason. No window is created
    before the check passes.
 

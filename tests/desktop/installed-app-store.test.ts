@@ -54,6 +54,15 @@ describe("installed app record store", () => {
       .toEqual([first.installId, second.installId].sort());
   });
 
+  it("keeps an installer-chosen id only while it is a UUID nobody else holds", async () => {
+    const store = createInstalledAppStore({ dir });
+    const installId = "6f1c2a4e-2b7d-4c1a-9f3e-1a2b3c4d5e6f";
+    expect((await store.create(input(), { installId })).installId).toBe(installId);
+    await expect(store.create(input(), { installId })).rejects.toThrow("Install id is in use");
+    await expect(store.create(input(), { installId: "notes" })).rejects.toThrow();
+    expect(await store.list()).toHaveLength(1);
+  });
+
   it.each([
     ["a path-like slug", { slug: "../notes" }],
     ["an unsafe app identity", { appIdentity: "Notes/../../x" }],

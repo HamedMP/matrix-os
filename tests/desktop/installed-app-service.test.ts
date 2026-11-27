@@ -30,13 +30,15 @@ describe("installed apps service", () => {
 
   function setup() {
     const records = [record("1"), record("2")];
+    const contexts: unknown[] = [];
     const hosts: Array<{ installId: string; load: ReturnType<typeof vi.fn>; authChanged: ReturnType<typeof vi.fn>; dispose: ReturnType<typeof vi.fn> }> = [];
     const windows: Array<ReturnType<typeof fakeWindow>> = [];
     const service = createInstalledAppsService({
       records: { get: async (id) => records.find((item) => item.installId === id) ?? null },
       windowState: { load: async () => null, save: vi.fn(async () => undefined) },
       fitBounds: (bounds) => ({ x: 0, y: 0, minWidth: 480, minHeight: 320, ...bounds }),
-      createWindow: (item) => {
+      createWindow: (item, _bounds, context) => {
+        contexts.push(context);
         const window = fakeWindow();
         windows.push(window);
         const host = { installId: item.installId, load: vi.fn(async () => undefined), authChanged: vi.fn(), dispose: vi.fn() };
@@ -44,7 +46,7 @@ describe("installed apps service", () => {
         return { window, host };
       },
     });
-    return { service, records, hosts, windows };
+    return { service, records, hosts, windows, contexts };
   }
 
   it("loads each new window's content once and focuses instead of reloading", async () => {
@@ -76,5 +78,32 @@ describe("installed apps service", () => {
     expect(windows[0]!.close).toHaveBeenCalledOnce();
     expect(hosts[0]!.dispose).toHaveBeenCalledOnce();
     expect(await service.open(records[1]!.installId)).toBe("unavailable");
+  });
+
+  it("moves a window into an app shim and tears down the replaced window's host", async () => {
+    const { service, records, hosts, windows, contexts } = setup();
+    const shim = { id: "shim" };
+    await service.open(records[0]!.installId);
+    expect(await service.open(records[0]!.installId, { appShim: shim })).toBe("opened");
+    expect(contexts).toEqual([{}, { appShim: shim }]);
+    expect(windows[0]!.close).toHaveBeenCalledOnce();
+    expect(hosts[0]!.dispose).toHaveBeenCalledOnce();
+    expect(service.shimOf(records[0]!.installId)).toBe(shim);
+    service.authChanged({ signedIn: false, runtimeSlot: "primary", authGeneration: 3 });
+    expect(hosts[0]!.authChanged).not.toHaveBeenCalled();
+    expect(hosts[1]!.authChanged).toHaveBeenCalledOnce();
+  });
+
+  it("reloads an open window's content and closes one install's window", async () => {
+    const { service, records, hosts, windows } = setup();
+    await service.open(records[0]!.installId);
+    await service.open(records[1]!.installId);
+    expect(service.reload(records[0]!.installId)).toBe(true);
+    expect(hosts[0]!.load).toHaveBeenCalledTimes(2);
+    service.close(records[0]!.installId);
+    expect(windows[0]!.close).toHaveBeenCalledOnce();
+    expect(windows[1]!.close).not.toHaveBeenCalled();
+    expect(service.reload(records[0]!.installId)).toBe(false);
+    expect(service.openInstallIds()).toEqual([records[1]!.installId]);
   });
 });

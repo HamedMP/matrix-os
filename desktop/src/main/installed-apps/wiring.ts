@@ -1,5 +1,6 @@
-// Startup wiring for installed-app windows (spec 2711 layer 2). Called once
-// after auth restore and the main window, so index.ts only forwards events.
+// Startup wiring for installed apps (spec 2711). Called once after auth
+// restore and the main window, so index.ts only forwards events. Order:
+// records → (macOS) sweep, prune and the shim server → held deep link → reopen.
 import { screen } from "electron";
 import type { NativeAppBridge } from "../embeds/native-app-bridge";
 import { createNativeAppOpenResolver } from "../embeds/native-app-open";
@@ -12,12 +13,15 @@ import { fitWindowBoundsToWorkArea } from "../platform/window-bounds";
 import type { InstalledAppAuthSnapshot } from "./app-host";
 import { createInstalledAppBrowserWindow } from "./app-window";
 import type { createInstalledAppDeepLinks } from "./deep-link";
+import type { DesktopReleaseChannel } from "../../shared/channel-identity";
+import { createMacInstalledApps } from "./mac-wiring";
 import { createInstalledAppStore } from "./record-store";
+import { createInstalledAppReopen, reopenEach } from "./reopen";
 import { createInstalledAppsService } from "./service";
 
 export interface InstalledAppsWiringOptions {
   userData: string;
-  store: Pick<LocalStore, "getInstalledAppWindowBounds" | "setInstalledAppWindowBounds">;
+  store: Pick<LocalStore, "getInstalledAppWindowBounds" | "setInstalledAppWindowBounds" | "get" | "set" | "delete">;
   auth: {
     getStatus(): InstalledAppAuthSnapshot;
     getGatewayOrigin(): string;
@@ -28,6 +32,15 @@ export interface InstalledAppsWiringOptions {
   preloadPath: string;
   focusMain(): void;
   deepLinks: ReturnType<typeof createInstalledAppDeepLinks>;
+  /** Routes a link opened with an app shim like any other Matrix deep link. */
+  openUrl(url: string): void;
+  channel: DesktopReleaseChannel;
+  /** A preview pair's handle: its shims get their own server. */
+  previewHandle?: string;
+}
+
+function logFailure(label: string, error: unknown): void {
+  console.warn(`[installed-apps] ${label}:`, error instanceof Error ? error.name : "UnknownError");
 }
 
 export function installInstalledApps(options: InstalledAppsWiringOptions) {
@@ -44,9 +57,10 @@ export function installInstalledApps(options: InstalledAppsWiringOptions) {
     fitBounds: (bounds) => fitWindowBoundsToWorkArea(bounds, screen.getDisplayMatching({
       x: bounds.x ?? 0, y: bounds.y ?? 0, width: bounds.width, height: bounds.height,
     }).workArea),
-    createWindow: (record, bounds) => createInstalledAppBrowserWindow({
+    createWindow: (record, bounds, context) => createInstalledAppBrowserWindow({
       record,
       bounds,
+      ...(context.appShim ? { appShim: context.appShim as Electron.AppShimHost } : {}),
       getStatus: () => auth.getStatus(),
       resolveApp,
       focusMain: options.focusMain,
@@ -81,14 +95,41 @@ export function installInstalledApps(options: InstalledAppsWiringOptions) {
     }),
   });
 
-  options.deepLinks.ready((installId) => { void service.open(installId); });
+  const forgetWindowState = (installId: string) => options.store.setInstalledAppWindowBounds(installId, null);
+  const mac = process.platform === "darwin" ? createMacInstalledApps({
+    records, channel: options.channel, ...(options.previewHandle ? { previewHandle: options.previewHandle } : {}),
+    service, auth, forgetWindowState, focusMain: options.focusMain, openUrl: options.openUrl,
+  }) : null;
+  const reopen = createInstalledAppReopen({ store: {
+    get: () => options.store.get("installedAppsReopen"),
+    set: (value) => options.store.set("installedAppsReopen", value),
+    delete: () => options.store.delete("installedAppsReopen"),
+  } });
+
+  /** macOS opens an install through its shim bundle (its own Dock identity); elsewhere, or failing that, a plain window. */
+  async function launch(installId: string, launchOptions: { background?: boolean } = {}): Promise<void> {
+    if (await mac?.launch(installId, launchOptions)) return;
+    await service.open(installId);
+  }
+
+  const started = (async () => {
+    await mac?.start().catch((error: unknown) => logFailure("app shims unavailable", error));
+    options.deepLinks.ready((installId) => { void launch(installId); });
+    await reopenEach(await reopen.take(), (installId) => launch(installId, { background: true }));
+  })();
 
   return {
     open: (installId: string) => service.open(installId),
+    /** Resolves once records, shims, the held link and reopening are handled. */
+    started,
+    /** macOS: install and uninstall shim bundles (the Install UI is a later layer). */
+    mac,
     authChanged: (status: InstalledAppAuthSnapshot) => service.authChanged(status),
-    /** Quit: stop taking links, close app windows, and wait for their window state. */
+    /** Quit: remember open apps, stop taking links and shims, close app windows, and wait for their window state. */
     async dispose(): Promise<void> {
       options.deepLinks.detach();
+      await reopen.save(service.openInstallIds()).catch((error: unknown) => logFailure("could not save open apps", error));
+      mac?.stop();
       await service.dispose();
     },
   };

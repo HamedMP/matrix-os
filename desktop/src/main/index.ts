@@ -102,9 +102,9 @@ import { createNativeAppOpenResolver } from "./embeds/native-app-open";
 import { installBrowserProductSessionCookie } from "./embeds/browser-product-session";
 import { createNativeAppChatNavigationBroker, registerNativeAppChatCompletionIpc } from "./embeds/native-app-chat-navigation";
 import { configureDesktopIdentity } from "./desktop-identity";
-import { isDesktopDeepLink, resolveDesktopChannelIdentity } from "../shared/channel-identity";
-import { createDesktopDeepLinkHandler, createSharedAppDeepLinks, registerSharedAppDeepLinkIpc } from "./shared-app-deep-link";
-import { createInstalledAppDeepLinks } from "./installed-apps/deep-link";
+import { resolveDesktopChannelIdentity } from "../shared/channel-identity";
+import { registerSharedAppDeepLinkIpc } from "./shared-app-deep-link";
+import { createDesktopDeepLinkRouter } from "./deep-links/router";
 import { installInstalledApps } from "./installed-apps/wiring";
 import { createMainWindowActionGate } from "./installed-apps/main-window-actions";
 import { createSenderPolicy, senderRole } from "./ipc/sender-policy";
@@ -197,10 +197,6 @@ let handleUpdateBeforeQuit: ((event: { preventDefault(): void }) => void) | null
 let handleAnalyticsBeforeQuit: ((event: { preventDefault(): void }) => boolean) | null = null;
 let completePendingAnalyticsFlush: (() => void) | null = null;
 
-function isMatrixOsDeepLink(value: string): boolean {
-  return isDesktopDeepLink(value, channelIdentity);
-}
-
 function focusMainWindow(to?: "settings"): void {
   // Never fall back to "any window": the Terminal window is not the main one.
   const win = mainWindow;
@@ -212,40 +208,23 @@ function focusMainWindow(to?: "settings"): void {
   if (to === "settings") sendEvent("shortcut:action", { id: "nav.settings" });
 }
 
-// Org-link hand-off (spec 2693): `matrixos://shared-app/<scopeId>`; other links only focus.
-const sharedAppDeepLinks = createSharedAppDeepLinks({
-  schemes: channelIdentity.deepLinkSchemes,
-  send: (link) => {
+/** Set once the app is ready: reopens the main window through the single-flight path. */
+let restoreMainWindowForDeepLink: (() => void) | null = null;
+
+const deepLinks = createDesktopDeepLinkRouter({
+  identity: channelIdentity,
+  hasMainWindow: () => Boolean(mainWindow && !mainWindow.isDestroyed()),
+  focusMainWindow,
+  // Before the app is ready the startup path opens the main window itself.
+  reopenMainWindow: () => restoreMainWindowForDeepLink?.(),
+  sendSharedAppLink: (link) => {
     const win = mainWindow;
     if (!win || win.isDestroyed()) return false;
     sendEvent("deeplink:shared-app", link);
     return true;
   },
 });
-// `matrixos://app/<installId>` (spec 2711): held until install records and auth are loaded.
-const installedAppDeepLinks = createInstalledAppDeepLinks({ schemes: channelIdentity.deepLinkSchemes });
-{
-  // Windows/Linux cold start passes the link in argv; the renderer takes it once it listens.
-  const coldStartLink = process.argv.find(isMatrixOsDeepLink);
-  if (coldStartLink && !installedAppDeepLinks.handle(coldStartLink)) sharedAppDeepLinks.handle(coldStartLink);
-}
-
-/** Set once the app is ready: reopens the main window through the single-flight path. */
-let restoreMainWindowForDeepLink: (() => void) | null = null;
-
-const handleDeepLink = createDesktopDeepLinkHandler({
-  isDeepLink: isMatrixOsDeepLink,
-  hasMainWindow: () => Boolean(mainWindow && !mainWindow.isDestroyed()),
-  focusMainWindow,
-  // Before the app is ready the startup path opens the main window itself.
-  reopenMainWindow: () => restoreMainWindowForDeepLink?.(),
-  links: sharedAppDeepLinks,
-});
-/** Installed-app links open their own window without raising the main one. */
-function routeDeepLink(url: string): void {
-  if (installedAppDeepLinks.handle(url)) return;
-  handleDeepLink(url);
-}
+deepLinks.coldStart(process.argv);
 
 function sendEvent<C extends EventChannel>(channel: C, payload: EventPayload<C>): void {
   const parsed = EVENT_CHANNELS[channel].safeParse(payload);
@@ -356,17 +335,12 @@ if (!gotLock) {
         }).catch((error: unknown) => logMainError("preview reopen refused", error));
       return;
     }
-    const deepLink = argv.find(isMatrixOsDeepLink);
-    if (deepLink) {
-      routeDeepLink(deepLink);
-      return;
-    }
-    focusMainWindow();
+    if (!deepLinks.routeArgv(argv)) focusMainWindow();
   });
 
   app.on("open-url", (event, url) => {
     event.preventDefault();
-    routeDeepLink(url);
+    deepLinks.route(url);
   });
 
   void app
@@ -846,7 +820,7 @@ if (!gotLock) {
       });
       registerSharedAppDeepLinkIpc(ipcMain, {
         isMainWindowSender: (event) => senderRole(windowSenders, event) === "main",
-        take: () => sharedAppDeepLinks.take(),
+        take: () => deepLinks.sharedApps.take(),
       });
       registerIpcHandlers(ipcMain, {
         authorizeSender,
@@ -1003,11 +977,11 @@ if (!gotLock) {
         mainWindow = createWindow(fitWindowBoundsToWorkArea(requestedBounds, display.workArea));
         // A reloaded or crashed renderer must take held org links again before they are sent.
         const releaseRenderer = () => {
-          sharedAppDeepLinks.rendererReset();
+          deepLinks.sharedApps.rendererReset();
           mainWindowActions.rendererReset();
           chatElectronPreview.clearFullAccessSelection();
         };
-        mainWindow.webContents.on("did-start-loading", () => { sharedAppDeepLinks.rendererReset(); mainWindowActions.rendererReset(); });
+        mainWindow.webContents.on("did-start-loading", () => { deepLinks.sharedApps.rendererReset(); mainWindowActions.rendererReset(); });
         mainWindow.webContents.on("did-start-navigation", (details) => {
           if (details.isMainFrame && !details.isSameDocument) chatElectronPreview.clearFullAccessSelection();
         });
@@ -1039,7 +1013,8 @@ if (!gotLock) {
       };
       installedApps = installInstalledApps({
         userData, store, auth, appBridge: nativeAppBridge, preloadPath: join(__dirname, "../preload/index.cjs"),
-        focusMain: () => restoreMainWindowForDeepLink?.(), deepLinks: installedAppDeepLinks,
+        focusMain: () => restoreMainWindowForDeepLink?.(), deepLinks: deepLinks.installedApps,
+        openUrl: (url) => deepLinks.route(url), channel: channelIdentity.channel, previewHandle: previewContext?.handle,
       });
       if (previewContext) reopenPreviewWindow = createPreviewWindowReopener({
         current: () => mainWindow, open: openMainWindow, focus: focusMainWindow,
