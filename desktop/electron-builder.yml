@@ -17,6 +17,8 @@ protocols:
       - matrix-os
 mac:
   category: public.app-category.productivity
+  # Electron 44+ does not run on macOS 12; keep LSMinimumSystemVersion honest.
+  minimumSystemVersion: "13.0"
   target:
     - dmg
     - zip

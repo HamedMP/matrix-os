@@ -286,16 +286,38 @@ describe("desktop packaging", () => {
     expect(packageJson.devDependencies?.["@matrix-os/contracts"]).toBe("workspace:*");
   });
 
-  it("gives electron-vite a resolvable Electron dependency in the global virtual store", () => {
-    const raw = readFileSync(join(process.cwd(), "package.json"), "utf8");
-    const packageJson = JSON.parse(raw) as {
+  it("gives electron-vite the same Electron the desktop app ships in the global virtual store", () => {
+    const packageJson = JSON.parse(readFileSync(join(process.cwd(), "package.json"), "utf8")) as {
       pnpm?: {
         packageExtensions?: Record<string, { dependencies?: Record<string, string> }>;
       };
     };
+    const desktopPackage = JSON.parse(readFileSync(join(process.cwd(), "desktop/package.json"), "utf8")) as {
+      devDependencies?: Record<string, string>;
+    };
 
+    // An exact pin: a range would let pnpm resolve a second Electron for the dev server.
+    expect(desktopPackage.devDependencies?.electron).toMatch(/^\d+\.\d+\.\d+$/);
     expect(packageJson.pnpm?.packageExtensions?.["electron-vite@*"]?.dependencies?.electron).toBe(
-      "^41.0.3",
+      desktopPackage.devDependencies?.electron,
     );
+  });
+
+  it("declares the oldest macOS and only the architectures the pinned Electron supports", async () => {
+    // Electron 44 dropped macOS 12 and Windows ia32 / Linux armv7l.
+    const stable = parse(readFileSync(join(process.cwd(), "desktop/electron-builder.yml"), "utf8")) as {
+      mac?: { minimumSystemVersion?: string };
+      win?: { target?: Array<{ arch?: string[] }> };
+      linux?: { target?: Array<{ arch?: string[] }> };
+    };
+    const { default: canary } = await import("../../desktop/electron-builder.canary.mjs") as {
+      default: { mac?: { minimumSystemVersion?: string } };
+    };
+
+    expect(stable.mac?.minimumSystemVersion).toBe("13.0");
+    expect(canary.mac?.minimumSystemVersion).toBe("13.0");
+    const arches = [...(stable.win?.target ?? []), ...(stable.linux?.target ?? [])].flatMap((target) => target.arch ?? []);
+    expect(arches).not.toContain("ia32");
+    expect(arches).not.toContain("armv7l");
   });
 });

@@ -127,9 +127,9 @@ suite("built Electron Desktop Terminal local attachments", () => {
   });
 
   it("uploads a native clipboard image with Cmd+V and inserts one remote path", async () => {
-    const imageIsEmpty = await app.evaluate(({ clipboard, nativeImage }) => {
+    const imageIsEmpty = await app.evaluate(async ({ clipboard, ClipboardItem, nativeImage }) => {
       const image = nativeImage.createFromBitmap(Buffer.from([255, 0, 0, 255]), { width: 1, height: 1 });
-      clipboard.writeImage(image);
+      await clipboard.write([new ClipboardItem({ "image/png": new Blob([image.toPNG()], { type: "image/png" }) })]);
       return image.isEmpty();
     });
     expect(imageIsEmpty).toBe(false);
@@ -158,9 +158,9 @@ suite("built Electron Desktop Terminal local attachments", () => {
       pasteboard.setStringForType($(${JSON.stringify(url)}), $('public.url'));
       pasteboard.setStringForType($(${JSON.stringify(url)}), $('public.utf8-plain-text'));
     `], { timeout: 5_000 });
-    const formats = await app.evaluate(({ clipboard }) => clipboard.availableFormats());
-    // Electron exposes this AppKit URL clipboard as text/plain. The mapped
-    // text/uri-list-without-native-data case is covered by the main IPC test.
+    const formats = await app.evaluate(async ({ clipboard }) => [...new Set((await clipboard.read()).flatMap((item) => item.types))]);
+    // Electron exposes this AppKit URL clipboard as text/plain. A text/uri-list
+    // without any file URI is covered by the main IPC unit test.
     expect(formats).toContain("text/plain");
     expect(await page.evaluate(() => window.operator.invoke("terminal:read-clipboard-files", {}))).toEqual({ status: "empty" });
     const count = gateway.state.terminalInputs.length;
@@ -230,10 +230,13 @@ suite("built Electron Desktop Terminal local attachments", () => {
       pasteboard.setStringForType($(${JSON.stringify(names.join("\n"))}), $('public.utf8-plain-text'));
       JSON.stringify({ ok: ok, types: ObjC.deepUnwrap(pasteboard.types) });
     `], { timeout: 5_000 });
-    const formats = await app.evaluate(({ clipboard }) => ({ formats: clipboard.availableFormats(),
-      listBytes: clipboard.readBuffer("NSFilenamesPboardType").length, urlBytes: clipboard.readBuffer("public.file-url").length }));
+    // Electron 44+ maps Finder's NSFilenamesPboardType to text/uri-list.
+    const formats = await app.evaluate(async ({ clipboard }) => {
+      const item = (await clipboard.read()).find((candidate) => candidate.types.includes("text/uri-list"));
+      return { types: item?.types ?? [], listBytes: item ? (await item.getType("text/uri-list") as Blob).size : 0 };
+    });
     expect(JSON.parse(nativeWrite.stdout).ok).toBe(true);
-    expect(formats.formats).toContain("text/uri-list");
+    expect(formats.types).toContain("text/uri-list");
     expect(formats.listBytes).toBeGreaterThan(0);
     const clipboardResult = await page.evaluate(() => window.operator.invoke("terminal:read-clipboard-files", {}));
     expect(clipboardResult).toMatchObject({ status: "files", files: names.map((name) => ({ name })) });

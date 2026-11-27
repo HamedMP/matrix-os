@@ -1,4 +1,3 @@
-import { execFile } from "node:child_process";
 import { constants } from "node:fs";
 import { open } from "node:fs/promises";
 import { basename, isAbsolute } from "node:path";
@@ -9,26 +8,22 @@ import {
   TerminalClipboardResultSchema, type TerminalClipboardResult,
 } from "../../shared/terminal-clipboard";
 
+// The Electron 44+ main-process clipboard (W3C-style, asynchronous).
 interface FileClipboard {
-  availableFormats(): string[];
-  readBuffer(format: string): Buffer;
+  has(mimeType: string): Promise<boolean>;
+  read(): Promise<Array<{ readonly types: readonly string[]; getType(type: string): Promise<unknown> }>>;
 }
+// On macOS Electron maps text/uri-list to Finder's native copied-files format
+// (NSFilenamesPboardType). Its payload is an RFC 2483 list of file:// URIs.
+const FILE_LIST_MIME = "text/uri-list";
 const MAX_METADATA_BYTES = 64 * 1024;
 
-function finderPaths(buffer: Buffer): Promise<unknown> {
-  // macOS's parser handles both XML and binary pasteboard property lists.
-  // Input is passed over stdin, never as a command or filesystem argument.
-  return new Promise((resolve, reject) => {
-    const child = execFile("/usr/bin/plutil", ["-convert", "json", "-o", "-", "-"], {
-      timeout: 3_000, maxBuffer: MAX_METADATA_BYTES, encoding: "utf8",
-    }, (error, stdout) => {
-      if (error) { reject(error); return; }
-      try { resolve(JSON.parse(stdout)); }
-      catch (parseError: unknown) { reject(parseError); }
-    });
-    child.stdin?.on("error", reject);
-    child.stdin?.end(buffer);
-  });
+async function readFileList(clipboard: FileClipboard): Promise<string | null> {
+  const item = (await clipboard.read()).find((candidate) => candidate.types.includes(FILE_LIST_MIME));
+  if (!item) return null;
+  const blob = await item.getType(FILE_LIST_MIME);
+  if (!(blob instanceof Blob) || blob.size > MAX_METADATA_BYTES) return null;
+  return blob.text();
 }
 
 export async function readTerminalClipboardFiles(
@@ -39,29 +34,18 @@ export async function readTerminalClipboardFiles(
   // retain the existing text/image clipboard path and local file drag/drop.
   if (platform !== "darwin") return { status: "empty" };
   try {
-    const formats = clipboard.availableFormats();
-    if (!formats.some((format) => ["NSFilenamesPboardType", "public.file-url", "text/uri-list"].includes(format))) {
-      return { status: "empty" };
-    }
-    // Electron advertises Finder's native formats as text/uri-list. Raw reads
-    // still expose the original property list, including multi-file copies.
-    const legacyMetadata = clipboard.readBuffer("NSFilenamesPboardType");
-    const format = legacyMetadata.length > 0 ? "NSFilenamesPboardType" : "public.file-url";
-    const metadata = format === "NSFilenamesPboardType" ? legacyMetadata : clipboard.readBuffer(format);
-    if (metadata.length === 0 && !formats.some((value) => ["NSFilenamesPboardType", "public.file-url"].includes(value))) {
-      // A URI list may be an ordinary web URL, with no copied file behind it.
-      return { status: "empty" };
-    }
-    if (metadata.length === 0 || metadata.length > MAX_METADATA_BYTES) {
-      return { status: "error", error: "file_unavailable" };
-    }
-    const paths = format === "NSFilenamesPboardType"
-      ? await finderPaths(metadata) : [fileURLToPath(metadata.toString("utf8").replace(/\0+$/, ""))];
-    if (!Array.isArray(paths) || paths.length === 0) return { status: "error", error: "file_unavailable" };
-    if (paths.length > TERMINAL_CLIPBOARD_MAX_FILES) return { status: "error", error: "too_many_files" };
+    if (!(await clipboard.has(FILE_LIST_MIME))) return { status: "empty" };
+    const list = await readFileList(clipboard);
+    if (list === null) return { status: "error", error: "file_unavailable" };
+    const uris = list.split(/\r?\n/).map((line) => line.trim()).filter((line) => line && !line.startsWith("#"));
+    // A URI list with no copied file behind it stays ordinary text paste.
+    if (!uris.some((uri) => uri.startsWith("file:"))) return { status: "empty" };
+    if (uris.length > TERMINAL_CLIPBOARD_MAX_FILES) return { status: "error", error: "too_many_files" };
+    // fileURLToPath rejects non-file schemes, remote hosts and encoded NULs.
+    const paths = uris.map((uri) => fileURLToPath(uri));
     const files: Array<{ name: string; mimeType: "application/octet-stream"; dataBase64: string }> = [];
     for (const path of paths) {
-      if (typeof path !== "string" || !isAbsolute(path) || path.length > 4096 || /[\0\r\n]/.test(path)) {
+      if (!isAbsolute(path) || path.length > 4096 || /[\0\r\n]/.test(path)) {
         return { status: "error", error: "file_unavailable" };
       }
       const name = basename(path);
@@ -97,7 +81,7 @@ export function registerTerminalClipboardIpc(ipc: {
   platform?: string;
   isTrustedSender(event: unknown): boolean;
 }): void {
-  if (typeof options.clipboard?.readBuffer !== "function" || typeof options.isTrustedSender !== "function") {
+  if (typeof options.clipboard?.read !== "function" || typeof options.clipboard?.has !== "function" || typeof options.isTrustedSender !== "function") {
     throw new Error("clipboard service unavailable");
   }
   let inFlight = false;

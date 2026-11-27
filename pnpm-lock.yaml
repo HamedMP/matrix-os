@@ -68,7 +68,7 @@ overrides:
   lodash@>=4.0.0 <4.18.1: 4.18.1
   lodash-es@>=4.0.0 <4.18.1: 4.18.1
 
-packageExtensionsChecksum: sha256-WRMLPw1Mp9v1Skb/UIjpRhSN3zWCUlfvXTDouGIxRA4=
+packageExtensionsChecksum: sha256-h4VNs/I4jVwMaheC5KUc9YU8rcxK7zUJEtinG0LBoRY=
 
 patchedDependencies:
   app-builder-lib@26.15.3:
@@ -650,8 +650,8 @@ importers:
         specifier: ^5.1.1
         version: 5.2.0(rolldown-vite@7.3.1(@emnapi/core@1.9.1)(@emnapi/runtime@1.11.3)(@types/node@25.5.0)(esbuild@0.27.7)(jiti@2.6.1)(sass@1.51.0)(terser@5.46.1)(tsx@4.21.0)(yaml@2.8.3))
       electron:
-        specifier: ^41.10.6
-        version: 41.10.7
+        specifier: 45.4.1
+        version: 45.4.1
       electron-builder:
         specifier: ~26.15.3
         version: 26.15.3(electron-builder-squirrel-windows@26.15.3)
@@ -10247,8 +10247,8 @@ packages:
     resolution: {integrity: sha512-bO3y10YikuUwUuDUQRM4KfwNkKhnpVO7IPdbsrejwN9/AABJzzTQ4GeHwyzNSrVO+tEH3/Np255a3sVZpZDjvg==}
     engines: {node: '>=8.0.0'}
 
-  electron@41.10.7:
-    resolution: {integrity: sha512-AqIiefddlf5i+HYCGatr8VlBuEbWJpad4/yloBFYcMB2r57j7xhW1ogiJ+BfA5kxQyfmSs5yjwy54Me+wJn1jw==}
+  electron@45.4.1:
+    resolution: {integrity: sha512-DjsJ/eQhovkjf1vYFFyh5GB8NMx+L5bdYaonvGOlWselg3DQ0fwIF0N/+2hrPsoS4whmmNswh21ym/8dgt1y5Q==}
     engines: {node: '>= 22.12.0'}
     hasBin: true
 
@@ -25580,7 +25580,7 @@ snapshots:
       react-refresh: 0.14.2
     optionalDependencies:
       '@babel/runtime': 7.29.2
-      expo: 58.0.23(794e4542f44dec5bbd1ef265eb1cc16c)
+      expo: 58.0.23(1b97d579faa71dfb1a075b0653902b84)
     transitivePeerDependencies:
       - '@babel/core'
       - supports-color
@@ -26764,7 +26764,7 @@ snapshots:
       '@babel/core': 7.29.0
       '@babel/plugin-transform-arrow-functions': 7.27.1(@babel/core@7.29.0)
       cac: 6.7.14
-      electron: 41.10.7
+      electron: 45.4.1
       esbuild: 0.25.12
       magic-string: 0.30.21
       picocolors: 1.1.1
@@ -26784,7 +26784,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  electron@41.10.7:
+  electron@45.4.1:
     dependencies:
       '@electron-internal/extract-zip': 1.0.5
       '@electron/get': 5.1.0
