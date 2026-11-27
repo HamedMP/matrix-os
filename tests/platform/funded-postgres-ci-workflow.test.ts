@@ -11,9 +11,11 @@ type PostgreSqlJob = {
   services: { postgres: { image: string; env: Record<string, string> } };
   steps: Array<{ name?: string; run?: string }>;
 };
-const job = (parse(readFileSync(".github/workflows/ci.yml", "utf8")) as {
-  jobs: { "funded-postgres": PostgreSqlJob };
-}).jobs["funded-postgres"];
+const jobs = (parse(readFileSync(".github/workflows/ci.yml", "utf8")) as {
+  jobs: { "funded-postgres": PostgreSqlJob; "routine-postgres": PostgreSqlJob };
+}).jobs;
+const job = jobs["funded-postgres"];
+const routineJob = jobs["routine-postgres"];
 const settlementStep = job.steps.find((step) => step.name === "Verify funded settlement on PostgreSQL")!;
 
 function executeSettlementStep(url: string | undefined, step = settlementStep) {
@@ -98,8 +100,9 @@ describe("funded PostgreSQL CI coverage", () => {
     expect(result, result.diagnostics).toMatchObject({ status: 1, args: [] });
   });
   it("prepares prerequisites once before all funded lanes and additional PostgreSQL contracts", () => {
-    const selected = job.steps.filter(step => step.name === "Build test prerequisites once"
+    const testSteps = (steps: PostgreSqlJob["steps"]) => steps.filter(step => step.name === "Build test prerequisites once"
       || step.run?.includes("pnpm exec vitest run"));
+    const selected = testSteps(job.steps);
     const directory = mkdtempSync(join(tmpdir(), "matrix-funded-pg-order-"));
     try {
       const log = join(directory, "commands");
@@ -112,9 +115,9 @@ printf '\\n' >> "$WAIVER_CI_COMMANDS_PATH"
 `);
         chmodSync(executable, 0o700);
       }
-      const execute = (url: string | undefined, processBuild = true) => {
+      const execute = (url: string | undefined, processBuild = true, steps = selected) => {
         writeFileSync(log, "");
-        const result = spawnSync("bash", ["-eu", "-c", selected.map(step => step.run).join("\n")], {
+        const result = spawnSync("bash", ["-eu", "-c", steps.map(step => step.run).join("\n")], {
           encoding: "utf8", timeout: 5_000,
           env: { PATH: `${directory}:${process.env.PATH}`, MATRIX_TEST_POSTGRES_URL: url,
             WAIVER_CI_COMMANDS_PATH: log, MATRIX_ROUTINE_PROCESS_BUILD: processBuild ? join(directory, "fixture-process-build") : undefined },
@@ -141,13 +144,20 @@ printf '\\n' >> "$WAIVER_CI_COMMANDS_PATH"
       }
       // The metal pass singleton's real lock-contention case runs only here.
       expect(valid.commands.some(command => command.includes("tests/platform/metal-singleton.test.ts"))).toBe(true);
+      const routineSelected = testSteps(routineJob.steps);
+      const routine = execute(routineJob.env.MATRIX_TEST_POSTGRES_URL, true, routineSelected);
+      expect(routine.status, routine.stderr).toBe(0);
+      expect(routine.commands).toHaveLength(routineSelected.length);
+      expect(routine.commands[0]).toBe("bun run test:prepare");
       for (const suite of ["deployed-v9-schema-postgres", "routine-fencing-postgres", "routine-process-postgres"]) {
-        expect(valid.commands.some(command => command.includes(`tests/gateway/bots/${suite}.test.ts`))).toBe(true);
+        expect(valid.commands.some(command => command.includes(`tests/gateway/bots/${suite}.test.ts`))).toBe(false);
+        expect(routine.commands.some(command => command.includes(`tests/gateway/bots/${suite}.test.ts`))).toBe(true);
       }
-      const noBuild = execute(job.env.MATRIX_TEST_POSTGRES_URL, false);
+      const noBuild = execute(routineJob.env.MATRIX_TEST_POSTGRES_URL, false, routineSelected);
       expect(noBuild.status).toBe(1);
       expect(noBuild.stderr).toContain("Exact-source process artifact required");
       expect(noBuild.commands.some(command => command.includes("routine-process-postgres.test.ts"))).toBe(false);
+      expect(execute(undefined, true, routineSelected).commands).toEqual(["bun run test:prepare"]);
       const absent = execute(undefined);
       expect(absent.status).toBe(1);
       expect(absent.stderr).toContain("Disposable PostgreSQL test URL required");

@@ -69,6 +69,10 @@ describe("remaining real PostgreSQL qualification", () => {
     }
     assign();
     expect(remainingPostgresInventory(root, [remaining]).requirements.map(row => row.file)).toContain(file);
+    // The routine suites run in their own hosted lane beside funded-postgres.
+    write(".github/workflows/ci.yml", `jobs:\n  funded-postgres:\n    steps:\n      - run: pnpm exec vitest run ${funded}\n  routine-postgres:\n    steps:\n      - env:\n          MATRIX_ROUTINE_CLI_TEST_POSTGRES_URL: '\${{ env.MATRIX_TEST_POSTGRES_URL }}'\n        run: ${command}\n`);
+    expect(remainingPostgresInventory(root, [remaining]).requirements.map(row => row.file)).toContain(file);
+    assign();
     expect(() => remainingPostgresInventory(root, [file, remaining].sort())).toThrow(/already assigned.*routine-cli-example/i);
     write("tests/gateway/bots/routine-cli-new.postgres.integration.ts", "process.env.MATRIX_ROUTINE_CLI_TEST_POSTGRES_URL;");
     expect(remainingPostgresInventory(root, [remaining]).requirements).toHaveLength(5);
