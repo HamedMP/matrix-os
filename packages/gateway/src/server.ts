@@ -266,6 +266,8 @@ import { registerShellTerminalRoutes } from "./server/shell-terminal-routes.js";
 import { registerSystemOperatorRoutes } from "./server/system-operator-routes.js";
 import { createPlatformSpeechHostConfigRoutes } from "./speech/host-activation.js";
 import { createPlatformFundedAiHostConfigRoutes } from "./funded-host-activation.js";
+import { createHerdrChatTerminalRoute } from "./chat/herdr-terminal-route.js";
+import { HERDR_CHAT_ROUTE } from "./chat/herdr-chat-target.js";
 import { createExecutionAdmissionFence } from "./execution-admission-fence.js";
 import { createManagedFeatureRestartCoordinator } from "./managed-feature-restart.js";
 import { createDesktopLinkRegistryFromEnv, registerTerminalSockets } from "./server/terminal-sockets.js";
@@ -322,7 +324,6 @@ export async function createGateway(config: GatewayConfig) {
   const allowedOriginController = createGatewayAllowedOriginController(process.env);
 
   const app = new Hono();
-  const { registry: matrixMcpCapabilities, issueCoreMcpRunCapability } = createGatewayMatrixMcpCapabilities(process.env);
   const posthogErrorTracker = installPostHogHonoErrorTracking(app, {
     service: "matrix-gateway",
   });
@@ -336,6 +337,9 @@ export async function createGateway(config: GatewayConfig) {
   // then must still be able to run shutdown.
   let terminalAgentServices: TerminalAgentServices | null = null;
   const herdrSessions = createHerdrSessionsFromEnv(process.env), desktopLinks = createDesktopLinkRegistryFromEnv(process.env); // Owner's herdr-core (2701) and linked desktops (2716); null unless enabled.
+  const { registry: matrixMcpCapabilities, issueCoreMcpRunCapability } = createGatewayMatrixMcpCapabilities(
+    process.env, Boolean(herdrSessions || desktopLinks),
+  );
   let herdrViewers: ReturnType<typeof registerTerminalSockets> | null = null;
   // Lets `matrix shell …` inside this machine's terminals call the gateway (spec 2692).
   let localTerminalAgentToken: LocalTerminalAgentToken | null = null;
@@ -1269,6 +1273,7 @@ export async function createGateway(config: GatewayConfig) {
       localTerminalAgentToken: () => localTerminalAgentToken?.token,
     },
   });
+  app.route(HERDR_CHAT_ROUTE, createHerdrChatTerminalRoute(herdrSessions, terminalAgents.inputActivity, desktopLinks));
   app.route("/api/desktop-pairing", await createRuntimeDesktopPairingRoutes({ ownerDatabase: kyselyInstance, onPairingChanged: (state) => herdrViewers?.desktopLinks?.pairingChanged(state) }));
   app.route("/api/system/private-network", privateNetwork.routes);
   app.route("/api/speech", speechRuntime.routes);

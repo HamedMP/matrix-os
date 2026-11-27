@@ -3,7 +3,7 @@
 // pglite, a desktop stand-in that pairs and dials out, and pipes core streams to
 // a fake core, optionally through the real desktop-side guard.
 import { once } from "node:events";
-import { createHash, createHmac, generateKeyPairSync, sign, type KeyObject } from "node:crypto";
+import { createHash, createHmac, generateKeyPairSync, randomBytes, sign, type KeyObject } from "node:crypto";
 import { serve } from "@hono/node-server";
 import { createNodeWebSocket } from "@hono/node-ws";
 import { Hono } from "hono";
@@ -150,6 +150,7 @@ export function dialMac(base: string, mac: ReturnType<typeof testMac>, options: 
   const control: Array<Record<string, unknown>> = [];
   let closeCode: number | null = null;
   let upgradeStatus: number | null = null;
+  const selectionKey = randomBytes(32);
   let stream: {
     id: number; pipe: ReturnType<ReturnType<typeof createFakeHerdrCore>["connect"]>;
     guard: ReturnType<typeof createDesktopLinkGuard> | null; queue: Promise<void>;
@@ -190,7 +191,7 @@ export function dialMac(base: string, mac: ReturnType<typeof testMac>, options: 
       const pipe = options.core.connect();
       // Through the real guard, as Electron does, both ways: the core's answers are rebuilt too.
       const guard = options.guardHome ? createDesktopLinkGuard({
-        home: options.guardHome, computerName: "matrix-demo", ...(options.consent ? { consent: options.consent } : {}),
+        home: options.guardHome, computerName: "matrix-demo", selectionKey, ...(options.consent ? { consent: options.consent } : {}),
       }) : null;
       guard?.connect((bytes) => pipe.write(bytes));
       pipe.on("data", (chunk: Buffer) => {

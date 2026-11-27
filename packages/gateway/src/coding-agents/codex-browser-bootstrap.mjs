@@ -1,3 +1,4 @@
+import { createCodexLeaseBootstrap } from "./codex-lease-bootstrap.mjs";
 import { z } from "zod/v4";
 import { lstat, mkdtemp, opendir, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -80,71 +81,8 @@ export function canRenewCodexBrowserInPlace(current, next, tokenFile) {
   return Boolean(tokenFile && current && next && current.gatewayPort === next.gatewayPort);
 }
 
-function deferred() {
-  let resolve;
-  const promise = new Promise((callback) => { resolve = callback; });
-  return { promise, resolve };
-}
-
-async function bounded(promise, signal) {
-  signal?.throwIfAborted();
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    const finish = (error, value) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      signal?.removeEventListener("abort", abort);
-      error ? reject(error) : resolve(value);
-    };
-    const abort = () => finish(new Error("Browser startup unavailable"));
-    const timer = setTimeout(abort, 30_000);
-    timer.unref?.();
-    signal?.addEventListener("abort", abort, { once: true });
-    promise.then((value) => finish(undefined, value));
-    if (signal?.aborted) abort();
-  });
-}
-
-/** Bind/readiness acknowledgements precede the separate inference release. */
 export function createCodexBrowserBootstrap(attemptId) {
-  const initial = deferred(), ready = deferred(), released = deferred();
-  let lease, healthy = false, failed = false;
-  return {
-    async bind(raw) {
-      const parsed = CodexBrowserLeaseSchema.safeParse(raw);
-      if (!attemptId || failed || !parsed.success || parsed.data.attemptId !== attemptId) return false;
-      if (lease && JSON.stringify(lease) !== JSON.stringify(parsed.data)) return false;
-      lease = parsed.data;
-      initial.resolve(lease);
-      return (await bounded(ready.promise)) === true;
-    },
-    async waitLease(signal) {
-      if (failed) throw new Error("Browser startup unavailable");
-      if (!attemptId) return undefined;
-      const value = await bounded(initial.promise, signal);
-      if (!value) throw new Error("Browser startup unavailable");
-      return value;
-    },
-    markReady() {
-      if (!failed && lease) { healthy = true; ready.resolve(true); }
-    },
-    release(id) {
-      if (!healthy || failed || id !== attemptId) return false;
-      released.resolve(true);
-      return true;
-    },
-    async waitRelease(signal) {
-      if (attemptId && await bounded(released.promise, signal) !== true) throw new Error("Browser startup unavailable");
-    },
-    fail() {
-      failed = true;
-      healthy = false;
-      initial.resolve(undefined);
-      ready.resolve(false);
-      released.resolve(false);
-    },
-  };
+  return createCodexLeaseBootstrap(attemptId, CodexBrowserLeaseSchema, "Browser startup unavailable");
 }
 
 const TOKEN_DIR_PATTERN = /^matrix-codex-browser-(\d{1,10})-[A-Za-z0-9]{6}$/;

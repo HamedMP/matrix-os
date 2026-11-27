@@ -1,3 +1,5 @@
+import { nativeCodexMcpExecution } from '../chat/codex-mcp-run-scope.js';
+import { prepareCodexTerminalMcp } from './codex-terminal-mcp-client.js';
 import { nativeCodexRoutineAdmission } from "../chat/codex-routine-source.js";
 import { beginNativeBrowserBootstrap, markNativeBrowserCleanupUnconfirmed, nativeBrowserExecution } from "../chat/native-browser-execution-context.js";
 import { prepareCodexBrowser } from "./codex-browser-bootstrap-client.js";
@@ -69,8 +71,10 @@ export async function recoverStoppedCodexContinuation(
     await admission.validate(principal.userId, binding, sessionId);
     let recoveredState = { ...resumeState, nativeAccountBinding: binding };
     const browser = nativeBrowserExecution(principal.userId);
+    const matrixMcp = nativeCodexMcpExecution(principal.userId);
+    if (matrixMcp && !control.prepareMatrixMcp) throw new Error("Matrix MCP startup unavailable");
     if (browser && !control.prepareBrowser) throw new Error("Browser startup unavailable");
-    const startup = browser ? beginNativeBrowserBootstrap(principal.userId) : undefined;
+    const startup = browser || matrixMcp ? beginNativeBrowserBootstrap(principal.userId) : undefined;
     const recoverySignal = startup ? AbortSignal.any([signal, startup.signal]) : signal;
     let observation: Awaited<ReturnType<typeof events.watch>> | undefined;
     try {
@@ -94,9 +98,12 @@ export async function recoverStoppedCodexContinuation(
       nativeCodexRoutineAdmission(principal.userId)?.prepare(sessionId);
       const session = await recoverCodexWorkspace({ ...runtime, startSession: scope.startSession },
         { ...context, signal: recoverySignal, resumeState: recoveredState }, sessionId, prompt,
-        browser ? () => markNativeBrowserCleanupUnconfirmed(principal.userId) : undefined);
+        browser || matrixMcp ? () => markNativeBrowserCleanupUnconfirmed(principal.userId) : undefined);
       if (session.runtime.type !== "background" || !session.backgroundRef) throw new Error("Codex conversation recovery is unavailable");
-      if (browser) await prepareCodexBrowser({ ownerId: principal.userId, sessionId, browser, control, runtime, signal: recoverySignal });
+      await Promise.all([
+        ...(browser ? [prepareCodexBrowser({ ownerId: principal.userId, sessionId, browser, control, runtime, signal: recoverySignal })] : []),
+        ...(matrixMcp ? [prepareCodexTerminalMcp({ ownerId: principal.userId, sessionId, lease: matrixMcp, control, runtime, signal: recoverySignal })] : []),
+      ]);
       return { events: [], outcome: "delivered", resumeState: { ...recoveredState,
         backgroundRef: session.backgroundRef,
       } };
