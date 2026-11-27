@@ -544,6 +544,86 @@ Hetzner token on preview); enabling it is a deliberate follow-up (a
 preview-scoped Hetzner token + VPS reaping). For that slice today, use the
 feature-VPS path in [Staging Platform and Feature VPS Runbook](staging-platform-vps.md).
 
+### Metal hosts and the free tier on one preview PR
+
+The metal substrate and the free tier (spec 2691) are off on every preview
+revision by default. An operator turns them on for exactly one PR with
+`Preview` environment variables:
+
+| Variable | Value |
+| --- | --- |
+| `PREVIEW_METAL_ENABLED` | `1` to turn the switch on; `0` (default) leaves it off. |
+| `PREVIEW_METAL_PR_NUMBER` | The one PR that gets metal hosts. Required when the switch is on. |
+| `PREVIEW_METAL_GOLDEN_VERSION` | The golden disk version hostd clones VMs from (`[A-Za-z0-9][A-Za-z0-9._-]{0,63}`). |
+| `PREVIEW_FREE_TIER_MAX_RUNTIMES` | Ceiling on admitted free owners, `1`–`9999` (default `10`). |
+| `PREVIEW_FREE_TIER_INVITE_REQUIRED` | `true` (default, invite-only signup) or `false`. |
+| `PREVIEW_FREE_TIER_SLEEP_ENABLED` | `1` (default) runs the idle sleeper in a private per-PR worker; `0` turns sleep off. |
+| `PREVIEW_FREE_TIER_DAILY_FUNDED_SPEND_MICROUSD` | Daily funded AI spend across all free owners, in micro-USD (default `20000000`, $20). |
+
+For that PR only, the Cloud Run deploy adds `METAL_HOSTS_ENABLED=1`,
+`METAL_GOLDEN_VERSION`, `MATRIX_FREE_TIER_ENABLED=1`,
+`MATRIX_FREE_TIER_MAX_RUNTIMES` and `MATRIX_FREE_TIER_INVITE_REQUIRED`, and
+binds three Secret Manager secrets:
+
+- `METAL_HOSTD_API_TOKEN` from `metal-hostd-api-token-preview:latest`
+- `METAL_HOSTD_INGRESS_TOKEN` from `metal-hostd-ingress-token-preview:latest`
+- `METAL_HOSTD_CA_PEM` from `metal-hostd-ca-pem-preview:latest`
+
+The hostd tokens are at least 32 printable characters. The CA secret holds
+the PEM of the CA that signed hostd's TLS certificate. Create all three secrets
+and grant `matrix-platform-preview-runner` `secretAccessor` on them before
+turning the switch on. If a secret is missing, Cloud Run rejects that PR's
+deploy. The credentials are never passed as plain env vars and never printed.
+
+Every other PR deploys with exactly the command it would get with the switch
+off. The share-preview connector (`connect_share_preview`) redeploys a PR's
+tag with `--update-*` flags, which merge onto the settings of the revision that
+deployed last. So it re-applies the metal settings for the selected PR, and
+removes them (`--remove-env-vars`, `--remove-secrets`) for every other PR. The workflow rejects an invalid switch value or PR number before it
+deploys anything. It rejects invalid golden, ceiling or invite values only for
+the selected PR. Previews share the staging database, so keep the switch on
+one PR at a time. Turn it off (`PREVIEW_METAL_ENABLED=0`) after the end-to-end
+test, then redeploy that PR to drop the settings from its revision.
+
+### Host bundles for the preview platform
+
+`.github/workflows/preview-host-bundle.yml` (manual dispatch) builds a host
+bundle from any branch, tag, or commit and registers it with the **preview**
+platform, so staging end-to-end tests can pin a VM to that exact bundle
+without anyone handling bundle-store or platform secrets:
+
+```bash
+gh workflow run preview-host-bundle.yml -f ref=<branch-or-sha>   # register only
+gh workflow run preview-host-bundle.yml -f ref=<branch> -f channel=dev
+```
+
+- **Build** checks out `ref` and runs `./scripts/build-host-bundle.sh` with the
+  release workflow's build environment (Node 24, frozen lockfile,
+  `NEXT_PUBLIC_*`). It holds no publish credentials, and no PostHog
+  source-map credentials.
+- **Publish** runs in the `Preview` environment from the workflow's own
+  revision, not from `ref`. It uploads to the shared bundle store with the
+  release workflow's bundle-store secrets. It reads the preview operator secret
+  `platform-preview-secret` through workload identity and masks it. Then it
+  registers the bundle at `PREVIEW_PUBLIC_URL` (default
+  `https://preview.matrix-os.com`) and checks that the platform reports the
+  same sha256. `scripts/ci/resolve-preview-platform-url.sh` is an allowlist:
+  it accepts only `https://preview.matrix-os.com` or the
+  `matrix-platform-preview` Cloud Run origin (optionally `pr-<N>---` tagged),
+  and stops the run for anything else. The publish job also re-checks the
+  version (`-preview-`) and channel (`none` or `dev`) itself.
+- **Versions** default to `v<date>-preview-<sha12>-<run>-<attempt>`. A custom
+  `version` must contain `-preview-`, so a preview upload can never take an
+  immutable production release key in the shared store. Preview bundles are
+  never golden-snapshot eligible. The job summary lists the version and sha256
+  for the test to pin.
+- GitHub dispatches `workflow_dispatch` only from the workflow file on `main`.
+  Before that, or for a test branch, push to a same-repo `e2e/**` branch: the
+  push runs the same build and publish with the defaults (the pushed SHA, the
+  default version, channel `none`). The publish job then uses that branch's
+  copy of the workflow and publish tooling, and the same production-host
+  refusal applies.
+
 ### One-time infrastructure setup
 
 The label workflow assumes this is already provisioned in GCP/Cloudflare/Stripe
