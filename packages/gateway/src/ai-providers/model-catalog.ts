@@ -2,6 +2,7 @@ import {
   ALIBABA_QWEN_37_PLUS_MODEL_ID, ALIBABA_QWEN_37_PLUS_PREVIEW_MAX_OUTPUT_TOKENS,
   GOOGLE_GEMINI_38_FLASH_MODEL_ID, GOOGLE_GEMINI_38_FLASH_PREVIEW_MAX_OUTPUT_TOKENS,
   MANAGED_WORKERS_AI_MODELS, MANAGED_WORKERS_AI_MODEL_IDS, MATRIX_BEDROCK_SOURCE_ID,
+  MATRIX_PI_BEDROCK_GPT_OSS_120B_ID,
   MOONSHOT_KIMI_K31_PRO_MODEL_ID, MOONSHOT_KIMI_K31_PRO_PREVIEW_MAX_OUTPUT_TOKENS, retiredManagedWorkersAiModel,
   type AiModelDescriptorView,
 } from "@matrix-os/contracts";
@@ -98,7 +99,7 @@ export function buildBundledModelCatalog(
       aliases: [], catalogVersion: AI_PROVIDER_CATALOG_VERSION,
     })),
     ...anthropicModels,
-    ...novaProModel(effectiveBedrockModelIds),
+    ...bedrockModels(effectiveBedrockModelIds),
     ...FUNDED_PREVIEW_CHAT_ROUTES.map(({ modelId, sourceId, vendor, displayName, disclosureKey }): AiModelDescriptorView => ({
       id: modelId,
       vendor,
@@ -130,16 +131,21 @@ export function buildBundledModelCatalog(
   ];
 }
 
-function novaProModel(effectiveBedrockModelIds: ReadonlySet<string>): AiModelDescriptorView[] {
-  const id = "bedrock/amazon.nova-pro-v1:0";
-  if (!effectiveBedrockModelIds.has(id)) return [];
-  return [{
-    id, vendor: "amazon", displayName: "Nova Pro", status: "preview",
-    capabilities: ["tools", "long_context"], effortControls: [],
+const BEDROCK_MODELS = [
+  { id: "bedrock/amazon.nova-pro-v1:0", displayName: "Nova Pro" },
+  { id: MATRIX_PI_BEDROCK_GPT_OSS_120B_ID, displayName: "GPT-OSS 120B" },
+  { id: "bedrock/nvidia.nemotron-super-3-120b", displayName: "Nemotron 3 Super 120B" },
+  { id: "bedrock/qwen.qwen3-next-80b-a3b", displayName: "Qwen3 Next 80B" },
+] as const;
+
+function bedrockModels(effectiveBedrockModelIds: ReadonlySet<string>): AiModelDescriptorView[] {
+  return BEDROCK_MODELS.filter(model => effectiveBedrockModelIds.has(model.id)).map(model => ({
+    ...model, vendor: "amazon", status: "preview",
+    capabilities: model.id === MATRIX_PI_BEDROCK_GPT_OSS_120B_ID ? ["tools"] : ["tools", "long_context"], effortControls: [],
     eligibleAccessSourceIds: [MATRIX_BEDROCK_SOURCE_ID],
     dataPolicies: [{ accessSourceId: MATRIX_BEDROCK_SOURCE_ID, route: "matrix_relay", disclosureKey: "matrix-aws-bedrock" }],
     aliases: [], catalogVersion: AI_PROVIDER_CATALOG_VERSION,
-  }];
+  }));
 }
 
 export function eligibleModelsForSource(

@@ -149,6 +149,18 @@ describe("explicit managed Pi route", () => {
         api: "openai-completions", modelId: SONNET, input: ["text"], contextWindow: 32_768,
       } });
   });
+  it("leaves additional framing headroom when Matrix Pi uses GPT-OSS 120B", () => {
+    const model = "bedrock/openai.gpt-oss-120b-1:0";
+    const bedrock = snapshot({
+      bedrockModels: [model],
+      sources: [{ id: "matrix_bedrock", models: [model] }],
+      models: [{ id: model, vendor: "amazon", sources: ["matrix_bedrock"] }],
+    });
+    expect(resolveManagedPiRoute(bedrock, { instanceId: "matrix_pi_default", model }, NOW))
+      .toMatchObject({ accessSourceId: "matrix_included", route: {
+        api: "openai-completions", modelId: model, contextWindow: 16_384, maxOutputTokens: 8_192,
+      } });
+  });
   it("refuses stale, forged, and revoked explicit routes without falling back", () => {
     const revoked = value(); revoked.accessSources[1]!.state = "disabled";
     const stale = value(); stale.accessSources[1]!.staleAfter = new Date(NOW - 1).toISOString();

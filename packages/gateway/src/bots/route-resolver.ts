@@ -18,6 +18,8 @@ import {
   MANAGED_WORKERS_AI_MODEL_IDS,
   MATRIX_BEDROCK_SOURCE_ID,
   MATRIX_PI_BEDROCK_CONTEXT_WINDOW,
+  MATRIX_PI_BEDROCK_GPT_OSS_120B_CONTEXT_WINDOW,
+  MATRIX_PI_BEDROCK_GPT_OSS_120B_ID,
   MATRIX_PI_DEFAULT_MAX_OUTPUT_TOKENS,
   isEffectiveBedrockModel,
 } from "@matrix-os/contracts";
@@ -67,6 +69,8 @@ function routeFor(snapshot: AiProviderSnapshotV3, entry: (typeof SOURCES_IN_ORDE
   const anthropic = model.vendor === "anthropic";
   const bedrock = isEffectiveBedrockModel(snapshot, entry.id, modelId);
   if ((!anthropic && entry.anthropicOnly) || (entry.id === MATRIX_BEDROCK_SOURCE_ID && !bedrock)) return undefined;
+  const bedrockContextWindow = modelId === MATRIX_PI_BEDROCK_GPT_OSS_120B_ID
+    ? MATRIX_PI_BEDROCK_GPT_OSS_120B_CONTEXT_WINDOW : MATRIX_PI_BEDROCK_CONTEXT_WINDOW;
   const route = BotModelRouteSchema.safeParse({
     api: anthropic && !bedrock ? "anthropic-messages" : "openai-completions",
     modelId,
@@ -74,7 +78,7 @@ function routeFor(snapshot: AiProviderSnapshotV3, entry: (typeof SOURCES_IN_ORDE
     // not inherit the native Anthropic descriptor's vision capability until
     // that exact request path can translate and enforce image inputs.
     input: !bedrock && model.capabilities.includes("vision") ? ["text", "image"] : ["text"],
-    contextWindow: bedrock ? MATRIX_PI_BEDROCK_CONTEXT_WINDOW
+    contextWindow: bedrock ? bedrockContextWindow
       : anthropic ? ANTHROPIC_CONTEXT_WINDOW : OTHER_CONTEXT_WINDOW,
     maxOutputTokens: FUNDED_PREVIEW_CHAT_ROUTES.find(preview => preview.modelId === modelId)?.maxOutputTokens
       ?? MATRIX_PI_DEFAULT_MAX_OUTPUT_TOKENS,

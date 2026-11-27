@@ -1,4 +1,6 @@
 import {
+  MATRIX_PI_BEDROCK_GPT_OSS_120B_ID,
+  MATRIX_PI_BEDROCK_GPT_OSS_120B_INPUT_TOKENS,
   MATRIX_PI_BEDROCK_MIN_INPUT_TOKENS,
   MATRIX_PI_DEFAULT_MAX_OUTPUT_TOKENS,
   ProviderModelReferenceSchema,
@@ -7,6 +9,7 @@ import { z } from "zod/v4";
 import type { FundedTokenUsage } from "./funded-relay-model.js";
 
 const MAX_ROUTE_CONFIG_BYTES = 16 * 1024;
+const MAX_BEDROCK_ROUTES = 8;
 const SAFE_ROUTE_ID = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/;
 const SAFE_REGION = /^[a-z0-9]+(?:-[a-z0-9]+){2,5}$/;
 const SAFE_MODEL_ID = /^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,2047}$/;
@@ -36,15 +39,60 @@ const BedrockRouteConfigSchema = z.object({
   canonicalModelId: ProviderModelReferenceSchema,
   resolvedModel: z.string().min(1).max(256).regex(SAFE_MODEL_ID),
   inferenceProfile: z.string().min(1).max(2_048).regex(SAFE_MODEL_ID),
-  maxInputTokens: z.number().int().min(MATRIX_PI_BEDROCK_MIN_INPUT_TOKENS).max(10_000_000),
+  maxInputTokens: z.number().int().min(MATRIX_PI_BEDROCK_GPT_OSS_120B_INPUT_TOKENS).max(10_000_000),
   // A route advertised to Matrix Pi must accept the ordinary turn ceiling.
   // Lower provider limits fail startup closed instead of producing a model
   // that passes readiness but rejects every normal message before dispatch.
   maxOutputTokens: z.number().int().min(MATRIX_PI_DEFAULT_MAX_OUTPUT_TOKENS).max(128_000),
   pricing: BedrockPricingSchema,
-}).strict();
+}).strict().superRefine((route, ctx) => {
+  if (route.canonicalModelId === MATRIX_PI_BEDROCK_GPT_OSS_120B_ID) {
+    if (route.maxInputTokens !== MATRIX_PI_BEDROCK_GPT_OSS_120B_INPUT_TOKENS
+      || route.maxInputTokens + route.maxOutputTokens > 128_000) {
+      ctx.addIssue({ code: "custom", path: ["maxInputTokens"], message: "GPT-OSS route exceeds its reviewed context window" });
+    }
+  } else if (route.maxInputTokens < MATRIX_PI_BEDROCK_MIN_INPUT_TOKENS) {
+    ctx.addIssue({ code: "custom", path: ["maxInputTokens"], message: "Bedrock route is below the Matrix Pi input budget" });
+  }
+});
 
 export type BedrockRouteConfig = z.infer<typeof BedrockRouteConfigSchema>;
+
+export function bedrockModelAliases(route: BedrockRouteConfig): ReadonlySet<string> {
+  return new Set([
+    route.clientModelId,
+    route.canonicalModelId,
+    route.canonicalModelId.replace(/^anthropic\//, ""),
+  ]);
+}
+
+export function resolveBedrockRouteConfigs(env: NodeJS.ProcessEnv): readonly BedrockRouteConfig[] {
+  const raw = env.MATRIX_FUNDED_BEDROCK_ROUTES?.trim();
+  if (!raw) return [];
+  if (env.MATRIX_FUNDED_BEDROCK_ROUTE?.trim() || Buffer.byteLength(raw, "utf8") > MAX_ROUTE_CONFIG_BYTES) {
+    throw new Error("Bedrock route configuration is invalid");
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw) as unknown;
+  } catch (error) {
+    if (error instanceof SyntaxError) throw new Error("Bedrock route configuration is invalid");
+    throw error;
+  }
+  const result = z.array(BedrockRouteConfigSchema).min(1).max(MAX_BEDROCK_ROUTES).safeParse(parsed);
+  if (!result.success) throw new Error("Bedrock route configuration is invalid");
+  const ids = new Set<string>();
+  const aliases = new Set<string>();
+  for (const route of result.data) {
+    const modelAliases = [...bedrockModelAliases(route)];
+    if (ids.has(route.routeId) || modelAliases.some(alias => aliases.has(alias))) {
+      throw new Error("Bedrock route configuration has conflicting model or route identifiers");
+    }
+    ids.add(route.routeId);
+    for (const alias of modelAliases) aliases.add(alias);
+  }
+  return result.data;
+}
 
 export function isBedrockPricingCurrent(route: BedrockRouteConfig, now: Date): boolean {
   const time = now.getTime();

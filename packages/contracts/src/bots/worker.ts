@@ -12,6 +12,11 @@ export const MATRIX_PI_DEFAULT_MAX_OUTPUT_TOKENS = 8_192;
 /** Bedrock's worker budget leaves room for byte-based translation and provider framing. */
 export const MATRIX_PI_BEDROCK_CONTEXT_WINDOW = 32_768;
 export const MATRIX_PI_BEDROCK_MIN_INPUT_TOKENS = 200_000;
+// GPT-OSS has a 128K Bedrock window. Preserve provider output headroom and
+// give Matrix Pi a smaller history budget for the byte-based input bound.
+export const MATRIX_PI_BEDROCK_GPT_OSS_120B_ID = "bedrock/openai.gpt-oss-120b-1:0";
+export const MATRIX_PI_BEDROCK_GPT_OSS_120B_CONTEXT_WINDOW = 16_384;
+export const MATRIX_PI_BEDROCK_GPT_OSS_120B_INPUT_TOKENS = 118_000;
 
 /** Model route resolved by the gateway from Provider V3; the worker never chooses one. */
 export const BotModelRouteSchema = z.object({
