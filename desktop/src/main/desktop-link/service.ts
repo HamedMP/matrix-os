@@ -4,7 +4,7 @@
 // every connect, and pipe core streams the computer opens to this app's private
 // herdr-core through the guard. Nothing listens on the desktop. Stop closes the
 // link at once and keeps the pairing.
-import { sign } from "node:crypto";
+import { randomBytes, sign } from "node:crypto";
 import { EventEmitter } from "node:events";
 import {
   DESKTOP_LINK_CLOSE, DESKTOP_LINK_CONTROL_MAX_BYTES, DESKTOP_LINK_PATH,
@@ -96,6 +96,8 @@ const MAX_OPENS_PER_WINDOW = 10;
 const OPEN_WINDOW_MS = 10_000;
 
 interface Link {
+  /** Rotated at every WebSocket admission; kept across idle core stream closures. */
+  selectionKey?: Buffer;
   slot: string;
   computerName: string;
   state: DesktopLinkState;
@@ -211,7 +213,7 @@ export function createDesktopLinkService(options: DesktopLinkServiceOptions) {
     endStream(link, false);
     const stream: Stream = {
       id, core: null, ended: false,
-      guard: createDesktopLinkGuard({ home: options.home, computerName: link.computerName, consent: link.consent, platform: process.platform }),
+      guard: createDesktopLinkGuard({ selectionKey: link.selectionKey, home: options.home, computerName: link.computerName, consent: link.consent, platform: process.platform }),
       queue: Promise.resolve(), queued: 0,
     };
     link.stream = stream;
@@ -304,6 +306,7 @@ export function createDesktopLinkService(options: DesktopLinkServiceOptions) {
     if (!link.admitted) {
       // Before admission the gateway sends exactly a challenge, then `ready`.
       if (DesktopLinkServerFrameSchema.safeParse(raw).data?.t === "ready") {
+        link.selectionKey = randomBytes(32);
         link.admitted = true;
         link.failures = 0;
         setState(link, "on");

@@ -1,6 +1,4 @@
-// Gateway wiring for Herdr sessions (spec 2701). Off unless the installer set
-// `MATRIX_HERDR=on`, which it does only when Matrix runs as the account that
-// owns the herdr-core (self-host decision 3).
+// Gateway wiring for owner-hosted Herdr sessions (2701, ENG-495).
 import type { Context, Hono } from "hono";
 import type { TerminalRef } from "@matrix-os/contracts";
 import type { UpgradeWebSocket } from "hono/ws";
@@ -8,18 +6,33 @@ import type { RequestPrincipal } from "../request-principal.js";
 import type { TerminalInputActivity } from "../terminal-agent/input-activity.js";
 import type { TerminalLiveOwnership } from "../terminal-live-ownership.js";
 import { createHerdrAdapter, type HerdrAdapter } from "./adapter.js";
+import { isHerdrPreviewRuntime, privatePreviewHerdrOwner } from "./private-preview.js";
 import { createHerdrRoutes } from "./routes.js";
 import { createHerdrCoreTransport } from "./transport.js";
 import { registerHerdrTerminalWebSocket } from "./ws.js";
 
-export function herdrSessionsEnabled(env: NodeJS.ProcessEnv): boolean {
-  return env.MATRIX_HERDR?.trim().toLowerCase() === "on";
+export function herdrTransportOptions(env: NodeJS.ProcessEnv, uid = process.getuid?.()) {
+  if (!isHerdrPreviewRuntime(env)) {
+    return env.MATRIX_HERDR?.trim().toLowerCase() === "on" ? { env } : null;
+  }
+  if (!privatePreviewHerdrOwner(env) || !uid) return null;
+  // The managed terminal and Gateway run as the same matrix user. connect may
+  // start the daemon, whose children must not inherit the Gateway's credentials.
+  return {
+    bin: "/opt/matrix/app/vendor/herdr/hc",
+    env: {
+      HOME: "/home/matrix/home", XDG_RUNTIME_DIR: `/run/user/${uid}`,
+      PATH: "/opt/matrix/bin:/opt/matrix/runtime/node/bin:/usr/local/bin:/usr/bin:/bin",
+      SHELL: "/bin/bash", LANG: "C.UTF-8",
+    },
+  };
 }
 
 /** The adapter over `herdr-core connect`, or null when Herdr sessions are off. Not started. */
 export function createHerdrSessionsFromEnv(env: NodeJS.ProcessEnv = process.env): HerdrAdapter | null {
-  if (!herdrSessionsEnabled(env)) return null;
-  const transport = createHerdrCoreTransport({ env });
+  const options = herdrTransportOptions(env);
+  if (!options) return null;
+  const transport = createHerdrCoreTransport(options);
   // A gateway that exits without shutting down still ends its `herdr-core connect` child.
   const onExit = () => transport.close();
   process.once("exit", onExit);

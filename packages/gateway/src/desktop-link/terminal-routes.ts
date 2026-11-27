@@ -133,8 +133,12 @@ export function addDesktopLinkTerminalRoutes(api: Hono, registry: DesktopLinkReg
     const target = linked(c);
     if (target instanceof Response) return target;
     try {
-      const listed = await target.adapter.list();
-      if (!listed.available) return c.json({ error: "desktop_offline" }, 503);
+      const view = c.req.query("view");
+      if (view !== undefined && view !== "chat-control") return c.json({ error: "invalid_request" }, 400);
+      const lease = view === "chat-control" ? await registry.chatLease(target.deviceId) : null;
+      if (view === "chat-control" && !lease) return c.json({ error: "desktop_offline" }, 503);
+      const listed = lease ? await target.adapter.listForLinkedChatControl() : await target.adapter.list();
+      if (!listed.available || (lease && !await lease.validate())) return c.json({ error: "desktop_offline" }, 503);
       // Refs for these terminals use the desktop's own workspace id, never Herdr's.
       return c.json({ deviceId: target.deviceId, workspaceId: desktopLinkWorkspaceId(target.deviceId), sessions: listed.sessions });
     } catch (error: unknown) { return failed(c, error, "listing"); }

@@ -4,6 +4,7 @@
 //
 // Consumed as raw TS source by plain Node: import only from packages, never
 // from "./module.js" siblings.
+import { desktopLinkDevicePrefix } from "@matrix-os/contracts/desktop-link";
 import { z } from "zod/v4";
 
 /**
@@ -33,6 +34,8 @@ export const HerdrSessionSchema = z.strictObject({
   tabId: z.string().regex(/^tt_[0-9a-f]{32}$/),
   title: z.string().min(1).max(256).regex(SAFE_TEXT),
   status: HerdrSessionStatusSchema.nullable(),
+  /** Opaque connected-core and process incarnation used for explicit Chat selection. */
+  revision: z.string().regex(/^[0-9a-f]{64}$/).optional(),
   statusMessage: z.string().max(200).regex(SAFE_TEXT).optional(),
 });
 export type HerdrSession = z.infer<typeof HerdrSessionSchema>;
@@ -53,3 +56,15 @@ export function isHerdrTerminalRef(ref: { workspaceId: string } | null | undefin
 export function shouldShowHerdrSessions(list: HerdrSessionList | null | undefined): boolean {
   return list?.available === true && list.sessions.length > 0;
 }
+
+/** A qualified Chat selection may also name one of the computer's linked desktops. */
+export function isHerdrChatTerminalRef(ref: { workspaceId: string } | null | undefined): boolean {
+  return isHerdrTerminalRef(ref) || desktopLinkDevicePrefix(ref?.workspaceId) !== null;
+}
+
+/** Read-only owner Chat discovery; a machine ID is never permission to execute. */
+export const HerdrDiscoveryQuerySchema = z.strictObject({
+  machine: z.string().regex(/^(?:gateway|herdr:[a-z0-9_.-]{1,32}|desktop:[0-9a-f]{64})$/).optional(),
+  query: z.string().trim().min(1).max(100).optional(),
+  offset: z.number().int().min(0).max(4096).optional(),
+});

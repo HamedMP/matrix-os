@@ -9,6 +9,7 @@
 // consent (D2) decides starts and every attach or kill of a terminal the link did
 // not start, approved as one instance (`address@created_ms`). Answers go back
 // rebuilt, carrying only what the computer needs.
+import { createHmac, randomBytes } from "node:crypto";
 import { realpath, stat } from "node:fs/promises";
 import * as nodePath from "node:path";
 import { z } from "zod/v4";
@@ -92,6 +93,7 @@ const AttachParams = z.strictObject({
   rows: Cells,
   history: z.number().int().min(0).max(100_000).optional(),
   observe: z.boolean().optional(),
+  selection_revision: z.string().regex(/^[a-f0-9]{64}$/).optional(),
 });
 const KillParams = z.strictObject({ terminal: TerminalAddress });
 /** The computer's handshake: exactly what its Herdr client sends. */
@@ -162,6 +164,8 @@ export interface DesktopLinkGuardResult {
 type Decided = Omit<DesktopLinkGuardResult, "deferred">;
 
 export interface DesktopLinkGuardOptions {
+  /** Per admitted device link; core streams may idle out without invalidating the selected terminal. */
+  selectionKey?: Buffer;
   /** The desktop user's home; terminals start here or in a folder under it. */
   home: string;
   /** The computer's name, written on every terminal it starts. */
@@ -220,6 +224,11 @@ function shown(terminal: CoreTerminal) {
 }
 
 export function createDesktopLinkGuard(options: DesktopLinkGuardOptions) {
+  const selectionKey = options.selectionKey ?? randomBytes(32);
+  function selectionRevision(terminal: CoreTerminal) {
+    if (terminal.created_ms === undefined) return undefined;
+    return createHmac("sha256", selectionKey).update(JSON.stringify([terminal.address, terminal.created_ms])).digest("hex");
+  }
   const pathApi = options.pathApi ?? nodePath;
   const resolveFolder = options.resolveFolder ?? (async (path: string) => {
     const resolved = await realpath(path);
@@ -391,12 +400,13 @@ export function createDesktopLinkGuard(options: DesktopLinkGuardOptions) {
 
   async function onTerminal(kind: "attach" | "kill", callerId: string | number, params: Record<string, unknown> & { terminal: string }): Promise<Decided> {
     let expect: string | null = null;
-    if (options.consent) {
+    const { selection_revision: selected, ...coreParams } = params;
+    if (options.consent || selected !== undefined) {
       const terminal = await current(params.terminal);
-      if (!terminal) return refused(callerId);
+      if (!terminal || (selected !== undefined && selectionRevision(terminal) !== selected)) return refused(callerId);
       const instance = instanceOf(terminal);
       expect = instance;
-      if (instance === null || !options.consent.covers(instance)) {
+      if (options.consent && (instance === null || !options.consent.covers(instance))) {
         const allowed = await options.consent.terminal({
           instance, action: kind === "kill" ? "end" : "open", terminal: terminal.address,
           title: renderVisible(shown(terminal).title, MAX_SHOWN_TITLE_CHARS) ?? "(a title too long to show)",
@@ -409,7 +419,7 @@ export function createDesktopLinkGuard(options: DesktopLinkGuardOptions) {
         if (!now || instanceOf(now) !== instance) return refused(callerId);
       }
     }
-    return forward(kind, callerId, params, expect);
+    return forward(kind, callerId, coreParams, expect);
   }
 
   /** The computer's first, unframed line: exactly `hello` with `framed: true`. Never forwarded. */
@@ -457,7 +467,7 @@ export function createDesktopLinkGuard(options: DesktopLinkGuardOptions) {
         const terminals = (listed.success ? listed.data.terminals : []).flatMap((item) => {
           const terminal = CoreTerminal.safeParse(item);
           // Only this device's own terminals, never one on a machine its core reaches.
-          return terminal.success && TerminalAddress.safeParse(terminal.data.address).success ? [shown(terminal.data)] : [];
+          return terminal.success && TerminalAddress.safeParse(terminal.data.address).success ? [{ ...shown(terminal.data), selection_revision: selectionRevision(terminal.data) }] : [];
         });
         return frame({ jsonrpc: "2.0", id, result: { terminals, hidden_finished: 0, machines: [] } });
       }
@@ -615,8 +625,8 @@ export function createDesktopLinkGuard(options: DesktopLinkGuardOptions) {
           case "terminal.attach": {
             const checked = AttachParams.safeParse(params);
             if (!checked.success) { add(refused(id)); break; }
-            const { terminal, cols, rows, history, observe } = checked.data;
-            const rebuilt = { terminal, cols, rows, ...(history === undefined ? {} : { history }), ...(observe === undefined ? {} : { observe }) };
+            const { terminal, cols, rows, history, observe, selection_revision } = checked.data;
+            const rebuilt = { terminal, cols, rows, ...(selection_revision ? { selection_revision } : {}), ...(history === undefined ? {} : { history }), ...(observe === undefined ? {} : { observe }) };
             if (options.consent) defer(id, () => onTerminal("attach", id, rebuilt));
             else add(await onTerminal("attach", id, rebuilt));
             break;

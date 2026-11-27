@@ -89,7 +89,7 @@ export interface HcConnection {
    * `observe` attaches watch-only: the core never takes this viewer's typing or
    * size, so it cannot resize the program (herdr-core `terminal.attach` param).
    */
-  attach(params: { terminal: string; cols: number; rows: number; history?: number; observe?: boolean }, handlers: HcStreamHandlers): Promise<HcStream>;
+  attach(params: { terminal: string; cols: number; rows: number; history?: number; observe?: boolean; selection_revision?: string }, handlers: HcStreamHandlers): Promise<HcStream>;
   onDisconnect(listener: () => void): void;
   close(): void;
 }

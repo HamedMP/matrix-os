@@ -21,6 +21,11 @@ const MAX_TITLE_CHARS = 256;
 // Each entry is read on its own: a terminal the core describes in a way this
 // build does not expect is skipped instead of hiding every other terminal.
 const ListedSchema = z.object({ terminals: z.array(z.unknown()).max(LOCAL_TERMINAL_LIST_MAX) });
+const ProcessIdentitySchema = z.object({
+  cwd: z.string().min(1).max(4096), pid: z.int().positive(), created_ms: z.int().nonnegative(),
+});
+export type HcListedProcess = { terminal: LocalTerminal; identity?: z.infer<typeof ProcessIdentitySchema>; selectionRevision?: string };
+
 const ListedTerminalSchema = z.object({
   address: z.string().regex(LOCAL_TERMINAL_ID_PATTERN),
   state: z.string().max(32),
@@ -30,8 +35,22 @@ const ListedTerminalSchema = z.object({
   name: z.string().nullable().optional().catch(null),
   status: z.object({ state: z.string().max(32), msg: z.string().optional().catch(undefined) }).nullable().optional().catch(null),
   labels: z.record(z.string(), z.string()).nullable().optional().catch(null),
+  selection_revision: z.string().regex(/^[a-f0-9]{64}$/).optional().catch(undefined),
   argv: z.array(z.string()).max(4_096).nullable().optional().catch(null),
 });
+// terminal.list includes remote lines and machine presence in the same snapshot.
+const DiscoverySchema = ListedSchema.extend({ machines: z.array(z.unknown()).max(1_000).optional() });
+const DiscoveryTerminalSchema = ListedTerminalSchema.extend({ address: z.string().regex(LOCAL_TERMINAL_ADDRESS_PATTERN) });
+const MachinePresenceSchema = z.object({
+  name: z.string().regex(/^[a-z0-9][a-z0-9._-]{0,31}$/), state: z.string().max(32),
+});
+export interface DiscoveredMachine {
+  id: string;
+  name: string;
+  online: boolean;
+  terminals: Array<Pick<LocalTerminal, "id" | "title" | "status">>;
+}
+
 /** The label `hc run --label where=…` sets; Herdr shows it as the terminal's place. */
 const WHERE_LABEL = "where";
 /** The label a rename sets; it wins over the program's own title. */
@@ -56,6 +75,35 @@ export function safeTerminalTitle(...candidates: Array<string | null | undefined
     if (title) return title;
   }
   return "Terminal";
+}
+
+function terminalTitle(terminal: z.infer<typeof ListedTerminalSchema>): string {
+  return safeTerminalTitle(terminal.labels?.[TERMINAL_TITLE_LABEL], terminal.title, terminal.name,
+    terminal.labels?.[WHERE_LABEL], programName(terminal.argv?.[0]));
+}
+
+/** Discovery does not add addresses to any local control or attachment registry. */
+export function discoverHerdrMachines(reply: unknown): { machines: DiscoveredMachine[] } {
+  const snapshot = DiscoverySchema.parse(reply);
+  const local: DiscoveredMachine = { id: "gateway", name: "Current Matrix computer", online: true, terminals: [] };
+  const remotes = new Map<string, DiscoveredMachine>();
+  for (const raw of snapshot.machines ?? []) {
+    const machine = MachinePresenceSchema.safeParse(raw);
+    if (!machine.success) continue;
+    const { name, state } = machine.data;
+    remotes.set(name, { id: `herdr:${name}`, name, online: state === "connected", terminals: [] });
+  }
+  for (const raw of snapshot.terminals) {
+    const row = DiscoveryTerminalSchema.safeParse(raw);
+    if (!row.success || row.data.state !== "live") continue;
+    const address = row.data.address;
+    const separator = address.indexOf("/");
+    const machine = separator < 0 ? local : remotes.get(address.slice(0, separator));
+    if (!machine?.online) continue;
+    const status = LocalTerminalStatusSchema.safeParse(row.data.status?.state);
+    machine.terminals.push({ id: address.slice(separator + 1), title: terminalTitle(row.data), status: status.success ? status.data : null });
+  }
+  return { machines: [local, ...remotes.values()] };
 }
 
 /**
@@ -154,33 +202,35 @@ export function createHcSessions(options: {
     return RanSchema.parse(await core.call("terminal.run", params, remaining)).address;
   }
 
+  /** Process metadata is internal. Never return it as the renderer's terminal listing. */
+  async function listProcesses(core: HcConnection): Promise<HcListedProcess[]> {
+    const listed = ListedSchema.parse(await core.call("terminal.list", {}));
+    const terminals: HcListedProcess[] = [];
+    for (const entry of listed.terminals) {
+      const terminal = ListedTerminalSchema.safeParse(entry);
+      if (!terminal.success || terminal.data.state !== "live") continue;
+      const state = LocalTerminalStatusSchema.safeParse(terminal.data.status?.state);
+      const identity = ProcessIdentitySchema.safeParse(entry);
+      terminals.push({ terminal: {
+        id: terminal.data.address,
+        // Terminals started from Herdr often carry no title of their own; its
+        // where label, then the program's name, tell them apart.
+        title: terminalTitle(terminal.data),
+        status: state.success ? state.data : null,
+        ...(state.success && terminal.data.status?.msg ? { statusMessage: safeStatusMessage(terminal.data.status.msg) } : {}),
+      }, ...(identity.success ? { identity: identity.data } : {}), ...(terminal.data.selection_revision ? { selectionRevision: terminal.data.selection_revision } : {}) });
+    }
+    return terminals;
+  }
+
   return {
     /** How many attachments are open. */
     attached: (): number => attachments.size,
 
-    /** Every live terminal the core reports. */
     async list(): Promise<LocalTerminal[]> {
-      const core = await options.ensure();
-      const listed = ListedSchema.parse(await core.call("terminal.list", {}));
-      const terminals: LocalTerminal[] = [];
-      for (const entry of listed.terminals) {
-        const terminal = ListedTerminalSchema.safeParse(entry);
-        if (!terminal.success || terminal.data.state !== "live") continue;
-        const state = LocalTerminalStatusSchema.safeParse(terminal.data.status?.state);
-        terminals.push({
-          id: terminal.data.address,
-          // Terminals started from Herdr often carry no title of their own; its
-          // where label, then the program's name, tell them apart.
-          title: safeTerminalTitle(
-            terminal.data.labels?.[TERMINAL_TITLE_LABEL], terminal.data.title, terminal.data.name,
-            terminal.data.labels?.[WHERE_LABEL], programName(terminal.data.argv?.[0]),
-          ),
-          status: state.success ? state.data : null,
-          ...(state.success && terminal.data.status?.msg ? { statusMessage: safeStatusMessage(terminal.data.status.msg) } : {}),
-        });
-      }
-      return terminals;
+      return (await listProcesses(await options.ensure())).map(({ terminal }) => terminal);
     },
+    listProcesses,
 
     /** Starts a terminal with these `terminal.run` params. Returns null when too many were started just now. */
     run(params: Record<string, unknown>, timing: { deadlineMs?: number } = {}): Promise<string | null> {
@@ -213,7 +263,7 @@ export function createHcSessions(options: {
      * `stream.history`: scrollback lines the core replays first (2,000 when omitted).
      * `stream.observe`: watch only; the core never takes this viewer's typing or size.
      */
-    async attach(id: string, size: { cols: number; rows: number }, stream: { history?: number; observe?: boolean } = {}): Promise<number> {
+    async attach(id: string, size: { cols: number; rows: number }, stream: { history?: number; observe?: boolean; selectionRevision?: string } = {}): Promise<number> {
       const startedIn = releaseEpoch;
       const core = await options.ensure();
       if (releaseEpoch !== startedIn) throw new Error("terminal attachment ended");
@@ -230,6 +280,7 @@ export function createHcSessions(options: {
           ...(stream.history === undefined ? {} : { history: stream.history }),
           // Sent only when set, so a typing attach looks exactly as before.
           ...(stream.observe ? { observe: true } : {}),
+          ...(stream.selectionRevision ? { selection_revision: stream.selectionRevision } : {}),
         }, {
           onData: (chunk, consumed) => {
             if (sink.outputBytes) {
