@@ -1,6 +1,6 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { z } from 'zod/v4';
-import { sql, type Kysely } from 'kysely';
+import { sql, type Kysely, type RawBuilder } from 'kysely';
 import type { ChatDatabase } from '../chat/database.js';
 import type { ChatRepository } from '../chat/repository.js';
 import { toOutbox } from '../chat/records.js';
@@ -9,7 +9,7 @@ import type { BotRuntimeRegistry } from '../bots/runtime-registry.js';
 import type { ExecutionAdmissionFence } from '../execution-admission-fence.js';
 import type { GooglePilotStorage } from './google-pilot-storage.js';
 import { createGoogleStoppedRunReceipts } from './google-stop-receipts.js';
-import { createGoogleContextStore } from '../google-data/runtime/contexts.js';
+import { createGoogleContextStore, googleContextRetentionExpired, type GoogleContextDeletionAuthority } from '../google-data/runtime/contexts.js';
 import { boundedProvenanceTransaction } from '../google-data/provenance/transaction.js';
 import { createGoogleCanonicalMessageDeletionHandler } from '../google-data/provenance/canonical-message-delete.js';
 import { createGoogleManagedPiSessionDeletionHandler } from '../google-data/provenance/managed-copy-writes.js';
@@ -29,6 +29,18 @@ const receiptSchema = z.strictObject({ complete: z.boolean(), pending: z.number(
 const deny = (): never => { throw new GoogleProvenanceUnavailable(); };
 /** Canonical non-terminal run statuses (terminal: completed, failed, aborted). */
 const ACTIVE_RUN_STATUSES = ['accepted', 'running', 'waiting_for_input', 'waiting_for_approval'] as const;
+// Resolve only registered entity formats. The caller restricts c to the exact owner.
+const copyChats = sql`
+    SELECT substring(c.entity_ref FROM 5) AS chat_id WHERE c.kind='session' AND left(c.entity_ref,9)='mpi_chat_'
+    UNION ALL SELECT m.chat_id FROM chat_messages m
+      WHERE c.kind='derived' AND left(c.entity_ref,3)='cm_' AND m.id=substring(c.entity_ref FROM 4)
+    UNION ALL SELECT e.chat_id FROM chat_run_events e
+      WHERE c.kind='derived' AND left(c.entity_ref,4)='gae_'
+        AND (e.google_activity_entity_ref=c.entity_ref OR e.id=substring(c.entity_ref FROM 5))
+    UNION ALL SELECT r.chat_id FROM chat_runs r
+      WHERE c.kind='derived' AND left(c.entity_ref,4)='grc_' AND r.id=substring(c.entity_ref FROM 5)
+    UNION ALL SELECT q.chat_id FROM chat_queued_turns q
+      WHERE c.kind='derived' AND left(c.entity_ref,4)='gqc_' AND q.id=substring(c.entity_ref FROM 5)`;
 /** Isolated exact-owner host only. Commands are server-authenticated by the transport composer,
  * not by this helper. No copied content enters its metadata receipt tables. */
 export async function createGooglePilotCopyLifecycle(options: {
@@ -67,14 +79,20 @@ export async function createGooglePilotCopyLifecycle(options: {
     const remainingContextCopies = (ownerId: string, chatId: string) => boundedProvenanceTransaction(db, tx => sql `SELECT 1 FROM google_copy_registry c WHERE c.owner_id=${ownerId}
     AND c.state<>'deleted' AND EXISTS(SELECT 1 FROM google_context_origins o JOIN google_context_markers m ON m.id=o.context_id
       WHERE m.owner_id=${ownerId} AND m.chat_id=${chatId} AND c.origins @> jsonb_build_array(jsonb_build_object('connectionId',o.origin_id))) LIMIT 1`.execute(tx));
-    const contexts = createGoogleContextStore(db, { deletionAuthority: { async withVerifiedContextDeletion(ownerId, chatId, work) {
-                admitted();
-                if (ownerId !== options.ownerId)
-                    return null;
-                const remaining = await remainingContextCopies(ownerId, chatId);
-                admitted();
-                return remaining.rows.length ? null : work();
-            } } });
+    const remainingChatCopies = (ownerId: string, chatId: string) => boundedProvenanceTransaction(db, tx => sql`
+        SELECT 1 FROM google_copy_registry c WHERE c.owner_id=${ownerId} AND c.state<>'deleted'
+        AND EXISTS(SELECT 1 FROM (${copyChats}) binding WHERE binding.chat_id=${chatId}) LIMIT 1`.execute(tx));
+    function deletionAuthority(remainingCopies: typeof remainingContextCopies): GoogleContextDeletionAuthority {
+        return { async withVerifiedContextDeletion(ownerId, chatId, work) {
+            admitted();
+            if (ownerId !== options.ownerId) return null;
+            const remaining = await remainingCopies(ownerId, chatId);
+            admitted();
+            return remaining.rows.length ? null : work();
+        } };
+    }
+    const contexts = createGoogleContextStore(db, { deletionAuthority: deletionAuthority(remainingContextCopies) });
+    const expiryContexts = createGoogleContextStore(db, { deletionAuthority: deletionAuthority(remainingChatCopies) });
     async function stopped<T>(key: {
         ownerId: string;
         chatId: string;
@@ -188,6 +206,125 @@ export async function createGooglePilotCopyLifecycle(options: {
     }
     const canonical = createGoogleCanonicalMessageDeletionHandler(db, { onInvalidation: ({ owner, event }) => options.repository.publishCommittedExternalOutbox(owner, event) });
     const sessions = createGoogleManagedPiSessionDeletionHandler(db);
+    // Older deployments put missing run proof in terminal "unavailable".
+    const recoverable = sql`j.state='unresolved' AND j.reason='unavailable'
+        AND c.kind='derived' AND c.entity_ref ~ '^(gae_|grc_|gqc_)'`;
+    const dueForProof = sql`(j.state='pending' AND j.next_attempt<=clock_timestamp())
+        OR (j.state='leased' AND j.lease_until<=clock_timestamp())
+        OR ((${recoverable}) AND j.next_attempt<=clock_timestamp())`;
+    async function processCopies(scope: RawBuilder<unknown>, queueActive = false) {
+        if (queueActive) {
+            const rows = await boundedProvenanceTransaction(db, tx => sql<{ id: string }>`
+                SELECT c.id FROM google_copy_registry c WHERE c.owner_id=${options.ownerId}
+                AND c.state='active' AND (${scope}) ORDER BY c.retention_deadline,c.id LIMIT 500`.execute(tx));
+            admitted();
+            if (rows.rows.length) await options.storage.provenance.queueCopies(options.ownerId, rows.rows.map(row => row.id));
+            admitted();
+        }
+        const rows = await boundedProvenanceTransaction(db, tx => sql<{
+            id: string;
+            kind: string;
+            entity_ref: string;
+            recovering: boolean;
+        }>`SELECT c.id,c.kind,c.entity_ref,j.state='unresolved' AS recovering
+            FROM google_copy_registry c JOIN google_copy_purge_jobs j ON j.copy_id=c.id AND j.owner_id=c.owner_id
+            WHERE c.owner_id=${options.ownerId} AND c.state='purging'
+            AND (${scope})
+            AND (${dueForProof})
+            ORDER BY j.next_attempt,c.id LIMIT 500`.execute(tx));
+        admitted();
+        const selectedIds = rows.rows.map(row => row.id);
+        const affected = selectedIds.length ? await boundedProvenanceTransaction(db, tx => sql<{
+            copy_id: string;
+            chat_id: string;
+        }>`SELECT DISTINCT c.id AS copy_id,binding.chat_id
+            FROM google_copy_registry c CROSS JOIN LATERAL (${copyChats}) binding
+            WHERE c.owner_id=${options.ownerId} AND c.id=ANY(${selectedIds}::uuid[]) LIMIT 501`.execute(tx)) : { rows: [] };
+        admitted();
+        if (affected.rows.length > 500)
+            deny();
+        // Both maps are bounded by the 500-row discovery limits.
+        const chatsByCopy = new Map<string, string[]>();
+        for (const { copy_id, chat_id } of affected.rows) {
+            const chats = chatsByCopy.get(copy_id);
+            if (chats) chats.push(chat_id);
+            else chatsByCopy.set(copy_id, [chat_id]);
+        }
+        const chatProofs = new Map<string, boolean>();
+        async function verifyProof(work: () => Promise<unknown>) {
+            try { await work(); }
+            catch (error: unknown) {
+                admitted();
+                if (error instanceof GoogleProvenanceUnavailable || error instanceof ManagedPiStopUnavailable)
+                    return false;
+                throw error;
+            }
+            admitted();
+            return true;
+        }
+        async function verifyCopy(copy: typeof rows.rows[number]) {
+            for (const chatId of chatsByCopy.get(copy.id) ?? []) {
+                const stopped = chatProofs.get(chatId) ?? await verifyProof(() => quiesceChat(chatId));
+                chatProofs.set(chatId, stopped);
+                if (!stopped) return false;
+            }
+            if (copy.kind === 'derived' && copy.entity_ref.startsWith('gae_'))
+                return verifyProof(() => options.storage.activity.quiesceCopy(options.ownerId, copy.entity_ref, operationSignal));
+            if (copy.kind === 'derived' && /^(grc_|gqc_)/.test(copy.entity_ref))
+                return verifyProof(() => options.storage.context.quiesceCopy(options.ownerId, copy.entity_ref, operationSignal));
+            return true;
+        }
+        const handlerWork = new Set<Promise<unknown>>();
+        function track(handler: NonNullable<PurgeHandlers['derived']>): NonNullable<PurgeHandlers['derived']> { return input => { admitted(); const work = handler({ ...input, signal: AbortSignal.any([input.signal, operationSignal!]) }); handlerWork.add(work); void work.then(() => { handlerWork.delete(work); }, (error: unknown) => { handlerWork.delete(work); console.warn('[google-data] Copy handler failed', { errorClass: error instanceof Error ? 'Error' : 'UnknownError' }); }); return work; }; }
+        const handlers: PurgeHandlers = { session: track(sessions), derived: track(input => input.entityRef.startsWith('cm_') ? canonical(input) : input.entityRef.startsWith('gae_') ? options.storage.activity.delete(input) : /^(grc_|gqc_)/.test(input.entityRef) ? options.storage.context.delete(input) : Promise.resolve({ status: 'unavailable' })) };
+        try {
+            // Commit each erasure or proof backoff before the next stop wait so
+            // cancelling a later wait cannot undo work or monopolize the next pass.
+            for (const copy of rows.rows) {
+                admitted();
+                if (!await verifyCopy(copy)) {
+                    await boundedProvenanceTransaction(db, tx => sql`UPDATE google_copy_purge_jobs j
+                        SET state=CASE WHEN j.state='leased' THEN 'pending' ELSE j.state END,
+                            lease_token=NULL,worker_id=NULL,lease_until=NULL,revision=j.revision+1,
+                            next_attempt=clock_timestamp()+${provenanceDefaults.retryDelayMs}*interval '1 millisecond',updated_at=now()
+                        FROM google_copy_registry c WHERE c.id=j.copy_id AND c.owner_id=j.owner_id AND c.state='purging'
+                        AND j.owner_id=${options.ownerId} AND j.copy_id=${copy.id}::uuid AND (${dueForProof})`.execute(tx));
+                    continue;
+                }
+                admitted();
+                if (copy.recovering) {
+                    await boundedProvenanceTransaction(db, tx => sql`UPDATE google_copy_purge_jobs j
+                        SET state='pending',reason=NULL,revision=j.revision+1,updated_at=now()
+                        FROM google_copy_registry c WHERE c.id=j.copy_id AND c.owner_id=j.owner_id AND c.state='purging'
+                        AND j.owner_id=${options.ownerId} AND j.copy_id=${copy.id}::uuid AND (${recoverable})`.execute(tx));
+                    admitted();
+                }
+                const claim = await options.storage.provenance.claimPurge('google-pilot-host', { ownerId: options.ownerId, copyIds: [copy.id] });
+                admitted();
+                if (claim) {
+                    await options.storage.provenance.executeClaim(claim, handlers);
+                    admitted();
+                }
+            }
+        }
+        finally {
+            await Promise.allSettled([...handlerWork]);
+        }
+    }
+
+    async function expireChat(chatId: string) {
+        await withAdmission(async () => {
+            const revision = await expiryContexts.beginExpiredChatPurge(options.ownerId, chatId);
+            admitted();
+            if (revision === null) return;
+            // An ambiguous binding cannot authorize Chat-scoped erasure.
+            await processCopies(sql`(SELECT bool_and(binding.chat_id=${chatId}) FROM (${copyChats}) binding) IS TRUE`, true);
+            if (!(await remainingChatCopies(options.ownerId, chatId)).rows.length) {
+                admitted();
+                await expiryContexts.completeDeletion(options.ownerId, chatId, revision);
+            }
+        });
+    }
     async function purge(input: GooglePilotPurgeCommand, signal?: AbortSignal): Promise<GooglePilotPurgeReceipt> {
         const command = commandSchema.parse(input);
         if (command.ownerId !== options.ownerId)
@@ -238,107 +375,8 @@ export async function createGooglePilotCopyLifecycle(options: {
                 requestIds.push((await options.storage.provenance.requestPurge(options.ownerId, originId, requestKey)).id);
                 admitted();
             }
-            // Older deployments put missing run proof in terminal "unavailable".
-            const recoverable = sql`j.state='unresolved' AND j.reason='unavailable'
-                AND c.kind='derived' AND c.entity_ref ~ '^(gae_|grc_|gqc_)'`;
-            const dueForProof = sql`(j.state='pending' AND j.next_attempt<=clock_timestamp())
-                OR (j.state='leased' AND j.lease_until<=clock_timestamp())
-                OR ((${recoverable}) AND j.next_attempt<=clock_timestamp())`;
-            const rows = await boundedProvenanceTransaction(db, tx => sql<{
-                id: string;
-                kind: string;
-                entity_ref: string;
-                recovering: boolean;
-            }>`SELECT c.id,c.kind,c.entity_ref,j.state='unresolved' AS recovering
-                FROM google_copy_registry c JOIN google_copy_purge_jobs j ON j.copy_id=c.id AND j.owner_id=c.owner_id
-                WHERE c.owner_id=${options.ownerId} AND c.state='purging'
-                AND EXISTS(SELECT 1 FROM jsonb_array_elements(c.origins) o WHERE o->>'connectionId'=ANY(${contextPurge.originIds}::text[]))
-                AND (${dueForProof})
-                ORDER BY j.next_attempt,c.id LIMIT 500`.execute(tx));
-            admitted();
-            const selectedIds = rows.rows.map(row => row.id);
-            const affected = selectedIds.length ? await boundedProvenanceTransaction(db, tx => sql<{
-                copy_id: string;
-                chat_id: string;
-            }>`WITH copies AS
-                (SELECT id,kind,entity_ref FROM google_copy_registry WHERE owner_id=${options.ownerId} AND id=ANY(${selectedIds}::uuid[]))
-                SELECT DISTINCT copy_id,chat_id FROM (
-                  SELECT id AS copy_id,substring(entity_ref FROM 5) AS chat_id FROM copies WHERE kind='session' AND entity_ref LIKE 'mpi_chat_%'
-                  UNION ALL SELECT c.id,m.chat_id FROM copies c JOIN chat_messages m ON c.entity_ref='cm_'||m.id WHERE c.kind='derived'
-                  UNION ALL SELECT c.id,e.chat_id FROM copies c JOIN chat_run_events e ON (c.entity_ref=e.google_activity_entity_ref OR c.entity_ref='gae_'||e.id) WHERE c.kind='derived'
-                  UNION ALL SELECT c.id,r.chat_id FROM copies c JOIN chat_runs r ON c.entity_ref='grc_'||r.id WHERE c.kind='derived'
-                  UNION ALL SELECT c.id,q.chat_id FROM copies c JOIN chat_queued_turns q ON c.entity_ref='gqc_'||q.id WHERE c.kind='derived'
-                ) chats LIMIT 501`.execute(tx)) : { rows: [] };
-            admitted();
-            if (affected.rows.length > 500)
-                deny();
-            // Both maps are bounded by the 500-row discovery limits.
-            const chatsByCopy = new Map<string, string[]>();
-            for (const { copy_id, chat_id } of affected.rows) {
-                const chats = chatsByCopy.get(copy_id);
-                if (chats) chats.push(chat_id);
-                else chatsByCopy.set(copy_id, [chat_id]);
-            }
-            const chatProofs = new Map<string, boolean>();
-            async function verifyProof(work: () => Promise<unknown>) {
-                try { await work(); }
-                catch (error: unknown) {
-                    admitted();
-                    if (error instanceof GoogleProvenanceUnavailable || error instanceof ManagedPiStopUnavailable)
-                        return false;
-                    throw error;
-                }
-                admitted();
-                return true;
-            }
-            async function verifyCopy(copy: typeof rows.rows[number]) {
-                for (const chatId of chatsByCopy.get(copy.id) ?? []) {
-                    const stopped = chatProofs.get(chatId) ?? await verifyProof(() => quiesceChat(chatId));
-                    chatProofs.set(chatId, stopped);
-                    if (!stopped) return false;
-                }
-                if (copy.kind === 'derived' && copy.entity_ref.startsWith('gae_'))
-                    return verifyProof(() => options.storage.activity.quiesceCopy(options.ownerId, copy.entity_ref, operationSignal));
-                if (copy.kind === 'derived' && /^(grc_|gqc_)/.test(copy.entity_ref))
-                    return verifyProof(() => options.storage.context.quiesceCopy(options.ownerId, copy.entity_ref, operationSignal));
-                return true;
-            }
-            const handlerWork = new Set<Promise<unknown>>();
-            function track(handler: NonNullable<PurgeHandlers['derived']>): NonNullable<PurgeHandlers['derived']> { return input => { admitted(); const work = handler({ ...input, signal: AbortSignal.any([input.signal, operationSignal!]) }); handlerWork.add(work); void work.then(() => { handlerWork.delete(work); }, (error: unknown) => { handlerWork.delete(work); console.warn('[google-data] Copy handler failed', { errorClass: error instanceof Error ? 'Error' : 'UnknownError' }); }); return work; }; }
-            const handlers: PurgeHandlers = { session: track(sessions), derived: track(input => input.entityRef.startsWith('cm_') ? canonical(input) : input.entityRef.startsWith('gae_') ? options.storage.activity.delete(input) : /^(grc_|gqc_)/.test(input.entityRef) ? options.storage.context.delete(input) : Promise.resolve({ status: 'unavailable' })) };
-            try {
-                // Commit each erasure or proof backoff before the next stop wait so
-                // cancelling a later wait cannot undo work or monopolize the next pass.
-                for (const copy of rows.rows) {
-                    admitted();
-                    if (!await verifyCopy(copy)) {
-                        await boundedProvenanceTransaction(db, tx => sql`UPDATE google_copy_purge_jobs j
-                            SET state=CASE WHEN j.state='leased' THEN 'pending' ELSE j.state END,
-                                lease_token=NULL,worker_id=NULL,lease_until=NULL,revision=j.revision+1,
-                                next_attempt=clock_timestamp()+${provenanceDefaults.retryDelayMs}*interval '1 millisecond',updated_at=now()
-                            FROM google_copy_registry c WHERE c.id=j.copy_id AND c.owner_id=j.owner_id AND c.state='purging'
-                            AND j.owner_id=${options.ownerId} AND j.copy_id=${copy.id}::uuid AND (${dueForProof})`.execute(tx));
-                        continue;
-                    }
-                    admitted();
-                    if (copy.recovering) {
-                        await boundedProvenanceTransaction(db, tx => sql`UPDATE google_copy_purge_jobs j
-                            SET state='pending',reason=NULL,revision=j.revision+1,updated_at=now()
-                            FROM google_copy_registry c WHERE c.id=j.copy_id AND c.owner_id=j.owner_id AND c.state='purging'
-                            AND j.owner_id=${options.ownerId} AND j.copy_id=${copy.id}::uuid AND (${recoverable})`.execute(tx));
-                        admitted();
-                    }
-                    const claim = await options.storage.provenance.claimPurge('google-pilot-host', { ownerId: options.ownerId, copyIds: [copy.id] });
-                    admitted();
-                    if (claim) {
-                        await options.storage.provenance.executeClaim(claim, handlers);
-                        admitted();
-                    }
-                }
-            }
-            finally {
-                await Promise.allSettled([...handlerWork]);
-            }
+            await processCopies(sql`EXISTS(SELECT 1 FROM jsonb_array_elements(c.origins) o
+                WHERE o->>'connectionId'=ANY(${contextPurge.originIds}::text[]))`);
             const statuses = [];
             for (const id of requestIds) {
                 statuses.push(await options.storage.provenance.status(options.ownerId, id));
@@ -365,7 +403,8 @@ export async function createGooglePilotCopyLifecycle(options: {
             return result;
         }, signal);
     }
-    let expiryCursor = '';
+    let accountCursor = '';
+    let chatCursor = '';
     async function sweep() {
         if (closed || active)
             return;
@@ -375,33 +414,45 @@ export async function createGooglePilotCopyLifecycle(options: {
             const latestIncomplete = sql`p.owner_id=${options.ownerId} AND NOT p.complete AND NOT EXISTS (
                 SELECT 1 FROM google_pilot_purge_commands newer WHERE newer.owner_id=p.owner_id
                 AND newer.command_id=p.command_id AND newer.revision>p.revision)`;
-            const accounts = await boundedProvenanceTransaction(db, tx => sql<{ account_id: string }>`SELECT account_id FROM (
-              SELECT DISTINCT s.google_account_id::text AS account_id FROM google_context_sources s
-              WHERE s.owner_id=${options.ownerId} AND EXISTS(SELECT 1 FROM google_copy_registry c
-                WHERE c.owner_id=s.owner_id AND c.state<>'deleted' AND c.origins @> jsonb_build_array(jsonb_build_object('connectionId',s.origin_id))
-                AND (s.expires_at<=clock_timestamp() OR c.retention_deadline<=clock_timestamp()))
-              UNION SELECT s.google_account_id::text FROM google_context_sources s
-                JOIN google_context_origins o ON o.origin_id=s.origin_id
-                JOIN google_context_markers m ON m.id=o.context_id AND m.owner_id=s.owner_id
-                WHERE s.owner_id=${options.ownerId} AND m.state='active'
-                  AND (s.expires_at<=clock_timestamp() OR m.retention_deadline<=clock_timestamp())
-              UNION SELECT p.account_id::text FROM google_pilot_purge_commands p WHERE ${latestIncomplete}
-            ) due ORDER BY (account_id>${expiryCursor}) DESC, account_id LIMIT 10`.execute(tx));
+            const accounts = await boundedProvenanceTransaction(db, tx => sql<{ account_id: string }>`
+                SELECT account_id FROM (SELECT DISTINCT p.account_id::text AS account_id
+                  FROM google_pilot_purge_commands p WHERE ${latestIncomplete}) due
+                ORDER BY (account_id>${accountCursor}) DESC,account_id LIMIT 10`.execute(tx));
             for (const { account_id } of accounts.rows) {
                 check();
-                // Advance before awaiting: an unavailable account must not monopolize every bounded pass.
-                expiryCursor = account_id;
+                accountCursor = account_id;
                 try {
                     const existing = await boundedProvenanceTransaction(db, tx => sql<{ input: unknown }>`SELECT p.input FROM google_pilot_purge_commands p
                       WHERE p.account_id=${account_id}::uuid AND ${latestIncomplete} ORDER BY p.created_at LIMIT 1`.execute(tx));
                     check();
-                    const command = existing.rows[0];
-                    await purge(command ? commandSchema.parse(command.input) : { ownerId: options.ownerId, googleAccountId: account_id, commandId: randomUUID(), revision: 1 });
+                    if (existing.rows[0]) await purge(commandSchema.parse(existing.rows[0].input));
                 } catch (error: unknown) {
                     check();
                     console.warn('[google-data] Account copy cleanup unavailable', { errorClass: error instanceof Error ? 'Error' : 'UnknownError' });
                 }
             }
+            const chats = await boundedProvenanceTransaction(db, tx => sql<{ chat_id: string }>`
+                SELECT m.chat_id FROM google_context_markers m WHERE m.owner_id=${options.ownerId} AND m.state<>'deleted'
+                AND ${googleContextRetentionExpired} ORDER BY (m.chat_id>${chatCursor}) DESC,m.chat_id LIMIT 10`.execute(tx));
+            for (const { chat_id } of chats.rows) {
+                check();
+                chatCursor = chat_id;
+                try { await expireChat(chat_id); }
+                catch (error: unknown) {
+                    check();
+                    console.warn('[google-data] Chat copy cleanup unavailable', { errorClass: error instanceof Error ? 'Error' : 'UnknownError' });
+                }
+            }
+            // A registered copy can expire before its Chat or lack a surviving Chat binding.
+            const expiredCopies = sql`c.retention_deadline<=clock_timestamp() OR EXISTS (
+                SELECT 1 FROM google_context_sources s WHERE s.owner_id=c.owner_id AND s.expires_at<=clock_timestamp()
+                AND c.origins @> jsonb_build_array(jsonb_build_object('connectionId',s.origin_id)))`;
+            const due = await boundedProvenanceTransaction(db, tx => sql`
+                SELECT 1 FROM google_copy_registry c LEFT JOIN google_copy_purge_jobs j ON j.copy_id=c.id AND j.owner_id=c.owner_id
+                WHERE c.owner_id=${options.ownerId} AND (${expiredCopies})
+                AND (c.state='active' OR (c.state='purging' AND (${dueForProof}))) LIMIT 1`.execute(tx));
+            check();
+            if (due.rows.length) await withAdmission(() => processCopies(expiredCopies, true));
         } finally {
             // Independent bounded maintenance still runs after account or lookup failures. A closed
             // lifecycle starts no new work; close drains any maintenance already in progress.

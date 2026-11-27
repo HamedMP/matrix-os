@@ -57,6 +57,12 @@ async function erasePublicChatSnapshots<DB>(tx: Transaction<DB>, ownerId: string
       AND c.id IN (${eligible})`.execute(tx);
 }
 
+/** Shared predicate for discovering and admitting expiration of marker m. */
+export const googleContextRetentionExpired = sql`(m.retention_deadline<=clock_timestamp() OR EXISTS (
+  SELECT 1 FROM google_context_origins o JOIN google_context_sources s ON s.origin_id=o.origin_id
+  WHERE o.context_id=m.id AND s.owner_id=m.owner_id AND s.expires_at<=clock_timestamp()
+))`;
+
 /** Trusted metadata composition only: marking is classification, never P1 approval.
  * Revalidate current P1 after waits and before collection/context assembly/egress.
  * Unknown references require host handling; null means never classified, not proof of non-Google content. */
@@ -195,6 +201,21 @@ export function createGoogleContextStore<DB>(db: Kysely<DB>, options: GoogleCont
         for (const context of contexts) revisions[context.chat_id] = context.revision;
         return { originIds: origins.map(row => row.origin_id), chatIds, revisions,
           coverage: "registered-contexts-only" as const };
+      });
+    },
+    /** Expiration belongs to the Chat. Explicit account revocation owns source tombstones. */
+    async beginExpiredChatPurge(ownerId: string, chatId: string) {
+      contextOpaque.parse(ownerId); contextOpaque.parse(chatId);
+      return boundedProvenanceTransaction(db, async tx => {
+        await lockGoogleContexts(tx);
+        const row = (await sql<{ revision: number }>`UPDATE google_context_markers m
+          SET state='purging',revision=CASE WHEN m.state='active' THEN m.revision+1 ELSE m.revision END
+          WHERE m.owner_id=${ownerId} AND m.chat_id=${chatId} AND m.state<>'deleted'
+            AND ${googleContextRetentionExpired} RETURNING revision`.execute(tx)).rows[0];
+        if (!row) return null;
+        await eraseSideChatAnswers(tx, ownerId, [chatId]);
+        await erasePublicChatSnapshots(tx, ownerId, [chatId]);
+        return row.revision;
       });
     },
     /** Repair legacy copies whose markers already entered purge, including closed markers with no account links. */
