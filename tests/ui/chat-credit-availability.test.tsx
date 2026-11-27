@@ -64,6 +64,8 @@ it("shows and mutates the platform-projected upstream preference only when suppl
     canSetBudget={false} canSetAllowlist={false} canAddCredit={false} canSetUpstream
     upstreamPreference={preference} onMutate={onMutate} onAddCredit={vi.fn()} onRefresh={vi.fn()} />);
   const choice = screen.getByRole("combobox", { name: "Matrix AI upstream" });
+  expect(screen.getByText("Developer access")).toBeInTheDocument();
+  expect(choice).toHaveAccessibleDescription("Developer access Choose where Matrix AI sends requests for eligible models.");
   expect(choice).toHaveAttribute("data-slot", "select-trigger");
   expect(choice).toHaveTextContent("Cloudflare");
   fireEvent.keyDown(choice, { key: "Enter" });
@@ -75,6 +77,7 @@ it("shows and mutates the platform-projected upstream preference only when suppl
     canSetBudget={false} canSetAllowlist={false} canAddCredit={false}
     upstreamPreference={undefined} onMutate={onMutate} onAddCredit={vi.fn()} onRefresh={vi.fn()} />);
   expect(screen.queryByRole("combobox", { name: "Matrix AI upstream" })).toBeNull();
+  expect(screen.queryByText("Developer access")).toBeNull();
 });
 it.each(["Pi", "OpenCode"] as const)("excludes only the effective Bedrock model from the %s setup picker", label => {
   const matrixSource = source();

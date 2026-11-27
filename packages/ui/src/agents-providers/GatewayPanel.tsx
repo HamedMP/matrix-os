@@ -1,5 +1,5 @@
 import { randomUUID } from "../random-uuid.js";
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { checkoutUnavailablePresentation } from "./checkout-unavailable-presentation.js";
 import { useDialogFocus } from "./use-dialog-focus.js";
 import { useGettingStartedBlocker } from "../getting-started-visibility.js";
@@ -129,6 +129,7 @@ export function GatewayPanel({
   onUsageHistory?: () => void;
   subscriptions?: ReactNode;
 }) {
+  const upstreamId = useId();
   // Older runtimes retain their readiness-based inventory. New runtimes provide
   // an explicit policy inventory that does not imply a runnable route.
   const offeredModels = modelInventory?.filter((model, index, inventory) => model.enabled
@@ -431,32 +432,58 @@ export function GatewayPanel({
       ) : null}
 
 
-          <div className="matrix-ap-policy-grid">
-            {upstreamPreference ? (
-              <div className="matrix-ap-field">
-                <span>Matrix AI upstream</span>
-                <Select
-                  value={upstreamPreference.selectedUpstream}
-                  disabled={disabled || !canSetUpstream}
-                  onValueChange={(selectedUpstream) => {
-                    if (selectedUpstream !== "aws_bedrock" && selectedUpstream !== "cloudflare") return;
-                    onMutate({ type: "set_gateway_upstream",
-                      expectedUpstreamRevision: upstreamPreference.revision, selectedUpstream });
-                  }}
-                >
-                  <SelectTrigger aria-label="Matrix AI upstream">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent position="popper">
-                    <SelectItem value="cloudflare">Cloudflare</SelectItem>
-                    <SelectItem value="aws_bedrock">AWS Bedrock</SelectItem>
-                  </SelectContent>
-                </Select>
-                {upstreamPreference.selectedUpstream !== upstreamPreference.effectiveUpstream ? (
-                  <span>Cloudflare remains active until the selected route is available.</span>
-                ) : null}
+          {upstreamPreference ? (
+            <div
+              role="group"
+              aria-labelledby={`${upstreamId}-label`}
+              style={{
+                display: "flex", flexWrap: "wrap", alignItems: "center", gap: "8px 16px",
+                marginBlock: 12, padding: "12px 14px", borderRadius: 12,
+                border: "1px solid var(--matrix-ap-border)", background: "var(--matrix-ap-surface)",
+              }}
+            >
+              <div style={{ flex: "1 1 240px", minWidth: 0 }}>
+                <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "6px 8px", fontSize: 13 }}>
+                  <strong id={`${upstreamId}-label`}>Matrix AI upstream</strong>
+                  <span id={`${upstreamId}-access`} className="matrix-ap-selected-tag">Developer access</span>
+                </div>
+                <p id={`${upstreamId}-help`} className="matrix-ap-help" style={{ marginTop: 4 }}>
+                  Choose where Matrix AI sends requests for eligible models.
+                </p>
               </div>
-            ) : null}
+              <Select
+                value={upstreamPreference.selectedUpstream}
+                disabled={disabled || !canSetUpstream}
+                onValueChange={(selectedUpstream) => {
+                  if (selectedUpstream !== "aws_bedrock" && selectedUpstream !== "cloudflare") return;
+                  onMutate({ type: "set_gateway_upstream",
+                    expectedUpstreamRevision: upstreamPreference.revision, selectedUpstream });
+                }}
+              >
+                <SelectTrigger
+                  style={{ minWidth: "min(100%, 144px)" }}
+                  aria-labelledby={`${upstreamId}-label`}
+                  aria-describedby={`${upstreamId}-access ${upstreamId}-help`}
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent position="popper">
+                  <SelectItem value="cloudflare">Cloudflare</SelectItem>
+                  <SelectItem value="aws_bedrock">AWS Bedrock</SelectItem>
+                </SelectContent>
+              </Select>
+              {upstreamPreference.selectedUpstream !== upstreamPreference.effectiveUpstream ? (
+                <p className="matrix-ap-help" role="status" style={{
+                  flexBasis: "100%", margin: 0, paddingTop: 8,
+                  borderTop: "1px solid var(--matrix-ap-border)", color: "var(--matrix-ap-warning-text)",
+                }}>
+                  Cloudflare remains active until the selected route is available.
+                </p>
+              ) : null}
+            </div>
+          ) : null}
+
+          <div className="matrix-ap-policy-grid">
             {canSetBudget ? (
               <>
                 <label className="matrix-ap-field">
