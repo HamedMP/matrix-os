@@ -88,6 +88,7 @@ export default defineConfig({
       "@matrix-os/contracts/bots": path.resolve(__dirname, "packages/contracts/src/bots/index.ts"),
       "@matrix-os/contracts/keyboard-shortcuts": path.resolve(__dirname, "packages/contracts/src/keyboard-shortcuts.ts"),
       "@matrix-os/contracts/slack-bridge": path.resolve(__dirname, "packages/contracts/src/slack-bridge.ts"),
+      "@matrix-os/contracts/messaging-bridge": path.resolve(__dirname, "packages/contracts/src/messaging-bridge.ts"),
       "@matrix-os/bot-runtime": path.resolve(__dirname, "packages/bot-runtime/src/index.ts"),
       "@matrix-os/herdr-core-client/protocol": path.resolve(__dirname, "packages/herdr-core-client/src/protocol.ts"),
       "@matrix-os/herdr-core-client/client": path.resolve(__dirname, "packages/herdr-core-client/src/client.ts"),
