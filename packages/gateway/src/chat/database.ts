@@ -1,3 +1,4 @@
+import { bootstrapProjectSetups, type ChatProjectSetupsTable } from "./project-setup-database.js";
 import { bootstrapCompanyDriveSharingIndexes } from "./drive-sharing-guard.js";
 import { bootstrapBrowserApprovalMetadata } from "./browser-approval-database.js";
 import { bootstrapChatDriveProjects } from "./drive-project-database.js";
@@ -312,6 +313,7 @@ export interface ChatDatabase extends ChatImportDatabase {
     expires_at: Timestamp;
   };
   chats: ChatsTable;
+  chat_project_setups: ChatProjectSetupsTable;
   chat_members: ChatMembersTable;
   chat_user_state: ChatUserStateTable;
   chat_messages: ChatMessagesTable;
@@ -812,6 +814,7 @@ export async function bootstrapChatDatabase<Database extends ChatDatabase>(
   `.execute(db);
 
   await bootstrapChatMetadata(db);
+  await bootstrapProjectSetups(db);
   await bootstrapChatAttribution(db);
 
   await sql`CREATE INDEX IF NOT EXISTS idx_chats_owner_updated ON chats(owner_type, owner_id, lifecycle, updated_at DESC, id)`.execute(db);

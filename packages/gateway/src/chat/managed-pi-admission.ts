@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
-import { MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID, CanonicalChatExecutionRootRefSchema, CanonicalChatModelSelectionSchema, type BotToolCapability } from "@matrix-os/contracts";
+import { lstat } from "node:fs/promises";
+import { MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID, ChatRunContextSchema, ProjectSetupDraftSchema, CanonicalChatExecutionRootRefSchema, CanonicalChatModelSelectionSchema, type BotToolCapability } from "@matrix-os/contracts";
 import { SCOPE_RUNTIME_BOT_ADAPTER_ID, SCOPE_RUNTIME_BOT_HARNESS_VERSION, SCOPE_RUNTIME_MANAGED_PI_PROFILE_ID } from "@matrix-os/scope-runtime/bot-profile";
 import type { ScopeRuntimeHost } from "../scope-runtime-host/index.js";
 import { BotAdmissionError } from "../bots/admission.js";
@@ -12,6 +13,7 @@ import type { ResolvedBotRoute } from "../bots/route-resolver.js";
 import type { ChatExecutionRootResolver } from "./execution-root.js";
 import { resolveManagedPiPlan, resolveManagedPiAnthropic, sameManagedPiRoute } from "./managed-pi-route.js";
 import { managedPiWorkspace } from "./managed-pi-workspace.js";
+import { projectSetupWorkspaceFingerprint } from "./project-setup-workspace.js";
 
 export function createManagedPiAdmission(deps: {
   db: BotExecutor; homePath: string; host: ScopeRuntimeHost; registry: BotRuntimeRegistry;
@@ -24,7 +26,7 @@ export function createManagedPiAdmission(deps: {
   const heartbeats = new Map<string, { stop(): Promise<void> }>(); // at most one per registry binding (capacity 64)
   async function authority(input: { ownerId: string; chatId: string; runId: string }, allowPending = false) {
     const row = await deps.db.selectFrom("chat_runs as run").innerJoin("chats as chat", "chat.id", "run.chat_id")
-      .select(["run.instance_id", "run.selection", "run.execution_root", "run.execution_root_fingerprint", "run.permission_mode", "chat.project_id"])
+      .select(["run.instance_id", "run.selection", "run.execution_root", "run.execution_root_fingerprint", "run.permission_mode", "run.context_snapshot", "chat.project_id"])
       .where("run.id", "=", input.runId).where("chat.id", "=", input.chatId)
       .where("chat.owner_id", "=", input.ownerId).where("chat.owner_type", "=", "personal")
       .where("chat.collaboration", "is", null).where("chat.lifecycle", "=", "active")
@@ -34,7 +36,31 @@ export function createManagedPiAdmission(deps: {
         .whereRef("binding.chat_id", "=", "chat.id").where("binding.removed_at", "is", null))))
       .executeTakeFirst();
     if (!row) throw new BotAdmissionError("not_found");
-    return row;
+    const contextValue: unknown = typeof row.context_snapshot === "string" ? JSON.parse(row.context_snapshot) : row.context_snapshot;
+    const context = contextValue == null ? null : ChatRunContextSchema.safeParse(contextValue);
+    if (context && !context.success) throw new BotAdmissionError("not_found");
+    return { ...row, setupDraft: context?.success ? context.data.projectSetupDraft : undefined };
+
+  }
+  async function setupAuthority(row: Awaited<ReturnType<typeof authority>>, input: { ownerId: string; chatId: string; runId: string }, root: { path: string; fingerprint: string }) {
+    if (!row.setupDraft) return undefined;
+    if (!row.project_id || !row.execution_root || !["supervised", "full_access"].includes(row.permission_mode)) throw new BotAdmissionError("not_found");
+    const ref = CanonicalChatExecutionRootRefSchema.parse(typeof row.execution_root === "string" ? JSON.parse(row.execution_root) : row.execution_root);
+    if (ref.kind !== "project" || ref.projectId !== row.project_id || root.fingerprint !== row.execution_root_fingerprint) throw new BotAdmissionError("root_changed");
+    const setup = await deps.db.selectFrom("chat_project_setups").select(["root_fingerprint", "revision", "draft"])
+      .where("owner_id", "=", input.ownerId).where("chat_id", "=", input.chatId).where("project_id", "=", row.project_id).executeTakeFirst();
+    const parsed = setup ? ProjectSetupDraftSchema.safeParse(typeof setup.draft === "string" ? JSON.parse(setup.draft) : setup.draft) : undefined;
+    if (!setup || !parsed?.success) throw new BotAdmissionError("not_found");
+    const draft = parsed.data;
+    if (draft.chatId !== input.chatId || draft.projectId !== row.project_id || draft.step !== "review" || draft.revision !== Number(setup.revision)
+      || (draft.generation?.status !== "pending" && draft.generation?.status !== "running")) throw new BotAdmissionError("not_found");
+    if (draft.generation.status === "pending" ? draft.revision !== row.setupDraft.revision
+      : draft.generation.runId !== input.runId || draft.generation.sourceRevision !== row.setupDraft.revision) throw new BotAdmissionError("not_found");
+    const identity = await lstat(root.path);
+    if (!identity.isDirectory() || identity.isSymbolicLink()) throw new BotAdmissionError("root_changed");
+    const fingerprint = projectSetupWorkspaceFingerprint(root.fingerprint, identity);
+    if (setup.root_fingerprint !== fingerprint) throw new BotAdmissionError("root_changed");
+    return { revision: row.setupDraft.revision, fingerprint };
   }
   async function assertSource(row: Awaited<ReturnType<typeof authority>>, ownerId: string, resolved: ResolvedBotRoute) {
     const selection = CanonicalChatModelSelectionSchema.parse(typeof row.selection === "string" ? JSON.parse(row.selection) : row.selection);
@@ -50,7 +76,7 @@ export function createManagedPiAdmission(deps: {
       throw new BotAdmissionError("not_found");
     }
   }
-  async function workspace(binding: Pick<ManagedPiRuntimeBinding, "ownerId" | "chatId" | "runId" | "workspace" | "rootFingerprint" | "runtimeHandle" | "executionGeneration" | "route" | "accessSourceId" | "subscription" | "anthropicApi">, renewalSignal?: AbortSignal): Promise<string> {
+  async function workspace(binding: Pick<ManagedPiRuntimeBinding, "ownerId" | "chatId" | "runId" | "workspace" | "rootFingerprint" | "runtimeHandle" | "executionGeneration" | "route" | "accessSourceId" | "subscription" | "anthropicApi" | "projectSetupDraft">, renewalSignal?: AbortSignal): Promise<string> {
     const assertActive = () => { if (renewalSignal?.aborted) throw new BotAdmissionError("not_found"); };
     assertActive();
     const owned = deps.registry.lookupRun(binding);
@@ -76,6 +102,8 @@ export function createManagedPiAdmission(deps: {
         .then((root) => ({ path: root.primaryWorkspaceRoot, fingerprint: root.fingerprint }));
     assertActive();
     if (root.fingerprint !== binding.rootFingerprint) throw new BotAdmissionError("root_changed");
+    const setupDraft = await setupAuthority(row, binding, root);
+    if (!isDeepStrictEqual(setupDraft, owned.projectSetupDraft)) throw new BotAdmissionError("not_found");
     // Root resolution awaits filesystem/project state. Native credential writes
     // can revoke the source during that wait without aborting the run signal.
     if (signal.aborted) throw new BotAdmissionError("not_found");
@@ -152,21 +180,22 @@ export function createManagedPiAdmission(deps: {
         root = await managedPiWorkspace(deps.homePath, input.ownerId, input.chatId, true);
         workspaceRef = { kind: "chat_workspace" };
       }
-      const capabilities: BotToolCapability[] = row.permission_mode === "full_access" ? ["artifact.read", "artifact.write"] : row.permission_mode === "supervised" ? ["artifact.read"] : [];
+      const setupDraft = await setupAuthority(row, input, root);
+      const capabilities: BotToolCapability[] = setupDraft ? [] : row.permission_mode === "full_access" ? ["artifact.read", "artifact.write"] : row.permission_mode === "supervised" ? ["artifact.read"] : [];
       if (capabilities.length) capabilities.push(...(deps.toolCapabilities ?? []).filter(capability =>
         row.permission_mode === "full_access"
         || (capability !== "github.developer" && capability !== "mcp.call" && (capability !== "browser.action" || deps.supervisedBrowser?.(input) === true))));
-      if (!capabilities.length) throw new BotAdmissionError("not_found");
+      if (!capabilities.length && !setupDraft) throw new BotAdmissionError("not_found");
       const scopeHandle = `scope_${createHash("sha256").update(`managed-chat:${input.ownerId}:${input.chatId}`).digest("hex").slice(0, 32)}`;
       const runtime = await deps.host.client.createRuntime({ scopeHandle, profileId: SCOPE_RUNTIME_MANAGED_PI_PROFILE_ID, workload: "bot_agent",
         adapterId: SCOPE_RUNTIME_BOT_ADAPTER_ID, harnessVersion: SCOPE_RUNTIME_BOT_HARNESS_VERSION,
-        sandbox: { version: 1, scopeHandle, actorId: input.ownerId, worktree: { hostPath: root.path, mode: row.permission_mode === "full_access" ? "rw" : "ro", fingerprint: root.fingerprint }, network: "broker_only" } });
+        sandbox: { version: 1, scopeHandle, actorId: input.ownerId, worktree: { hostPath: root.path, mode: !setupDraft && row.permission_mode === "full_access" ? "rw" : "ro", fingerprint: root.fingerprint }, network: "broker_only" } });
       const binding: ManagedPiRuntimeBinding = { runtimeHandle: runtime.runtimeHandle, executionGeneration: runtime.executionGeneration,
-        kind: "managed_chat", ownerId: input.ownerId, chatId: input.chatId,
+        kind: "managed_chat", ownerId: input.ownerId, chatId: input.chatId, ...(setupDraft ? { projectSetupDraft: setupDraft } : {}),
         runId: input.runId, workspace: workspaceRef, rootFingerprint: root.fingerprint, route: input.resolved.route,
         accessSourceId: input.resolved.accessSourceId, ...(input.resolved.subscription ? { subscription: input.resolved.subscription } : {}), ...(input.resolved.anthropicApi ? { anthropicApi: input.resolved.anthropicApi } : {}), capabilities, requestClass: "interactive" };
-      try { deps.registry.bind(binding); }
-      catch (error: unknown) { await deps.host.client.stopRuntime({ runtimeHandle: runtime.runtimeHandle }); throw error; }
+      try { deps.registry.bind(binding); if (setupDraft) await workspace(binding); }
+      catch (error: unknown) { deps.registry.release(runtime.runtimeHandle); await deps.host.client.stopRuntime({ runtimeHandle: runtime.runtimeHandle }); throw error; }
       return binding;
     },
     async release(runtimeHandle: string): Promise<void> {

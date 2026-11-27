@@ -1,3 +1,4 @@
+import { withCapabilityLookupTimeout } from "./server/capability-lookup-timeout.js";
 import { createTerminalLaunchRuntime } from "./terminal/launch-runtime.js";
 import { fileURLToPath } from "node:url";
 import { startUsageHistory } from "./ai-usage/history-service.js";
@@ -419,20 +420,6 @@ export async function createGateway(config: GatewayConfig) {
   });
   let internalIntegrationBaseUrl: string | null = null;
   const PLATFORM_USER_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  const CAPABILITY_LOOKUP_TIMEOUT_MS = 10_000;
-  async function withCapabilityLookupTimeout<T>(operation: () => Promise<T>): Promise<T> {
-    let timeout: ReturnType<typeof setTimeout> | undefined;
-    try {
-      return await Promise.race([
-        operation(),
-        new Promise<never>((_, reject) => {
-          timeout = setTimeout(() => reject(new Error("capability lookup timed out")), CAPABILITY_LOOKUP_TIMEOUT_MS);
-        }),
-      ]);
-    } finally {
-      if (timeout) clearTimeout(timeout);
-    }
-  }
   async function getConnectedCapabilityIds(ownerId: string): Promise<string[]> {
     if (platformDb) {
       try {

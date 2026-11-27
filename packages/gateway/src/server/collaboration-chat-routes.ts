@@ -1,3 +1,5 @@
+import { createProjectSetupRoutes } from "../chat/project-setup-routes.js";
+import { ProjectSetupService } from "../chat/project-setup-service.js";
 import { createRoutineActionOwnerRoutes } from "../bots/routine-action-routes.js";
 import { registerRoutineOriginHttp } from "./routine-origin-routes.js";
 import { createRoutineCliExecutionRoutes } from "../bots/routine-cli-routes.js";
@@ -116,6 +118,13 @@ export function registerCollaborationChatRoutes(options: CollaborationChatRouteO
   app.route("/", createBrowserGrantRoutes({ control: options.browserApprovals, getPrincipal: c => requireRequestPrincipal(c) }));
   // Ahead of the canonical routes so their `/api/chats/*` wire-version middleware never applies to it.
   app.route("/", createAgentThreadChatRoutes({ database: chatRepository?.kysely ?? null, getPrincipal: c => requireRequestPrincipal(c) }));
+  app.route("/", createProjectSetupRoutes({
+    service: chatRepository && canonicalChatExecutionRoots && options.homePath
+      ? new ProjectSetupService({ repository: chatRepository, executionRoots: canonicalChatExecutionRoots, homePath: options.homePath,
+        ...(canonicalChatOrchestrator ? { generation: { repository: chatRepository, orchestrator: canonicalChatOrchestrator, catalog: canonicalChatProviderCatalog } } : {}) })
+      : null,
+    getPrincipal: c => requireRequestPrincipal(c),
+  }));
   app.route("/", createCanonicalChatRoutes({
     service: chatRepository
         ? createCanonicalChatService(chatRepository, {

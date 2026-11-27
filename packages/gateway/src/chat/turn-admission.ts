@@ -47,7 +47,10 @@ export interface TurnAdmissionOptions {
     promptOverride?: string, admissionKey?: string): Promise<void>;
 }
 
+export const PROJECT_SETUP_DRAFTING = Symbol("project-setup-drafting");
+
 export interface CanonicalTurnProvenance {
+  [PROJECT_SETUP_DRAFTING]?: { revision: number };
   [ROUTINE_DIRECT_DISPATCH]?: RoutineDirectDispatch;
   routineCreationProof?: string;
   previewTurnProof?: string;
@@ -188,7 +191,7 @@ async function admitTimedTurn(
         );
       }
     }
-    const resumeState = prepared?.context?.agent ? undefined : await loadChatResumeState({
+    const resumeState = prepared?.context?.agent || provenance?.[PROJECT_SETUP_DRAFTING] ? undefined : await loadChatResumeState({
       repository: deps.repository, owner, chatId, adapter,
       instanceId: validated.instance.id,
       selection: validated.selection, interactionMode: effective.interactionMode, permissionMode: effective.permissionMode,
@@ -203,6 +206,9 @@ async function admitTimedTurn(
         requestHash, instanceId: validated.instance.id, resumeState, context: routineCreationContext(input, prepared?.context),
       });
     } catch (error: unknown) { return mapRepositoryError(error); }
+    if (provenance?.[PROJECT_SETUP_DRAFTING]) {
+      sessionContext = { version: 1, requestHash, chats: [], ...sessionContext, projectSetupDraft: provenance[PROJECT_SETUP_DRAFTING] };
+    }
     const adapterState = resumeState === undefined ? undefined : {
       schemaVersion: adapter.stateSchemaVersion,
       state: adapter.serializeState(resumeState),

@@ -173,3 +173,56 @@ it.each([false, true])("projects supervised browser capability only with wired a
  expect(binding.capabilities).not.toContain("github.developer");
  await admission.release(binding.runtimeHandle);
 });
+
+async function setupProjectDraft(permissionMode = "full_access") {
+  const fixture = await setup(permissionMode, true);
+  const { initialProjectSetup } = await import("../../../packages/gateway/src/chat/project-setup-state.js");
+  const { projectSetupWorkspaceFingerprint } = await import("../../../packages/gateway/src/chat/project-setup-workspace.js");
+  const { lstat } = await import("node:fs/promises");
+  const rootPath = join(fixture.home, "setup-project"); await mkdir(rootPath);
+  const ref = { kind: "project" as const, projectId: "project_setup" };
+  const resolved: ResolvedChatExecutionRoot = { ref, fingerprint: "a".repeat(64), primaryWorkspaceRoot: rootPath, projectSlug: "setup-project" };
+  const fingerprint = projectSetupWorkspaceFingerprint(resolved.fingerprint, await lstat(rootPath));
+  const draft = { ...initialProjectSetup(fixture.input.chatId, ref.projectId, "Portfolio", "msg_setup"), revision: 3, step: "review" as const, generation: { status: "pending" as const } };
+  await fixture.db.updateTable("chats").set({ project_id: ref.projectId }).where("id", "=", fixture.input.chatId).execute();
+  await fixture.db.updateTable("chat_runs").set({ execution_root: ref, execution_root_fingerprint: resolved.fingerprint,
+    context_snapshot: { version: 1, requestHash: "a".repeat(64), chats: [], projectSetupDraft: { revision: 3 } } }).where("id", "=", fixture.input.runId).execute();
+  await fixture.db.insertInto("chat_project_setups").values({ owner_id: OWNER, project_id: ref.projectId, root_fingerprint: fingerprint,
+    chat_id: fixture.input.chatId, revision: 3, draft, last_request_id: "req_setup", last_request_hash: "b".repeat(64), updated_at: new Date().toISOString() }).execute();
+  fixture.roots.resolve.mockResolvedValue(resolved);
+  return { ...fixture, draft, fingerprint, rootPath };
+}
+
+it("admits validated setup with zero tools and a read-only mount even when full access was saved", async () => {
+  const { admission, input, createRuntime, registry, fingerprint } = await setupProjectDraft();
+  const binding = await admission.admit(input);
+  expect(binding.capabilities).toEqual([]);
+  expect(binding.projectSetupDraft).toEqual({ revision: 3, fingerprint });
+  expect(createRuntime).toHaveBeenCalledWith(expect.objectContaining({ sandbox: expect.objectContaining({ worktree: expect.objectContaining({ mode: "ro" }) }) }));
+  expect(() => registry.bind({ ...binding, capabilities: ["artifact.write"] })).toThrow(new BotRuntimeRegistryError("invalid_binding"));
+  await admission.release(binding.runtimeHandle);
+});
+
+it("fails closed on malformed setup provenance and stale draft revision before worker creation", async () => {
+  const { admission, input, db, createRuntime } = await setupProjectDraft();
+  await db.updateTable("chat_runs").set({ context_snapshot: { version: 1, requestHash: "a".repeat(64), chats: [], projectSetupDraft: { revision: -1 } } }).where("id", "=", input.runId).execute();
+  await expect(admission.admit(input)).rejects.toBeInstanceOf(BotAdmissionError);
+  await db.updateTable("chat_runs").set({ context_snapshot: { version: 1, requestHash: "a".repeat(64), chats: [], projectSetupDraft: { revision: 4 } } }).where("id", "=", input.runId).execute();
+  await expect(admission.admit(input)).rejects.toBeInstanceOf(BotAdmissionError);
+  expect(createRuntime).not.toHaveBeenCalled();
+});
+
+it("revalidates the linked run source revision and composite workspace identity during renewal", async () => {
+  const { admission, input, db, draft, fingerprint, rootPath } = await setupProjectDraft("supervised");
+  const binding = await admission.admit(input);
+  const running = { ...draft, revision: 6, generation: { status: "running" as const, runId: input.runId, sourceRevision: 3 } };
+  await db.updateTable("chat_project_setups").set({ revision: 6, draft: running }).where("chat_id", "=", input.chatId).execute();
+  await expect(admission.workspace(binding)).resolves.toBe(rootPath);
+  await db.updateTable("chat_project_setups").set({ draft: { ...running, generation: { ...running.generation, runId: "run_other" } } }).where("chat_id", "=", input.chatId).execute();
+  await expect(admission.workspace(binding)).rejects.toBeInstanceOf(BotAdmissionError);
+  await db.updateTable("chat_project_setups").set({ draft: running }).where("chat_id", "=", input.chatId).execute();
+  await rename(rootPath, `${rootPath}.old`); await mkdir(rootPath);
+  await expect(admission.workspace(binding)).rejects.toBeInstanceOf(BotAdmissionError);
+  expect(binding.projectSetupDraft?.fingerprint).toBe(fingerprint);
+  await admission.release(binding.runtimeHandle);
+});

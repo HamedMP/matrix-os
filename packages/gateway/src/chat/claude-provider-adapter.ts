@@ -148,7 +148,7 @@ export function createClaudeChatProviderAdapter(options: {
       }
     };
     const cwd = input.executionRoot ?? options.homePath;
-    const selectedPermission = claudeChatPermissionMode(input.permissionMode, input.interactionMode);
+    const selectedPermission = claudeChatPermissionMode(input.permissionMode, input.context?.projectSetupDraft ? "review" : input.interactionMode);
     const fullAccess = selectedPermission === "bypassPermissions";
     // Presentation is projected from the exact scope requested at issuance.
     // A presentation selector never authorizes a Gateway request.
