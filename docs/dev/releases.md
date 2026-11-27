@@ -4,7 +4,7 @@ Matrix OS production releases are VPS-native host bundles. R2 stores immutable t
 
 For installable CLI releases, use [CLI Release Process](cli-release.md). CLI versions publish `@finnaai/matrix` and use `cli-v<version>` tags; they are intentionally separate from host-bundle versions.
 
-Agent runbooks: `.agents/skills/release-full-stable/SKILL.md` coordinates the interactive end-to-end release; `.agents/skills/release-platform/SKILL.md` deploys the platform service; and `.agents/skills/release-matrix-stable/SKILL.md` cuts a host-bundle canary, writes its changelog, and promotes it to `stable`.
+Agent runbooks: `.agents/skills/release-full-stable/SKILL.md` coordinates the interactive end-to-end release; `.agents/skills/release-platform/SKILL.md` deploys the platform service; and `.agents/skills/release-matrix-stable/SKILL.md` qualifies the exact automatic green-main `dev` artifact, attaches its approved changelog, verifies it on a reviewed VPS, and promotes that same version to `stable`.
 
 ## Release Artifact Inventory
 
@@ -95,6 +95,11 @@ Release metadata also records:
    | `PLATFORM_PUBLIC_URL` | var | publish/deploy; defaults to `https://app.matrix-os.com` |
    | `PLATFORM_SECRET` | secret | release registration and deploy fan-out |
 
+   For a stable release, verify that the successful workflow `headSha`, the
+   `dev` channel `gitCommit`, and the immutable release row all match the
+   approved main commit. Reuse that artifact; do not dispatch another host
+   build for a separate release-candidate channel.
+
 3. Deploy to existing VPSes only when explicitly authorized.
 
    Normal `main` pushes publish `dev` but do not automatically fan out to the fleet. The workflow-dispatch input `deploy_after_publish` defaults to `false`. Setting `deploy_after_publish=true` intentionally deploys the newly published exact version to the full running fleet, so use it only for a reviewed fleet-wide rollout. Security severity does not override this opt-in deployment gate.
@@ -119,23 +124,25 @@ Release metadata also records:
 
    Also check browser behavior against `https://app.matrix-os.com` and confirm the shell shows the expected Host Bundle and Git Commit.
 
-5. Tag a release:
+5. Optionally tag a human-named milestone:
 
    ```bash
    git tag -a v0.X.0 -m "Brief description of what's in this release"
    git push origin v0.X.0
    ```
 
-   Tag pushes publish the tagged host bundle and promote the `canary` channel by default.
+   Tag pushes publish a separate tagged host bundle and promote the `canary`
+   channel by default. This optional milestone path is not part of the normal
+   stable procedure, which reuses the automatic exact-main `dev` artifact.
 
-6. Promote a tested release:
+6. Promote the exact tested main artifact:
 
    ```bash
    curl --fail --silent --show-error \
      -X POST https://app.matrix-os.com/system-bundles/channels/stable \
      -H "Authorization: Bearer $PLATFORM_SECRET" \
      -H "Content-Type: application/json" \
-     -d '{"version":"v0.X.0"}'
+     -d '{"version":"v2026.05.12-43"}'
    ```
 
    If this version should be the default for newly provisioned customer VPSes,

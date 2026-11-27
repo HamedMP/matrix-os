@@ -14,8 +14,8 @@ Use these detailed skills during the relevant stages:
 
 - `release-notes` for `release-notes/<version>.json` and the Desktop What's New
   dialog.
-- `release-matrix-stable` for host-bundle canary, reviewed-VPS verification,
-  stable promotion, and rollback.
+- `release-matrix-stable` for qualifying the exact automatic green-main dev
+  artifact, reviewed-VPS verification, stable promotion, and rollback.
 - `release-platform` when the release range contains platform/control-plane
   changes or production platform is behind those changes.
 
@@ -28,7 +28,7 @@ replace their safety rules.
 | --- | --- |
 | Release modal | Approved, validated JSON covers the invocation-time release cutoff and is merged before the Desktop build starts |
 | Platform | Relevant production platform changes are deployed and verified, or explicitly `not needed` |
-| Host bundle | A reviewed canary is promoted as the exact stable version |
+| Host bundle | The reviewed exact green-main dev artifact is promoted as the exact stable version |
 | Fleet | An explicitly approved exact-version rollout is observed across the eligible fleet |
 | Desktop | The exact approved Desktop stable version and update feeds are published |
 | Golden snapshot | Final status is recorded; a build failure is visible but does not erase a successful release |
@@ -183,16 +183,20 @@ Use `release-matrix-stable` against `RELEASE_CONTENT_SHA`:
 
 1. Derive the host's plain-text changelog from the same approved editorial
    story, adapting it to the Settings update surface rather than copying JSON.
-2. Ask before cutting the canary.
-3. Verify workflow `headSha`, canary `gitCommit`, bundle checksum, and version
-   all point to `RELEASE_CONTENT_SHA`.
-4. Ask before deploying the canary to a reviewed disposable or named VPS.
-5. Verify installed provenance, services, local health, and the changed user
+2. Qualify the exact green-main dev artifact from the automatic `main` host
+   workflow; do not dispatch a second host build or create a host canary.
+3. Verify workflow `headSha`, dev `gitCommit`, immutable release metadata,
+   bundle checksum, and version all point to `RELEASE_CONTENT_SHA`.
+4. Show the approved changelog and ask before attaching it to that same
+   immutable release without moving a channel pointer.
+5. Ask before deploying the exact candidate version to a reviewed disposable
+   or named VPS.
+6. Verify installed provenance, services, local health, and the changed user
    journeys on that VPS.
-6. Show the exact verified version and ask before promoting it to stable.
+7. Show the exact verified version and ask before promoting it to stable.
 
-Do not dispatch `stable` directly to bypass canary verification. Record the
-previous stable version before promotion.
+Promote only the exact reviewed dev artifact; never rebuild it for stable.
+Record the previous stable version before promotion.
 
 ## 6. Roll out and verify the fleet
 

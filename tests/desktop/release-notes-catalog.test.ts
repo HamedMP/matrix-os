@@ -98,8 +98,10 @@ describe("release notes catalog", () => {
     expect(warn).toHaveBeenCalledWith("[whats-new] skipped duplicate release notes:", "0.1.9.json");
   });
 
-  it("bundles the repository release-notes directory into the renderer", () => {
+  it("bundles only stable release-history rows into the renderer", () => {
     expect(BUNDLED_RELEASE_NOTES.some((entry) => entry.version === "0.1.24")).toBe(true);
+    expect(BUNDLED_RELEASE_NOTES.every((entry) => entry.channel === "stable")).toBe(true);
+    expect(BUNDLED_RELEASE_NOTES.some((entry) => entry.version === "0.1.24-canary")).toBe(false);
   });
 
   it("falls back to the update's markdown notes when its version has no structured notes", () => {

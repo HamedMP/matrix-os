@@ -10,7 +10,6 @@ const read = (path: string) => readFileSync(join(root, path), 'utf8');
 describe('release skills', () => {
   it.each([
     ['release-platform', 'platform-cloud-run.yml'],
-    ['release-matrix-stable', 'host-bundle-release.yml'],
   ])('%s is mirrored for Claude and only dispatches real %s inputs', (name, workflowFile) => {
     const skill = read(`.agents/skills/${name}/SKILL.md`);
     expect(read(`.claude/skills/${name}/SKILL.md`)).toBe(skill);
@@ -21,6 +20,47 @@ describe('release skills', () => {
     const usedInputs = [...skill.matchAll(/-f ([a-z_]+)=/g)].map((match) => match[1]);
     expect(usedInputs.length).toBeGreaterThan(0);
     for (const input of usedInputs) expect(inputs).toContain(input);
+  });
+
+  it('reuses the exact green-main dev bundle instead of cutting a VPS canary', () => {
+    const skill = read('.agents/skills/release-matrix-stable/SKILL.md');
+    const full = read('.agents/skills/release-full-stable/SKILL.md');
+
+    expect(read('.claude/skills/release-matrix-stable/SKILL.md')).toBe(skill);
+    expect(skill).toContain('channels/dev.json');
+    expect(skill).toMatch(/exact green-main dev (?:artifact|bundle)/i);
+    expect(skill).toContain('gitCommit');
+    expect(skill).not.toContain('channel=canary');
+    expect(skill).not.toContain('channels/canary.json');
+    expect(skill).not.toMatch(/cut(?:ting)? the canary/i);
+
+    const host = full.slice(
+      full.indexOf('## 5. Release the host bundle'),
+      full.indexOf('## 6. Roll out and verify the fleet'),
+    );
+    expect(host).toMatch(/exact green-main dev (?:artifact|bundle)/i);
+    expect(host).not.toMatch(/host-bundle canary|cut(?:ting)? the canary|deploying the canary/i);
+  });
+
+  it('resolves the locked host version from its workflow after the dev pointer advances', () => {
+    const skill = read('.agents/skills/release-matrix-stable/SKILL.md');
+
+    expect(skill).toContain('--branch main');
+    expect(skill).toContain('.headBranch == "main"');
+    expect(skill).toContain('gh run view "$RUN_ID" --repo HamedMP/matrix-os --log');
+    expect(skill).toMatch(/Generated version/);
+    expect(skill).toMatch(/current `dev` pointer may advance/i);
+    expect(skill).not.toContain('VERSION=$(echo "$DEV" | jq -r .version)');
+  });
+
+  it('keeps automatic Desktop prereleases out of the release-modal history', () => {
+    const skill = read('.agents/skills/release-notes/SKILL.md');
+
+    expect(read('.claude/skills/release-notes/SKILL.md')).toBe(skill);
+    expect(skill).toMatch(/stable release history/i);
+    expect(skill).toContain('desktop-stable');
+    expect(skill).not.toMatch(/default(?:s|ed)? to (?:the )?`?canary/i);
+    expect(skill).not.toContain('"version": "0.1.24-canary"');
   });
 
   // `--ref main` runs whatever main is when the dispatch lands. Without a pin a
@@ -81,7 +121,7 @@ describe('release skills', () => {
       expect(steps.slice(0, guardIndex).every((step) => step.uses?.startsWith('actions/checkout@'))).toBe(true);
     });
 
-    it.each(['release-platform', 'release-matrix-stable'])('%s pins every dispatch', (name) => {
+    it.each(['release-platform'])('%s pins every dispatch', (name) => {
       const skill = read(`.agents/skills/${name}/SKILL.md`);
       const dispatches = skill.split('\n').flatMap((line, index, lines) => {
         if (!line.includes('gh workflow run ') || !line.includes('--ref main')) return [];

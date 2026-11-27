@@ -1,39 +1,36 @@
 ---
 name: release-notes
-description: Draft user-facing Desktop release notes (release-notes/<version>.json) for the What's New dialog from PRs merged since the last release on a channel, validate them with the schema, show the draft for approval, and commit before the release build. Use when promoting or preparing a Desktop release, or when asked for release notes or a changelog for users.
+description: Draft user-facing Desktop stable release-note JSON for the What's New dialog, validate and preview it, obtain product approval, and commit it before the stable build. Use for Desktop stable releases or stable release-modal copy; automatic prereleases do not create history rows.
 ---
 
 # Release Notes
 
-Use this skill when preparing or promoting a Matrix OS Desktop release, when
-asked to write release notes or a user-facing changelog, or when invoked as
-`release-notes`. The request may name a version and a channel; by default it
-covers the version in `desktop/package.json` on the `canary` channel.
+Use this skill when preparing or promoting a Matrix OS Desktop stable release,
+when asked to write stable release-modal copy, or when invoked as
+`release-notes` during `release-full-stable`.
 
 ## Goal
 
 Write `release-notes/<version>.json`: the user-facing notes that the What's
-New dialog shows after a Desktop update and keeps in its release history.
+New dialog shows after a stable Desktop update and keeps in its stable release history.
 Users read it, not engineers. Engineering detail stays in the GitHub release
 body, which the dialog links as "Technical release notes".
 
 ## Scope
 
-- Version: the argument, or derived from `desktop/package.json` `version`
-  when omitted. Drop any prerelease suffix to get the base `X.Y.Z`. On
-  `canary` the version is `X.Y.Z-canary`: canary builds ship as
-  `X.Y.Z-canary.<stamp>` and only a `-canary` entry matches every one of
-  them. On `dev`, `beta`, and `stable` use the exact release version.
-- Channel: `canary` by default; also `dev`, `beta`, or `stable`.
-- Range: everything merged to `main` since the previous release on that
-  channel. Desktop releases are tagged `desktop-v<version>` (immutable) and
-  `desktop-<channel>` (moving pointer to the channel's latest release).
+- Version: the approved exact stable `X.Y.Z`, normally the next unused patch.
+- Channel: always `stable` for bundled release history.
+- Range: everything merged through the locked release cutoff since
+  `desktop-stable`, excluding the release-notes PR itself.
 
 ## Rules
 
 - Write the file before the release build. The renderer bundles
   `release-notes/*.json` at build time, so notes committed after the build
   never reach that release.
+- Do not create release-history JSON for automatic `dev`, `canary`, or `beta`
+  Desktop builds. Their immutable GitHub release metadata remains available,
+  but they do not become rows in the customer-facing stable history.
 - A person approves the text. Show the draft and wait for an explicit yes
   before committing. Never publish or promote a release from this skill.
 - Leave out internal work: docs, specs, chores, CI, tests, skills, agent
@@ -52,13 +49,13 @@ body, which the dialog links as "Technical release notes".
 ## Steps
 
 1. **Find the range.** `git fetch origin --tags`, then use
-   `git rev-parse desktop-<channel>` as the previous release on the channel.
-   If that tag is missing, use the newest `desktop-v*` tag that is an
-   ancestor of `origin/main` and say so in the draft.
+   `git rev-parse desktop-stable` as the previous stable release. If that tag
+   is missing, use the newest stable `desktop-vX.Y.Z` tag that is an ancestor
+   of the locked cutoff and say so in the draft.
 2. **List merged PRs.**
-   `git log --first-parent --format='%H %s' desktop-<channel>..origin/main`
+   `git log --first-parent --format='%H %s' desktop-stable..<locked-sha>`
    gives the squash commits; take the `(#NNNN)` numbers and read each with
-   `gh pr view <n> --json number,title,body,labels,files`. Prefer a
+   `gh pr view <n> --repo HamedMP/matrix-os --json number,title,body,labels,files`. Prefer a
    `## User-facing` line in the PR body when the author wrote one.
 3. **Triage.** Sort each PR into highlight, item (`new`, `improved`,
    `fixed`), or hidden. Pick at most two or three highlights: the changes a
@@ -68,9 +65,9 @@ body, which the dialog links as "Technical release notes".
 
    ```json
    {
-     "version": "0.1.24-canary",
-     "channel": "canary",
-     "date": "2026-11-16",
+     "version": "0.1.32",
+     "channel": "stable",
+     "date": "2026-11-27",
      "locale": "en",
      "title": "Your agents, at a glance",
      "shortTitle": "Agents everywhere",
