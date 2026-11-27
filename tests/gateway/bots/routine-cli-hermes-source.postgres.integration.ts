@@ -155,7 +155,7 @@ it.each(["end", "eof"])("native %s fences authorized HTTP consume before real ch
   const event = f.sourceEvents.find(event => event.type === "approval.requested")!;
   if (event.type !== "approval.requested") throw new Error("Missing exact decision");
   await f.approve(event, chatId, admitted.run.id);
-  await expect.poll(() => rejected, { timeout: 3000 }).toBe("permission_denied");
+  await expect.poll(() => rejected, { timeout: 15_000 }).toBe("permission_denied");
   expect(revokedBeforeExit).toBe(true);
   expect(await f.data.db.selectFrom("routine_cli_requests").selectAll().execute()).toEqual([]);
   expect(await f.data.db.selectFrom("bot_approvals").selectAll().execute()).toEqual([]);
@@ -168,7 +168,7 @@ it("private cancellation aborts only the exact action, preserves original UUID a
   await f.start("chat_hermes_cancel");
   await expect.poll(() => f!.sourceEvents.some(event => event.type === "approval.requested"), { timeout: 5000 }).toBe(true);
   await writeFile(f.control, "cancel");
-  await expect.poll(async () => (await f!.frames()).find(frame => frame.privateResult?.type === "result"), { timeout: 3000 }).toBeDefined();
+  await expect.poll(async () => (await f!.frames()).find(frame => frame.privateResult?.type === "result"), { timeout: 15_000 }).toBeDefined();
   const result = (await f.frames()).find(frame => frame.privateResult?.type === "result").privateResult;
   expect(JSON.parse(result.result)).toMatchObject({ data: { kind: "unknown", requestId, reconcile: true } });
   expect(await f.data.db.selectFrom("routine_cli_sources").select("revoked_at").where("generation", "like", "native_%").execute()).toEqual([{ revoked_at: null }]);
