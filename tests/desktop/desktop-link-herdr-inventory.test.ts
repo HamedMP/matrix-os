@@ -6,8 +6,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { encodeFrame, HC_FRAME, HcFrameDecoder } from "@matrix-os/herdr-core-client/protocol";
 import { collectDesktopInventory, readCoreInventory, standardHerdrSocket } from "../../desktop/src/main/desktop-link/herdr-inventory";
 
-import { createLocalTerminalHost } from "@desktop/main/local-terminals/host";
-
 const cleanup: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); });
 
@@ -41,24 +39,6 @@ async function core(rows: unknown[]) {
 }
 
 describe("Desktop Link read-only computer inventory", () => {
-  it("reads standalone machines for the Terminal window without starting or contacting its private Core", async () => {
-    const independent = await core([{ name: "remote-alias", target: "private-ssh-host", state: "connected" }]);
-    const runtimeDir = dirname(dirname(independent.path));
-    const host = createLocalTerminalHost({
-      home: runtimeDir, env: { XDG_RUNTIME_DIR: runtimeDir }, shell: "/bin/sh",
-      dataDir: join(runtimeDir, "private-data"), runtimeDir: join(runtimeDir, "private-runtime"),
-      binaryPath: null, expectedVersion: "unused", uid: process.getuid!(),
-      startCore: async () => { throw new Error("unexpected private Core start"); },
-      openSocket: () => { throw new Error("unexpected private Core connection"); },
-    }, { output: vi.fn(), closed: vi.fn() });
-    try {
-      expect(await host.standaloneMachines()).toEqual([{ name: "remote-alias", state: "connected" }]);
-      expect(independent.calls).toEqual(["hello", "machine.list"]);
-    } finally {
-      host.dispose();
-    }
-  });
-
   it("reads both running Core inventories, projects safe names and states, and never opens a terminal", async () => {
     const independent = await core([{ name: "remote.test", target: "private-host", reason: "user@host", state: "unreachable" }]);
     const own = await core([{ name: "remote.test", state: "connected" }, { name: "ambiguous", state: "dialing" }]);

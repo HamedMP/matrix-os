@@ -123,11 +123,6 @@ bottom status bar.
   Unavailable machines fold into **Unavailable (n)** at the end; the list
   scrolls on its own past 40% of the window. **Add machine…** sits at the foot
   beside Settings (see Ssh machines).
-  When a standalone Herdr Core is already running, list its registered machines
-  in a separate **Standalone Herdr · View only** group, with their reported
-  connection state. Read the existing owner-private socket; leave SSH settings
-  and machine actions with the Core that owns each registration. The same name
-  can appear in both groups.
 - Clicking a space row makes it active (highlighted), which filters the tab
   bar, Cmd+digits, Ctrl+Tab and the Agents list; **All** clears it. Chevrons
   only list what is inside (a machine's projects, a project's terminals); they

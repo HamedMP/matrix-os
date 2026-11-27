@@ -27,7 +27,6 @@ function setup(authorized = true) {
     read: vi.fn(async () => "$ npm test\n  12 passing"),
     remove: vi.fn(async () => undefined),
     machines: vi.fn(async () => [{ name: "vps", target: "can@10.0.0.7", state: "connected", temporary: false }]),
-    standaloneMachines: vi.fn(async () => [{ name: "vps", state: "unreachable" }]),
     addMachine: vi.fn(async (): Promise<unknown> => ({ ok: true, machine: { name: "vps", target: "can@10.0.0.7", state: "connected", temporary: false } })),
     removeMachine: vi.fn(async () => undefined),
     connectMachine: vi.fn(async () => undefined),
@@ -106,7 +105,7 @@ describe("local terminal IPC", () => {
 
   it("lists, dials and forgets machines, starts a shell on one, and opens an ssh login terminal", async () => {
     const { host, invoke } = setup();
-    expect(await invoke("local-terminal:machines", {})).toEqual({ status: "ready", machines: [expect.objectContaining({ name: "vps" })], standalone: [{ name: "vps", state: "unreachable" }] });
+    expect(await invoke("local-terminal:machines", {})).toEqual({ status: "ready", machines: [expect.objectContaining({ name: "vps" })] });
     expect(await invoke("local-terminal:machine-connect", { name: "vps" })).toEqual({ ok: true });
     expect(await invoke("local-terminal:machine-remove", { name: "vps" })).toEqual({ ok: true });
     host.create.mockResolvedValueOnce("vps/t3");
@@ -116,12 +115,6 @@ describe("local terminal IPC", () => {
     expect(await invoke("local-terminal:ssh-login", { target: "can@10.0.0.7", cols: 80, rows: 24 })).toEqual({ status: "ready", id: "t4" });
     expect(host.sshLogin).toHaveBeenCalledWith("can@10.0.0.7", { cols: 80, rows: 24 }, undefined);
     await expect(invoke("local-terminal:ssh-login", { target: "-oProxyCommand=sh", cols: 80, rows: 24 })).rejects.toThrow("invalid request");
-  });
-
-  it("returns standalone rows when the private Core is unavailable", async () => {
-    const { host, invoke } = setup();
-    host.machines.mockRejectedValueOnce(new Error("private core unavailable"));
-    expect(await invoke("local-terminal:machines", {})).toEqual({ status: "unavailable", standalone: [{ name: "vps", state: "unreachable" }] });
   });
 
   // Spec 2706 layer 8.

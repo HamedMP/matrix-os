@@ -25,7 +25,6 @@ const fact = (id: string, title: string) => ({ id, title, status: null, statusAt
 
 function installOperator(options: {
   peers?: unknown;
-  standalone?: () => { name: string; state: string }[];
   machines?: Machine[]; add?: (payload: { target: string; name?: string }) => unknown; facts?: unknown[]; refuseRemove?: boolean; failList?: () => boolean; refuseLogin?: boolean; failUpdate?: string[]; changedUpdate?: string[]; unsupportedUpdate?: string[];
   holdInstall?: Promise<void>;
 } = {}) {
@@ -36,7 +35,7 @@ function installOperator(options: {
       case "state:get": return { value: null };
       case "app:get-zoom": return { factor: 1 };
       case "local-terminal:watch": return { status: "ready", terminals: [...(options.facts ?? []), fact("vps/t5", "Terminal")] };
-      case "local-terminal:machines": if (options.failList?.()) throw new Error("timed out"); return { status: "ready", machines, standalone: options.standalone?.() ?? [] };
+      case "local-terminal:machines": if (options.failList?.()) throw new Error("timed out"); return { status: "ready", machines };
       case "local-terminal:machine-add": {
         const result = options.add?.(payload as { target: string; name?: string }) ?? { ok: false, reason: "unavailable" };
         if ((result as { ok: boolean }).ok) machines = [...machines, (result as { machine: Machine }).machine];
@@ -77,49 +76,6 @@ const machinesList = () => screen.getByRole("list", { name: "Machines" });
 describe("Terminal window ssh machines", () => {
   beforeEach(() => { vi.spyOn(console, "warn").mockImplementation(() => undefined); window.localStorage.clear(); });
   afterEach(() => { cleanup(); vi.restoreAllMocks(); });
-
-  it("shows the independent Herdr inventory without granting controls for a same-named private machine", async () => {
-    let rows = [{ name: "same-name", state: "connected" }];
-    const operator = installOperator({ standalone: () => rows, machines: [
-      { name: "same-name", target: "private-host", state: "unreachable", temporary: false },
-    ] });
-    render(<TerminalWindowApp />);
-    const standalone = await screen.findByRole("list", { name: "Standalone Herdr" });
-    expect(within(standalone).getByText("same-name")).toBeTruthy();
-    expect(within(standalone).getByText("Connected")).toBeTruthy();
-    expect(within(standalone).queryByRole("button")).toBeNull();
-    expect(within(machinesList()).getByText("same-name")).toBeTruthy();
-    rows = [];
-    operator.focus();
-    await waitFor(() => expect(screen.queryByRole("list", { name: "Standalone Herdr" })).toBeNull());
-    expect(within(machinesList()).getByText("same-name")).toBeTruthy();
-  });
-
-  it("rediscovers a standalone machine after its only Core disappears and returns while the window stays visible", async () => {
-    vi.useFakeTimers();
-    try {
-      const machine = { name: "remote", state: "connected" };
-      let rows = [machine];
-      installOperator({ standalone: () => rows });
-      const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
-      const { result } = renderHook(() => useSshMachines());
-      const tick = (ms: number) => act(async () => { await vi.advanceTimersByTimeAsync(ms); });
-      await tick(0);
-      expect(result.current.standalone).toEqual([machine]);
-      rows = [];
-      await tick(20_000);
-      expect(result.current.standalone).toEqual([]);
-      rows = [machine];
-      visibility.mockReturnValue("hidden");
-      await tick(20_000);
-      expect(result.current.standalone).toEqual([]);
-      visibility.mockReturnValue("visible");
-      await tick(20_000);
-      expect(result.current.standalone).toEqual([machine]);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
 
   it("adds a machine by its ssh address and lists it", async () => {
     const invoke = installOperator({ add: ({ target, name }) => ({ ok: true, machine: { name: name ?? "10.0.0.7", target, state: "connected", temporary: false } }) });

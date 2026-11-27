@@ -93,13 +93,6 @@ export const LocalMachineSchema = z.strictObject({
   coreId: MachineCoreIdSchema.optional(),
 });
 export type LocalMachine = z.infer<typeof LocalMachineSchema>;
-// Standalone Core rows are display-only; they carry no target or executable session reference.
-const StandaloneMachineSchema = z.strictObject({
-  name: LocalMachineNameSchema,
-  state: z.enum(["connected", "unreachable", "unknown"]),
-});
-export type StandaloneMachine = z.infer<typeof StandaloneMachineSchema>;
-const StandaloneMachines = z.array(StandaloneMachineSchema).max(LOCAL_MACHINES_MAX);
 /** Why a machine could not be added: herdr-core's stable kinds, never its messages. */
 export const LocalMachineAddFailureSchema = z.enum(["unreachable", "hc_missing", "incompatible", "name_taken", "already_added", "invalid", "unavailable"]);
 export type LocalMachineAddFailure = z.infer<typeof LocalMachineAddFailureSchema>;
@@ -229,8 +222,8 @@ export const LOCAL_TERMINAL_INVOKE = {
   "local-terminal:machines": {
     request: z.strictObject({}),
     response: z.discriminatedUnion("status", [
-      z.strictObject({ status: z.literal("ready"), machines: z.array(LocalMachineSchema).max(LOCAL_MACHINES_MAX), standalone: StandaloneMachines }),
-      z.strictObject({ status: Unavailable, standalone: StandaloneMachines }),
+      z.strictObject({ status: z.literal("ready"), machines: z.array(LocalMachineSchema).max(LOCAL_MACHINES_MAX) }),
+      z.strictObject({ status: Unavailable }),
     ]),
   },
   "local-terminal:machine-add": {
