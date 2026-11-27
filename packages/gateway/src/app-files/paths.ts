@@ -2,7 +2,7 @@ import { lstat, realpath } from "node:fs/promises";
 import { join, resolve, sep } from "node:path";
 import type { BigIntStats, Stats } from "node:fs";
 import { resolveRealHomeLocation } from "../collaboration/home-location.js";
-import { isDeniedFileApiPath, isProtectedHomeSubpath, resolveWithinHome } from "../path-security.js";
+import { isLexicallyDeniedFileApiPath, isProtectedHomeSubpath, resolveWithinHome } from "../path-security.js";
 import { AppFileError, errnoCode } from "./errors.js";
 
 export async function lstatOrNull(path: string): Promise<Stats | null>;
@@ -85,8 +85,9 @@ function guardSyntax(homePath: string, relativePath: string): string {
   const resolved = resolveWithinHome(homePath, relativePath);
   if (!resolved) throw new AppFileError("not_found", "outside home");
   if (isProtectedHomeSubpath(homePath, resolved)) throw new AppFileError("forbidden", "protected path");
-  // Denied subtrees answer like a missing path so their existence is not revealed.
-  if (isDeniedFileApiPath(homePath, relativePath)) throw new AppFileError("not_found", "denied path");
+  // Denied subtrees answer like a missing path so their existence is not revealed. The walk
+  // below refuses every symlink, so the requested name is the only one to check here.
+  if (isLexicallyDeniedFileApiPath(homePath, relativePath)) throw new AppFileError("not_found", "denied path");
   return resolved;
 }
 
@@ -119,7 +120,7 @@ export function isListableChild(homePath: string, childRelativePath: string): bo
   const resolved = resolveWithinHome(homePath, childRelativePath);
   return resolved !== null
     && !isProtectedHomeSubpath(homePath, resolved)
-    && !isDeniedFileApiPath(homePath, childRelativePath);
+    && !isLexicallyDeniedFileApiPath(homePath, childRelativePath);
 }
 
 /**
@@ -132,6 +133,6 @@ export function isListableChild(homePath: string, childRelativePath: string): bo
  * keep answering not found.
  */
 export function appFileFenceTarget(homePath: string, relativePath: string): string | null {
-  if (isDeniedFileApiPath(homePath, relativePath)) return null;
+  if (isLexicallyDeniedFileApiPath(homePath, relativePath)) return null;
   return resolveWithinHome(homePath, relativePath);
 }
