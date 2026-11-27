@@ -59,16 +59,16 @@ its R2 publish job to have succeeded, and resolve the version from that run's
 own generated-version log:
 
 ```bash
-RUNS=$(gh run list --repo HamedMP/matrix-os --commit "$SHA" --event push \
+RUNS=$(gh run list --repo HamedMP/matrix-os --commit "$SHA" --event push --branch main \
   --workflow host-bundle-release.yml --limit 5 \
-  --json databaseId,event,headSha,status,conclusion,url,createdAt)
+  --json databaseId,event,headBranch,headSha,status,conclusion,url,createdAt)
 RUN_ID=$(printf '%s' "$RUNS" | jq -r --arg sha "$SHA" \
-  '[.[] | select(.event == "push" and .headSha == $sha and .status == "completed" and .conclusion == "success")] | if length == 1 then .[0].databaseId else empty end')
+  '[.[] | select(.event == "push" and .headBranch == "main" and .headSha == $sha and .status == "completed" and .conclusion == "success")] | if length == 1 then .[0].databaseId else empty end')
 test -n "$RUN_ID"
 RUN=$(gh run view "$RUN_ID" --repo HamedMP/matrix-os \
-  --json databaseId,event,headSha,status,conclusion,url,jobs)
+  --json databaseId,event,headBranch,headSha,status,conclusion,url,jobs)
 printf '%s' "$RUN" | jq -e --arg sha "$SHA" \
-  '.event == "push" and .headSha == $sha and .status == "completed" and .conclusion == "success" and any(.jobs[]; .name == "Publish to R2" and .conclusion == "success")'
+  '.event == "push" and .headBranch == "main" and .headSha == $sha and .status == "completed" and .conclusion == "success" and any(.jobs[]; .name == "Publish to R2" and .conclusion == "success")'
 VERSION=$(gh run view "$RUN_ID" --repo HamedMP/matrix-os --log \
   | sed -n 's/^.*Generated version: \(v[0-9][0-9.]*-[0-9][0-9]*\).*$/\1/p' \
   | sort -u)

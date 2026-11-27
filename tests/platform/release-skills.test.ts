@@ -45,6 +45,8 @@ describe('release skills', () => {
   it('resolves the locked host version from its workflow after the dev pointer advances', () => {
     const skill = read('.agents/skills/release-matrix-stable/SKILL.md');
 
+    expect(skill).toContain('--branch main');
+    expect(skill).toContain('.headBranch == "main"');
     expect(skill).toContain('gh run view "$RUN_ID" --repo HamedMP/matrix-os --log');
     expect(skill).toMatch(/Generated version/);
     expect(skill).toMatch(/current `dev` pointer may advance/i);
