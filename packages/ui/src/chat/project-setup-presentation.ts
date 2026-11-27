@@ -1,0 +1,80 @@
+import { canonicalAssistantOutputMessages, type CanonicalChatDetailResponse, type ProjectSetupDraft } from "@matrix-os/contracts";
+
+/** Present only this setup's structured generation result as a normal Chat reply. */
+export function projectSetupGenerationText(
+  draft: ProjectSetupDraft | null,
+  runId: string | null | undefined,
+): string | null {
+  if (!draft?.generation?.runId || draft.generation.runId !== runId) return null;
+  if (draft.generation.status === "completed") {
+    return `I drafted your project guidance${draft.skill ? " and skill" : ""}. Review the Markdown below before saving.`;
+  }
+  if (draft.generation.status === "failed" || draft.generation.status === "unavailable")
+    return "I couldn’t draft your project files. Your answers are kept. Choose a supported model and try again.";
+  return "I’m drafting your project files for review.";
+}
+
+export function projectSetupGenerationResultId(
+  draft: ProjectSetupDraft | null,
+  messages: readonly { id: string; role: string; runId?: string | null; tool?: string }[],
+): string | null {
+  const runId = draft?.generation?.runId;
+  return runId
+    ? ([...messages].reverse().find(
+        (message) => message.role === "assistant" && !message.tool && message.runId === runId,
+      )?.id ?? null)
+    : null;
+}
+
+/** Use displayed messages in transcript order so the anchor exists after continuations are combined. */
+export function projectSetupControlsMessageId(
+  draft: ProjectSetupDraft | null,
+  messages: Parameters<typeof projectSetupGenerationResultId>[1],
+): string | undefined {
+  const questionId = draft?.currentQuestionMessageId;
+  if (!questionId || draft?.step !== "review" || !draft.generation?.runId) return questionId;
+  const questionIndex = messages.findIndex((message) => message.id === questionId);
+  // The draft response can reach the client before the matching transcript event.
+  if (questionIndex < 0) return questionId;
+  return projectSetupGenerationResultId(draft, messages.slice(questionIndex + 1)) ?? questionId;
+}
+
+export function projectSetupDetailPresentation(
+  detail: CanonicalChatDetailResponse,
+  draft: ProjectSetupDraft | null,
+): CanonicalChatDetailResponse {
+  if (!draft?.generation?.runId && !detail.runs.some(run => run.context?.projectSetupDraft)) return detail;
+  const chatId = detail.record.chat.id;
+  const runs = detail.runs.filter(run => run.chatId === chatId && run.context?.projectSetupDraft);
+  const current = draft?.chatId === chatId ? draft : null;
+  const runIds = [...runs.map(run => run.id), ...(current?.generation?.runId ? [current.generation.runId] : [])];
+  if (runIds.length === 0) return detail;
+  // The provider input has a turn ID but no run ID. Only suppress the canonical input
+  // attached to an admitted setup run, so normal answers can contain any text.
+  const setupTurnIds = new Set(runs.map(run => run.turnId));
+  const setupInputIds = new Set(detail.turns
+    .filter(turn => turn.chatId === chatId && setupTurnIds.has(turn.id))
+    .map(turn => turn.inputMessageId));
+  const combined = canonicalAssistantOutputMessages(detail.messages.filter(message =>
+    message.chatId !== chatId || message.role !== "user" || !setupInputIds.has(message.id),
+  ));
+  const resultIds = runIds.flatMap(runId => {
+    const result = [...combined].reverse().find(message => message.role === "assistant" && message.runId === runId);
+    return result ? [result.id] : [];
+  });
+  const messages = combined.map(message => {
+    if (!resultIds.includes(message.id)) return message;
+    const run = runs.find(candidate => candidate.id === message.runId);
+    const text = projectSetupGenerationText(current, message.runId)
+      ?? (run?.status === "completed" ? "I drafted your project files for review."
+        : run?.status === "failed" || run?.status === "aborted" ? "I couldn’t finish the draft. Your answers are kept."
+          : "I’m drafting your project files for review.");
+    return { ...message, parts: [{ type: "text" as const, text }] };
+  });
+  // Electron can render a delta before its corresponding message arrives.
+  // For setup, only project the accepted Markdown and the fixed generation status.
+  const activities = detail.activities.filter(activity =>
+    activity.type !== "assistant.delta" || activity.chatId !== chatId || !runIds.includes(activity.runId),
+  );
+  return { ...detail, messages, activities };
+}

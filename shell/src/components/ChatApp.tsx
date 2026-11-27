@@ -1,4 +1,5 @@
 "use client";
+import { useWebProjectSetup } from "./chat/useWebProjectSetup";
 import { useRoutineOrigin, routineApprovalPlacement, RoutineOriginApprovals, RoutineReceipt, routineOriginChatEligible } from "@matrix-os/ui";
 import { BrowserPermissionReviewProvider, BrowserPermissionReminder } from "@matrix-os/ui";
 import { shellChatAttachmentPolicy } from "./chat/attachment-policy";
@@ -456,6 +457,11 @@ function ChatAppContent({
       ? (path, signal) => readWebProjectAgentContext(projectGatewayUrl, path, signal, isCurrentAuthority)
       : null,
   } : undefined;
+  const setupProject = focusedProject && (!chatProjectId || chatProjectId === focusedProject.id) ? focusedProject : webProjects.projects.find(project => project.id === chatProjectId);
+  const setupSelection = providerState.selected ? { instanceId: providerState.selected.instanceId, model: providerState.selected.modelId, ...(providerSelection?.options ? { options: providerSelection.options } : {}) } : undefined;
+  const projectSetup = useWebProjectSetup({ project: setupProject, chatId: sessionId, scope: webProjects.identity,
+    gatewayUrl: projectGatewayUrl, eligible: Boolean(visible && !mobile && !collaborationView && !directBotId && setupProject && projectSkillRootAvailable !== false),
+    selection: setupSelection, isCurrentAuthority, openChat: onSwitchConversation, messages });
   const providerReady = !botIdentityUnknown && (directBotId ? Boolean(botPresentation?.available) : Boolean(!providerState.loading && providerState.selectionAvailable));
   // Comfortable ≥44px touch targets on mobile; unchanged on desktop.
   const touchIcon = mobile ? "size-9" : "size-8";
@@ -492,9 +498,11 @@ function ChatAppContent({
     mentionOptions?: WebChatSubmitOptions,
   ) => {
     // Attachment reads can finish after this composer has left its Chat or draft.
-    if (liveSubmitScope.current !== submitScope || (isCurrentAuthority && !isCurrentAuthority()) || botIdentityUnknown) {
+    if (liveSubmitScope.current !== submitScope || (isCurrentAuthority && !isCurrentAuthority())) {
       return Promise.resolve(false);
     }
+    if (projectSetup.active) return projectSetup.answer(text);
+    if (botIdentityUnknown) return Promise.resolve(false);
     if (directBotId && !botPresentation?.available) return Promise.resolve(false);
     const callbacks = {
       ...(mentionOptions?.onAccepted ? { onAccepted: mentionOptions.onAccepted } : {}),
@@ -867,19 +875,23 @@ function ChatAppContent({
             mobile={mobile}
             composerDraftRequest={activeDraftRequest}
             onComposerDraftConsumed={consumeDraftRequest}
-            providerReady={providerReady}
-            attachmentsEnabled={!botIdentityUnknown && attachmentPolicy.enabled}
-            projectHome={projectHome ? <WebProjectHome project={projectHome} identity={webProjects.identity}
+            providerReady={providerReady || projectSetup.active}
+            setupAnswer={projectSetup.placeholder}
+            setupPending={projectSetup.pending}
+            attachmentsEnabled={!botIdentityUnknown && attachmentPolicy.enabled && !projectSetup.active}
+            projectHome={projectSetup.introductionContent ?? (projectHome ? <WebProjectHome project={projectHome} identity={webProjects.identity}
               gatewayUrl={projectGatewayUrl} isCurrentAuthority={isCurrentAuthority}
               conversations={projectChats(ordinaryConversations, projectHome)} historyIncomplete={navigationTruncated === true} historyRefreshKey={chatChangeRevision} historyRunStatusChange={chatRunStatusChange} knownChatIds={listedChatIds} botClient={summaryClient}
-              onSelectChat={onSwitchConversation} active={active !== false} /> : undefined}
+              onStartSetup={() => { void projectSetup.start(); }} setupPending={projectSetup.pending} setupError={projectSetup.error}
+              onSelectChat={onSwitchConversation} active={active !== false} /> : undefined)}
           /></>
         ) : (
           <div className="flex flex-1 flex-col min-h-0">
             <ChatContextMenu chatId={sessionId} zIndex={SHELL_Z_INDEX.popover}>
             <div className="contents">
+            {projectSetup.header ? <div className="mx-auto w-full max-w-[720px] shrink-0 px-4 pt-8 md:px-0">{projectSetup.header}</div> : null}
             <Conversation>
-              <ConversationContent className="min-h-full justify-end gap-5 px-4 py-5 md:px-0 mx-auto w-full max-w-[720px]">
+              <ConversationContent className={`${projectSetup.draft ? "justify-start" : "min-h-full justify-end"} gap-5 px-4 py-5 md:px-0 mx-auto w-full max-w-[720px]`}>
                 <RoutineOriginApprovals state={routineOrigin} items={routineApprovals.earlier} notices={false} earlier />
                 <BotTranscriptMessages groups={grouped}>{(group, groupIndex, scheduled) => {
                   const id = group.type === "tool_group" ? group.messages[0]!.id : group.message.id;
@@ -891,6 +903,7 @@ function ChatAppContent({
                   const msg = group.message;
                   return (
                     <div key={msg.id}>
+                      {msg.id === projectSetup.messageId ? projectSetup.note : null}
                       {msg.routineReceipt ? <RoutineReceipt sourceChatId={sessionId} receipt={msg.routineReceipt} text={msg.content} onOpenChat={onSwitchConversation}/> : msg.role === "user" || msg.scheduledMessage ? (
                         <Message from="user">
                           {scheduled?<RoutineMessageMeta occurrence={scheduled}/>:msg.scheduledMessage?<ScheduledMessageMeta {...msg.scheduledMessage}/>:null}
@@ -938,6 +951,7 @@ function ChatAppContent({
                       onAction={submitWithHermesSetup}
                     />
                       )}
+                    {msg.id === projectSetup.messageId && projectSetup.controls ? <div className="mt-2.5">{projectSetup.controls}</div> : null}
                     <ChatContextReceipt context={ChatRunContextSchema.safeParse(msg.metadata?.chatRunContext).data} />
                     <BotTranscriptRunState placement={botTranscript} index={groupIndex}/>
                     {review}
@@ -945,6 +959,7 @@ function ChatAppContent({
                   );
                 }}</BotTranscriptMessages>
 
+                {projectSetup.awaitingMessage ? <p role="status" className="text-xs text-muted-foreground">Updating project setup…</p> : null}
                 <BotTranscriptFallback placement={botTranscript}/>
                 {busy && (
                   <div className="flex items-center gap-2.5 text-sm text-muted-foreground py-1">
@@ -964,7 +979,7 @@ function ChatAppContent({
             </ChatContextMenu>
 
             {/* Suggestions + Input */}
-            <div className={`mx-auto w-full max-w-[808px] shrink-0 pt-2 ${mobile ? "px-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)]" : "px-6 pb-5"}`}>
+            <div className={`mx-auto w-full shrink-0 pt-2 ${projectSetup.draft ? "max-w-[768px]" : "max-w-[808px]"} ${mobile ? "px-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)]" : "px-6 pb-5"}`}>
               {mobile && !busy && suggestions.length > 0 && (
                 <div className="pb-3">
                   <SuggestionChips
@@ -995,17 +1010,19 @@ function ChatAppContent({
                 driveContextEnabled={!botIdentityUnknown && !directBotId && providerState.selected?.supportsCompanyDriveContext === true}
                 onOpenBotMention={botDraftNavigation.openBotMention}
                 key={composerKey} composer={composer} agentClient={agentClient} scope={composerScope} botConsentResources={botExecution.consentResources} botRequiresFullAccess={botPresentation?.requiresFullAccess} permissionMode={directBotId ? botPresentation?.permissionMode ?? "default" : providerState.selected?.permissionMode ?? "supervised"}
-                connected={connected && providerReady}
-                busy={busy}
+                connected={connected && !projectSetup.mcpHandoff && (providerReady || projectSetup.active)}
+                busy={busy || projectSetup.pending}
                 activeRunId={activeRunId}
                 onAbortCurrent={onAbortCurrent}
                 onSubmit={submitWithHermesSetup}
                 draftRequest={activeDraftRequest}
                 onDraftConsumed={consumeDraftRequest}
-                unavailablePlaceholder={!providerState.loading && !providerReady
+                setupAnswer={projectSetup.active}
+                placeholder={projectSetup.placeholder}
+                unavailablePlaceholder={!projectSetup.active && !providerState.loading && !providerReady
                   ? "Write or dictate a draft — connect a harness to send"
                   : undefined}
-                attachmentsEnabled={!botIdentityUnknown && attachmentPolicy.enabled}
+                attachmentsEnabled={!botIdentityUnknown && attachmentPolicy.enabled && !projectSetup.active}
               />
             </div>
           </div>

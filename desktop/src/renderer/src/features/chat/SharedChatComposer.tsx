@@ -102,6 +102,7 @@ export function SharedChatComposer({
   draftScopeKey,
   projectSlashScope,
   projectSkillSubmitEnabled = true,
+  setupAnswer = false,
   referenceTokens = [],
   onReferenceTokensChange,
   onAgentMention,
@@ -144,6 +145,7 @@ export function SharedChatComposer({
   draftScopeKey?: string;
   projectSlashScope?: ProjectChatSlashScope;
   projectSkillSubmitEnabled?: boolean;
+  setupAnswer?: boolean;
   referenceTokens?: ComposerReferenceToken[];
   onReferenceTokensChange?: (tokens: ComposerReferenceToken[]) => void;
   onAgentMention?: (resource: CanonicalChatResourceReference, text: string, insertLegacy: () => void) => boolean;
@@ -200,10 +202,11 @@ export function SharedChatComposer({
   const instance = catalog.instances.find((candidate) => candidate.id === selection?.instanceId);
   const driveContextEnabled = !automaticRouting && instance?.supports.resources.includes("organization_drive") === true;
   const selectedResources = referenceTokens.flatMap(token => token.type === "resource" ? [token.resource] : []);
-  const blockedDriveContext = selectedResources.some(resource => resource.kind === "organization_drive") && !driveContextEnabled;
+  const blockedDriveContext = !setupAnswer && selectedResources.some(resource => resource.kind === "organization_drive") && !driveContextEnabled;
+  const waitingForProvider = providerCatalogLoading && !setupAnswer;
   const valueBeforeCursor = value.slice(0, cursor);
-  const slashMatch = matchChatSlashToken(value, cursor);
-  const resourceMatch = valueBeforeCursor.match(/(?:^|\s)@([^\s]*)$/);
+  const slashMatch = setupAnswer ? null : matchChatSlashToken(value, cursor);
+  const resourceMatch = setupAnswer ? null : valueBeforeCursor.match(/(?:^|\s)@([^\s]*)$/);
   const slashQuery = slashMatch?.query ?? null;
   const resourceQuery = resourceMatch?.[1]?.toLocaleLowerCase() ?? null;
   const skillBinding = JSON.stringify([draftScopeKey, projectSlashScope?.scope, projectSlashScope?.projectId, Boolean(projectSlashScope?.read), instance?.id]);
@@ -223,7 +226,7 @@ export function SharedChatComposer({
   const slashLoading = providerCatalogLoading || projectSkills.loading;
   const slashEntries = listCanonicalSlashEntries(instance, projectSkills.catalog);
   const draftCanSubmit = canSubmit ?? (value.trim().length > 0 || referenceTokens.length > 0);
-  const canSendProjectSkill = Boolean(projectSkillSubmitEnabled && projectSkillDraft.paths.length && projectSlashScope?.read);
+  const canSendProjectSkill = Boolean(!setupAnswer && projectSkillSubmitEnabled && projectSkillDraft.paths.length && projectSlashScope?.read);
   const canAttach = Boolean(onAttach && (attachmentsEnabled ?? supportsNativeFileAttachments(instance)));
   const [remoteResources, setRemoteResources] = useState<CanonicalChatResourceReference[]>([]);
   useEffect(() => {
@@ -368,7 +371,7 @@ export function SharedChatComposer({
           && !blockedDriveContext
           && (draftCanSubmit || canSendProjectSkill)
         ) {
-          if (!providerCatalogLoading) onSubmit(currentSubmission());
+          if (!waitingForProvider) onSubmit(currentSubmission());
         }
         return true;
       }
@@ -497,14 +500,14 @@ export function SharedChatComposer({
         onSubmit={() => {
           if (!blockedDriveContext && !speechActive) {
             const submission = currentSubmission();
-            if (!providerCatalogLoading) onSubmit(submission);
+            if (!waitingForProvider) onSubmit(submission);
           }
         }}
         onAbort={onAbort}
         busy={busy}
         submitWhileBusy={submitWhileBusy}
         disabled={disabled}
-        canSubmit={!providerCatalogLoading && !blockedDriveContext && !speechActive && !disabled && (draftCanSubmit || canSendProjectSkill)}
+        canSubmit={!waitingForProvider && !blockedDriveContext && !speechActive && !disabled && (draftCanSubmit || canSendProjectSkill)}
         autoFocus={autoFocus}
         focusRequestId={focusRequestId}
         layout={layout}

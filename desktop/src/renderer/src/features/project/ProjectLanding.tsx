@@ -1,7 +1,7 @@
 import { useRef, type ReactNode, type RefObject } from "react";
 import { FolderOpen, PencilEditIcon } from "@renderer/lib/hugeicons";
 import type { ChatNavigationRecord } from "@matrix-os/ui";
-import { ProjectConversationList, useMinuteClock } from "@matrix-os/ui";
+import { ProjectConversationList, useMinuteClock, ProjectSetupEntry, useProjectSetupLaunch } from "@matrix-os/ui";
 import type { CanonicalChatClient, CanonicalChatEventSource } from "../../lib/canonical-chat-client";
 import { DesktopProjectAgentContext } from "./DesktopProjectAgentContext";
 import { useProjectLandingChats } from "./use-project-landing-chats";
@@ -22,6 +22,8 @@ export function ProjectLanding({ project, children, showMetadata = true, records
   onSelectChat?: (record: ChatNavigationRecord) => void;
   client?: CanonicalChatClient | null; eventSource?: Pick<CanonicalChatEventSource, "subscribe">; active?: boolean;
 }) {
+  const setupLaunch = useProjectSetupLaunch();
+  const showOverview = showMetadata && !setupLaunch?.requested;
   const list = conversationListState(records, useProjectLandingChats(project, client, eventSource, active));
   const actions = useProjectActions(project);
   const editButtonRef = useRef<HTMLButtonElement>(null);
@@ -30,10 +32,11 @@ export function ProjectLanding({ project, children, showMetadata = true, records
     {/* The full-width scroller reserves a gutter on both edges, so a growing chat
         list never shifts the layout and its centred column lines up with the
         composer below, which keeps its full width. */}
-    {showMetadata ? <header className="min-h-0 w-full flex-1 overflow-y-auto [scrollbar-gutter:stable_both-edges]">
+    {showOverview ? <header className="min-h-0 w-full flex-1 overflow-y-auto [scrollbar-gutter:stable_both-edges]">
       <div className={`${PROJECT_LANDING_CONTENT_CLASS} pb-2 pt-[52px]`}>
         <ProjectLandingHeader project={project} disabled={!actions.available || actions.pending} editButtonRef={editButtonRef}
           onEdit={() => actions.setDialog("edit")} onOpenFiles={() => { void actions.showInFiles(); }} />
+        {setupLaunch ? <ProjectSetupEntry onStart={setupLaunch.request} /> : null}
         <DesktopProjectAgentContext projectId={project.id}
           projectSlug={project.slug} filesPending={actions.pending} onOpenFiles={() => actions.showInFiles(true)} />
         <ProjectConversationList projectName={project.name} {...list} nowMs={nowMs} onSelect={onSelectChat} />
@@ -42,7 +45,7 @@ export function ProjectLanding({ project, children, showMetadata = true, records
     </header> : null}
     {/* Metadata owns spare height; the draft uses its content height and may
         shrink for scrollable provider guidance in a short window. */}
-    <div className={`flex min-h-0 min-w-0 flex-col overflow-hidden ${showMetadata ? "shrink" : "flex-1"}`}>{children}</div>
+    <div className={`flex min-h-0 min-w-0 flex-col overflow-hidden ${showOverview ? "shrink" : "flex-1"}`}>{children}</div>
     {actions.dialog === "edit" ? <ProjectEditDialog project={project} returnFocusRef={editButtonRef} pending={actions.pending} error={actions.error} onClose={() => actions.setDialog(null)} onSave={actions.update} /> : null}
   </div>;
 }

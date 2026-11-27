@@ -50,6 +50,9 @@ describe("buildGatewayUrl", () => {
     expect(buildGatewayUrl("https://app.matrix-os.com", "/api/mcp-servers/abc/discover", "pr-1871")).toBe(
       "https://app.matrix-os.com/vm/pr-1871/api/mcp-servers/abc/discover",
     );
+    expect(buildGatewayUrl("https://app.matrix-os.com", "/api/mcp-servers/catalog?department=engineering", "pr-1871")).toBe(
+      "https://app.matrix-os.com/vm/pr-1871/api/mcp-servers/catalog?department=engineering",
+    );
     expect(buildGatewayUrl("https://app.matrix-os.com", "/api/apps", "pr-1871")).toBe(
       "https://app.matrix-os.com/api/apps?runtime=pr-1871",
     );

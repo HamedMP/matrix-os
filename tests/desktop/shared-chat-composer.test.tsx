@@ -186,6 +186,8 @@ function Harness({
   disabled = false,
   speech = false,
   mentionActions,
+  setupAnswer = false,
+  providerCatalogLoading = false,
 }: {
   locked?: boolean;
   onSubmit?: (submission: SharedChatComposerSubmission) => void;
@@ -202,6 +204,8 @@ function Harness({
   disabled?: boolean;
   speech?: boolean;
   mentionActions?: readonly ComposerMentionAction[];
+  setupAnswer?: boolean;
+  providerCatalogLoading?: boolean;
 }) {
   const catalog = catalogFixture();
   const [value, setValue] = useState(initialValue);
@@ -218,6 +222,8 @@ function Harness({
       referenceTokens={referenceTokens}
       onReferenceTokensChange={setReferenceTokens}
       onSubmit={onSubmit}
+      setupAnswer={setupAnswer}
+      providerCatalogLoading={providerCatalogLoading}
       busy={false}
       disabled={disabled}
       catalog={catalog}
@@ -243,6 +249,16 @@ describe("SharedChatComposer", () => {
   let restorePopoverLayout: () => void;
   beforeEach(() => { restorePopoverLayout = mockSharedComposerPopoverLayout(); });
   afterEach(() => { cleanup(); restorePopoverLayout(); });
+
+  it.each(["Enter", "button"] as const)("submits typed setup text with %s while the provider catalog loads", (method) => {
+    const onSubmit = vi.fn();
+    const text = "Keep a record of each /release";
+    render(<Harness initialValue={text} setupAnswer providerCatalogLoading onSubmit={onSubmit} />);
+    const editor = screen.getByRole("textbox", { name: "Message chat" });
+    if (method === "Enter") fireEvent.keyDown(editor, { key: "Enter" });
+    else fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ text }));
+  });
 
   it("keeps the connected Preview dictation allowance outside the toolbar", async () => {
     const connection = useConnection.getState();

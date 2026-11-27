@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { CanonicalChatMessageSchema } from "@matrix-os/contracts";
+import { CanonicalChatMessageSchema, type CanonicalChatContent, type CanonicalChatMessage, type CanonicalChatTurn } from "@matrix-os/contracts";
 import { sql, type Kysely, type Transaction } from "kysely";
 import type { ChatDatabase } from "./database.js";
-import { jsonb, messageSearchText, type ChatOwner } from "./records.js";
+import { jsonb, messageSearchText, toTurn, type ChatOwner } from "./records.js";
 import { ProjectSetupError } from "./project-setup-state.js";
 
 export interface SetupTranscriptMessage { role: "user" | "assistant"; text: string; id?: string }
@@ -10,7 +10,7 @@ type Executor = Kysely<ChatDatabase> | Transaction<ChatDatabase>;
 
 /** Internal server-generated transition messages use the existing canonical transcript. */
 export async function appendProjectSetupTranscript(db: Executor, owner: ChatOwner, chatId: string, entries: SetupTranscriptMessage[],
-  emit: (revision: number) => Promise<void>): Promise<string | undefined> {
+  emit: (revision: number, content?: Pick<CanonicalChatContent, "messages" | "turns">) => Promise<void>): Promise<string | undefined> {
   if (entries.length > 3) throw new ProjectSetupError("invalid");
   const chat = await db.selectFrom("chats").selectAll().where("id", "=", chatId).where("owner_type", "=", owner.type).where("owner_id", "=", owner.ownerId).forUpdate().executeTakeFirst();
   if (!chat || chat.lifecycle !== "active" || chat.collaboration !== null) throw new ProjectSetupError("not_found");
@@ -19,7 +19,8 @@ export async function appendProjectSetupTranscript(db: Executor, owner: ChatOwne
   if (active) throw new ProjectSetupError("busy");
   const last = await db.selectFrom("chat_messages").select("seq").where("chat_id", "=", chatId).orderBy("seq", "desc").limit(1).executeTakeFirst();
   let sequence = Number(last?.seq ?? 0);
-  let lastMessageId: string | undefined;
+  const messages: CanonicalChatMessage[] = [];
+  const turns: CanonicalChatTurn[] = [];
   const now = new Date().toISOString();
   const turnId = `cturn_${randomUUID().replaceAll("-", "")}`;
   const user = entries.find(entry => entry.role === "user");
@@ -35,16 +36,17 @@ export async function appendProjectSetupTranscript(db: Executor, owner: ChatOwne
       turn_id: entry === user ? null : turnId, run_id: null, actor_id: entry.role === "user" ? owner.ownerId : null, parts: jsonb(message.parts), byte_count: Buffer.byteLength(JSON.stringify(message)),
       search_text: messageSearchText(message), created_at: now }).execute();
     if (entry === user) {
-      await db.insertInto("chat_turns").values({ id: turnId, chat_id: chatId, client_request_id: `req_${turnId}`,
-        base_message_seq: baseSequence, input_message_id: userId, status: "completed", created_at: now, updated_at: now }).execute();
+      const row = await db.insertInto("chat_turns").values({ id: turnId, chat_id: chatId, client_request_id: `req_${turnId}`,
+        base_message_seq: baseSequence, input_message_id: userId, status: "completed", created_at: now, updated_at: now }).returningAll().executeTakeFirstOrThrow();
+      turns.push(toTurn(row));
       await db.updateTable("chat_messages").set({ turn_id: turnId }).where("id", "=", userId).where("chat_id", "=", chatId).execute();
     }
-    lastMessageId = message.id;
+    messages.push(message);
   }
   const revision = Number(chat.revision) + 1;
   const updated = await db.updateTable("chats").set({ revision, message_count: sql<number>`message_count + ${entries.length}`, updated_at: now,
     activity_at: now, last_message_preview: entries.at(-1)!.text.slice(0, 280) }).where("id", "=", chatId).where("revision", "=", Number(chat.revision)).returning("id").executeTakeFirst();
   if (!updated) throw new ProjectSetupError("conflict");
-  await emit(revision);
-  return lastMessageId;
+  await emit(revision, { messages, turns });
+  return messages.at(-1)?.id;
 }

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   openExistingProject,
+  submitClone,
   submitExistingFolder,
   type AddProjectSubmitContext,
 } from "../../desktop/src/renderer/src/features/board/add-project-submit";
@@ -68,6 +69,27 @@ describe("add-project sharing handoff", () => {
     });
 
     expect(result).toMatchObject({ ok: true, project: { id: "proj_clone", slug: "clone" } });
+  });
+
+  it("opens a successful GitHub import in the same project home used for setup", async () => {
+    const project: Project = { id: "proj_clone", slug: "clone", name: "Clone", kind: "github" };
+    const api = { post: vi.fn(async () => ({ project })) } as unknown as AddProjectSubmitContext["api"];
+    const ctx = context({ api, getProjects: () => [project] });
+
+    await submitClone(ctx, {
+      url: "https://github.com/octocat/Hello-World",
+      name: project.slug,
+      displayName: project.name,
+      clientRequestId: "req_clone",
+    });
+
+    expect(ctx.selectProject).toHaveBeenCalledExactlyOnceWith(api, project.slug);
+    expect(ctx.openTab).toHaveBeenCalledExactlyOnceWith({
+      kind: "project",
+      projectSlug: project.slug,
+      title: project.name,
+    });
+    expect(ctx.onCreatedProject).toHaveBeenCalledExactlyOnceWith(project);
   });
 
   it("does not treat opening an already connected project as project creation", async () => {

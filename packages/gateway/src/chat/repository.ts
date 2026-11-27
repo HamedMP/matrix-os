@@ -535,14 +535,14 @@ export class ChatRepository {
   /** Known setup transitions append within the same owner-database transaction. */
   async appendProjectSetupMessages(owner: ChatOwner, chatId: string, entries: SetupTranscriptMessage[]): Promise<string | undefined> {
     return this.transact(trx => appendProjectSetupTranscript(trx, owner, chatId, entries,
-      revision => this.appendOutbox(trx, owner, chatId, revision, "chat.updated")));
+      (revision, content) => this.appendOutbox(trx, owner, chatId, revision, "chat.updated", {}, undefined, content)));
   }
 
   /** Server-only source projection, committed independently of canonical target work. */
   async appendRoutineReceipt(ownerId: string, input: AppendRoutineReceiptInput) {
     return this.transact(trx => appendRoutineReceiptWithin(trx, ownerId, input,
       (executor, owner, revision, message) => this.appendOutbox(
-        executor, owner, message.chatId, revision, "chat.updated", { messageId: message.id, seq: message.seq }, undefined, message,
+        executor, owner, message.chatId, revision, "chat.updated", { messageId: message.id, seq: message.seq }, undefined, { messages: [message] },
       )));
   }
 
@@ -590,7 +590,7 @@ export class ChatRepository {
     eventType: ChatOutboxEventType,
     payload: Record<string, unknown> = {},
     collaborationProjection?: CanonicalChatCollaboration,
-    committedReceipt?: CanonicalChatMessage,
+    committedContent?: Pick<CanonicalChatContent, "messages" | "turns">,
   ): Promise<void> {
     if (typeof payload.runId === "string") {
       const queuedRun = await executor.selectFrom("chat_queued_turns")
@@ -632,10 +632,10 @@ export class ChatRepository {
     const getRecord = (projectionOwner: ChatOwner, projectionChatId: string) =>
       hydrateRecord(executor, projectionOwner, projectionChatId, collaborationProjection);
     let captured: CanonicalChatContent | undefined;
-    if (committedReceipt) {
-      // Receipt messages have no foreground Run or turn. Publish the exact append.
+    if (committedContent) {
+      // Deterministic Chat appends have no Run to drive ordinary content capture.
       const record = await getRecord(owner, chatId);
-      if (record) captured = CanonicalChatContentSchema.parse({ record, messages: [committedReceipt] });
+      if (record) captured = CanonicalChatContentSchema.parse({ record, ...committedContent });
     } else {
       captured = await captureChatContent(executor, owner, chatId, eventType, payload, getRecord);
     }

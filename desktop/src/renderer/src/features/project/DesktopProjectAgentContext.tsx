@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef, useState } from "react";
 import { PROJECT_SKILL_FILE_MAX_BYTES, ProjectAgentConfigFileSchema } from "@matrix-os/contracts";
-import { ProjectAgentContextPanel } from "@matrix-os/ui";
+import { ProjectAgentContextPanel, useProjectSetupLaunch } from "@matrix-os/ui";
 import {
   PROJECT_AGENT_CONTEXT_OPEN_FILE_ERROR,
   PROJECT_AGENT_CONTEXT_RESPONSE_LIMIT,
@@ -28,19 +28,21 @@ interface DesktopProjectAgentContextProps {
   projectSlug: string;
   onOpenFiles: () => Promise<void>;
   filesPending: boolean;
+  onSetupWithChat?: () => void;
 }
 
 export function DesktopProjectAgentContext(props: DesktopProjectAgentContextProps) {
+  const setupLaunch = useProjectSetupLaunch();
   const api = useConnection(state => state.api);
   const runtimeSlot = useConnection(state => state.runtimeSlot);
   const authGeneration = useConnection(state => state.authGeneration);
   const scope = JSON.stringify([api?.baseUrl, runtimeSlot, authGeneration]);
   if (!props.projectId) return null;
   return <DesktopProjectAgentContextScoped key={JSON.stringify([scope, props.projectId, props.projectSlug])}
-    {...props} projectId={props.projectId} scope={scope} api={api} runtimeSlot={runtimeSlot} authGeneration={authGeneration} />;
+    {...props} projectId={props.projectId} scope={scope} api={api} onSetupWithChat={setupLaunch?.request} runtimeSlot={runtimeSlot} authGeneration={authGeneration} />;
 }
 
-function DesktopProjectAgentContextScoped({ projectId, projectSlug, onOpenFiles, filesPending, scope, api, runtimeSlot, authGeneration }: DesktopProjectAgentContextProps & {
+function DesktopProjectAgentContextScoped({ projectId, projectSlug, onOpenFiles, filesPending, scope, api, runtimeSlot, authGeneration, onSetupWithChat }: DesktopProjectAgentContextProps & {
   projectId: string;
   scope: string;
   api: ReturnType<typeof useConnection.getState>["api"];
@@ -132,6 +134,7 @@ function DesktopProjectAgentContextScoped({ projectId, projectSlug, onOpenFiles,
     readInstalledSkill={api ? readInstalledSkill : undefined}
     filesPending={filesPending || openingFile}
     filesError={fileError}
+    onSetupWithChat={onSetupWithChat}
     onOpenMcpSettings={openMcpSettings}
   />;
 }

@@ -298,6 +298,7 @@ function ConversationTurn({
   onToggle,
   scheduled,
   scheduledEvents=[],
+  projectSetup,
 }: {
   turn: ConversationTurnPresentation;
   callbacks: ConversationPresentationCallbacks;
@@ -306,6 +307,7 @@ function ConversationTurn({
   onToggle: () => void;
   scheduled?: RoutineOccurrence;
   scheduledEvents?:RoutineOccurrence[];
+  projectSetup?: { messageId?: string | null; note: ReactNode; controls: ReactNode };
 }) {
   const rootKind = turn.executionRoot?.kind;
   const rootProjectId = turn.executionRoot && turn.executionRoot.kind !== "bot_workspace" ? turn.executionRoot.projectId : undefined;
@@ -330,12 +332,13 @@ function ConversationTurn({
   if(turn.routineReceipt)return <RoutineReceipt {...turn.routineReceipt} sourceChatId={callbacks.browserChatId} onOpenChat={callbacks.openChat}/>;
   const hasWork = turn.work.length > 0;
   const timeline = turn.timeline;
+  const setupReply = projectSetup?.messageId && projectSetup.messageId === turn.final?.id ? projectSetup : undefined;
   return (
     <>
       {turn.user ? <UserMessage message={turn.user} callbacks={scopedCallbacks} scheduled={scheduled}/> : null}
       <ChatContextReceipt context={turn.runContext} />
       <div data-agent-message-body={turn.id} className="min-w-0">
-      {hasWork || turn.final || turn.active ? (
+      {hasWork || turn.active || (turn.final && (!projectSetup || !!turn.runIds?.length)) ? (
         <TurnReceipt
           startedAt={turn.startedAt}
           endedAt={turn.endedAt}
@@ -365,11 +368,12 @@ function ConversationTurn({
       {!timeline ? turn.userFollowups?.map((message) => (
         <UserMessage key={message.id} message={message} callbacks={scopedCallbacks} />
       )) : null}
+      {setupReply?.note}
       {turn.final ? (
         <PresentationItem
           item={turn.final}
           callbacks={scopedCallbacks}
-          showMetadata={!turn.active}
+          showMetadata={!turn.active && !setupReply}
           streaming={turn.active}
           animateOnMount={
             turn.active && !initialFinalIds.has(turn.final.id)
@@ -377,6 +381,9 @@ function ConversationTurn({
           }
         />
       ) : null}</>}
+      {setupReply?.controls ? (
+        <div className="mt-2.5">{setupReply.controls}</div>
+      ) : null}
       <BotRunMessageBody runIds={turn.runIds ?? []} requestIds={pendingRequestIds}/>
       </div>
     </>
@@ -405,12 +412,14 @@ export function ConversationTranscript({
   beforeTurns,
   renderAfterTurn,
   afterTurns,
+  projectSetup,
 }: {
   turns: ConversationTurnPresentation[];
   callbacks: ConversationPresentationCallbacks;
   beforeTurns?: ReactNode;
   renderAfterTurn?: (turnId: string) => ReactNode;
   afterTurns?: ReactNode;
+  projectSetup?: { header: ReactNode; note: ReactNode; messageId?: string | null; controls: ReactNode };
 }) {
   const routines=useRoutineMessageState();
   const [initialFinalIds] = useState(() => new Set(
@@ -437,8 +446,10 @@ export function ConversationTranscript({
     nested[index]!.push(row.occurrence);return false;
   });
   return (
+    <>
+    {projectSetup?.header ? <div className="mx-auto w-full max-w-[768px] shrink-0 px-6 pt-8">{projectSetup.header}</div> : null}
     <Conversation>
-      <ConversationContent className="justify-end pt-8 sm:pt-12">
+      <ConversationContent className={projectSetup ? "max-w-[768px] justify-start gap-5 px-6 pt-5 lg:px-6" : "justify-end pt-8 sm:pt-12"}>
         {beforeTurns}
         {rows.map(row => row.kind === "occurrence" ? <RoutineOccurrenceMessage key={`scheduled:${row.occurrence.fire.fireId}`} occurrence={row.occurrence}/> : (
           <Fragment key={row.value.turn.id}>
@@ -449,6 +460,7 @@ export function ConversationTranscript({
               visibility={row.value.visibility}
               scheduled={row.occurrence}
               scheduledEvents={nested[visibleTurns.indexOf(row.value)]}
+              projectSetup={projectSetup}
               onToggle={() => toggleTurn(row.value.turn.id)}
             />
             {renderAfterTurn?.(row.value.turn.id)}
@@ -457,8 +469,12 @@ export function ConversationTranscript({
         <BotUnassignedMessageBody runIds={turns.flatMap(turn => turn.runIds ?? [])}
           requestIds={visibleTurns.flatMap(({ visibility }) => visibility.pendingRequestIds)}/>
         <RoutineMessageReadNotice/>
+        {projectSetup?.controls && !turns.some(turn => turn.final?.id === projectSetup.messageId) ? (
+          <p role="status" className="text-xs text-[var(--text-secondary)]">Updating project setup…</p>
+        ) : null}
         {afterTurns}
       </ConversationContent>
     </Conversation>
+    </>
   );
 }

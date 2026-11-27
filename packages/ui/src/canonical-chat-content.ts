@@ -19,6 +19,10 @@ export function applyCanonicalChatContent(
   if (detail.record.chat.id !== frame.event.chatId || detail.record.chat.revision >= frame.event.revision) return detail;
   if (detail.record.chat.revision + 1 !== frame.event.revision) return null;
   const content = frame.content;
+  // Older gateways sent a metadata-only chat.updated for appended setup turns.
+  // Leave the current revision intact so the caller can recover those messages.
+  if (frame.event.eventType === "chat.updated" && content.record.chat.messageCount > detail.record.chat.messageCount
+    && !content.messages?.length && !content.messageDelta) return null;
   let messages = upsert(detail.messages, content.messages);
   if (content.messageDelta) {
     const { message, partIndex, offset } = content.messageDelta;

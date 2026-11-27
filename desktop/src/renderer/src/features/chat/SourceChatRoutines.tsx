@@ -18,13 +18,13 @@ async function openDesktopRoutineApproval(chatId: string, interactionId: string,
 }
 
 /** Place source approvals beside their turns. Native review still uses the owner browser. */
-export function SourceChatRoutines({ client, chat, ordinary, revision, identity, turns, callbacks }: {
+export function SourceChatRoutines({ client, chat, ordinary, revision, identity, turns, callbacks, projectSetup }: {
   client?: ChatAgentClient;
   chat: CanonicalChatSummary;
   ordinary: boolean;
   revision: number;
   identity?: unknown;
-} & Pick<ComponentProps<typeof ConversationTranscript>, "turns" | "callbacks">) {
+} & Pick<ComponentProps<typeof ConversationTranscript>, "turns" | "callbacks" | "projectSetup">) {
   const eligible = routineOriginChatEligible({ chat, ordinary, fresh: true });
   const scope = useMemo(() => ({ client, chatId: chat.id, eligible, identity }), [client, chat.id, eligible, identity]);
   const state = useRoutineOrigin({ client: client?.bots?.routineOrigin, chatId: chat.id, eligible, revision, identity: scope });
@@ -57,7 +57,7 @@ export function SourceChatRoutines({ client, chat, ordinary, revision, identity,
     boundary: Boolean(turn.user || turn.routineReceipt),
   })));
   const reviewInBrowser = (id: string) => void open(id);
-  return <ConversationTranscript turns={turns} callbacks={callbacks}
+  return <ConversationTranscript turns={turns} callbacks={callbacks} projectSetup={projectSetup}
     beforeTurns={<RoutineOriginApprovals state={state} items={placement.earlier} notices={false} earlier onReviewInBrowser={reviewInBrowser} />}
     renderAfterTurn={id => {
       const items = placement.after.get(id);
