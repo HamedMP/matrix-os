@@ -133,6 +133,8 @@ export function createProviderWorkflowService(options: {
     authorize(owner);
     return serialize(async () => {
       const adapter = await adapterFor(input.harnessInstanceId);
+      if (adapter.harness === 'codex' && !('optionId' in input) && input.kind === 'login' && input.method === 'existing_codex')
+        throw new ProviderWorkflowError('unavailable');
       await expire(adapter.harness);
       const hash = createHash('sha256').update(JSON.stringify(version === 1 ? input : { version, ...input })).digest('hex');
       const replay = [...entries.values()].find(e => e.key === input.idempotencyKey);
@@ -214,8 +216,11 @@ export function createProviderWorkflowService(options: {
       authorize(owner);
       return (await registered()).map(({ harnessInstanceId, harness, displayName, installState, loginMethods, apiKeyProviders, install, uninstall }) => {
         const active = [...entries.values()].find(entry => entry.operation.harnessInstanceId === harnessInstanceId && protectedEntry(entry)
+          && !(harness === 'codex' && entry.method === 'existing_codex')
           && (!legacy || entry.operation.kind !== 'login' || entry.method === 'device_code' || entry.method === 'terminal'));
-        return { harnessInstanceId, harness, displayName, installState, loginMethods, apiKeyProviders, install, uninstall, logs: true, ...(active ? { activeOperationId: active.operation.id } : {}) };
+        return { harnessInstanceId, harness, displayName, installState,
+          loginMethods: harness === 'codex' ? loginMethods.filter(method => method !== 'existing_codex') : loginMethods,
+          apiKeyProviders, install, uninstall, logs: true, ...(active ? { activeOperationId: active.operation.id } : {}) };
       });
     },
     async capabilitiesV2(owner: string): Promise<ProviderWorkflowCapabilityV2[]> {

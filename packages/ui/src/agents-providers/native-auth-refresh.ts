@@ -1,4 +1,4 @@
-import type {ProviderAccount, ProviderSettingsSnapshot} from "@matrix-os/contracts";
+import { hasFreshCodexLocalSignIn, type ProviderAccount, type ProviderSettingsSnapshot } from "@matrix-os/contracts";
 
 function nativeAccount(account: ProviderAccount): boolean {
   return account.authMethod === "terminal" && (account.id === "owner_claude_profile" || account.id === "owner_codex");
@@ -7,4 +7,9 @@ function nativeAccount(account: ProviderAccount): boolean {
 export function nativeAuthenticationFingerprint(snapshot: ProviderSettingsSnapshot): string {
   return JSON.stringify(snapshot.accounts.filter(nativeAccount).map(account => [account.id, account.providerId,
     account.accessSourceId, account.authState, account.connectionDetails?.email ?? account.displayName]));
+}
+
+export function observedCodexSignIn(snapshot: ProviderSettingsSnapshot): boolean {
+  const source = snapshot.accessSources.find(item => item.id === "owner_openai_profile");
+  return hasFreshCodexLocalSignIn(source, Date.parse(snapshot.refreshedAt));
 }

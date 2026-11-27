@@ -532,6 +532,64 @@
 .matrix-ap-connection-choice.matrix-ap-method-card { display: grid; grid-template-columns: 20px minmax(0, 1fr) 16px; align-items: start; width: 100%; }
 .matrix-ap-method-card .matrix-ap-method-copy { min-width: 0; overflow-wrap: anywhere; }
 .matrix-ap-method-card .matrix-ap-method-check { position: static; justify-self: end; }
+
+.matrix-ap-login-choices { display: contents; }
+
+/* Keep Coding agents sign-in choices, instructions, and forms distinct. */
+:where(.matrix-ap-coding-agents) .matrix-ap-harness-workflow { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
+:where(.matrix-ap-coding-agents) .matrix-ap-harness-workflow > :is(.matrix-ap-help, .matrix-ap-notice, .matrix-ap-key-form, .matrix-ap-workflow-actions, .matrix-ap-advanced, .matrix-ap-operation-logs) { margin: 0; }
+:where(.matrix-ap-coding-agents) .matrix-ap-harness-workflow > .matrix-ap-workflow-actions:empty { display: none; }
+:where(.matrix-ap-coding-agents) .matrix-ap-harness-workflow > .matrix-ap-button,
+:where(.matrix-ap-coding-agents) .matrix-ap-sign-in-panel > .matrix-ap-button,
+:where(.matrix-ap-coding-agents) .matrix-ap-sign-in-panel .matrix-ap-key-form > .matrix-ap-button { justify-self: start; }
+:where(.matrix-ap-coding-agents) .matrix-ap-agent-details > .matrix-ap-connected:has(+ .matrix-ap-harness-workflow) { margin-bottom: 16px; }
+:where(.matrix-ap-coding-agents) .matrix-ap-harness-workflow > .matrix-ap-notice { flex-wrap: wrap; }
+:where(.matrix-ap-coding-agents) .matrix-ap-harness-workflow > .matrix-ap-notice > span { flex: 1 1 12rem; font-size: 12px; overflow-wrap: anywhere; }
+
+:where(.matrix-ap-coding-agents) .matrix-ap-login-choices { display: grid; gap: 8px; }
+:where(.matrix-ap-coding-agents) .matrix-ap-harness-workflow :is(.matrix-ap-login-choices, .matrix-ap-sign-in-panel) > h3,
+:where(.matrix-ap-coding-agents) .matrix-ap-login-choices > .matrix-ap-help { margin: 0; }
+:where(.matrix-ap-coding-agents) .matrix-ap-login-choices .matrix-ap-connection-options {
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
+}
+:where(.matrix-ap-coding-agents) .matrix-ap-login-choices .matrix-ap-connection-options > div { display: grid; grid-template-rows: 1fr auto; min-width: 0; }
+:where(.matrix-ap-coding-agents) .matrix-ap-sign-in-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+  margin: 0;
+  padding: 16px;
+  background: var(--matrix-ap-surface);
+  border: 1px solid var(--matrix-ap-border);
+  border-radius: 10px;
+}
+:where(.matrix-ap-coding-agents) .matrix-ap-sign-in-panel.matrix-ap-key-form,
+:where(.matrix-ap-coding-agents) .matrix-ap-sign-in-panel .matrix-ap-key-form { gap: 12px; max-width: none; }
+:where(.matrix-ap-coding-agents) .matrix-ap-sign-in-panel > :is(.matrix-ap-key-form, .matrix-ap-help, .matrix-ap-workflow-actions) { margin: 0; }
+:where(.matrix-ap-coding-agents) .matrix-ap-sign-in-panel.matrix-ap-key-form > [role="status"] {
+  margin: 0;
+  color: var(--matrix-ap-muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+:where(.matrix-ap-coding-agents) .matrix-ap-sign-in-panel .matrix-ap-field { gap: 8px; }
+:where(.matrix-ap-coding-agents) .matrix-ap-sign-in-panel .matrix-ap-field :is(input, select) { height: 40px; }
+:where(.matrix-ap-coding-agents) .matrix-ap-device-code {
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  margin: 0;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 8px;
+}
+:where(.matrix-ap-coding-agents) .matrix-ap-device-code code { min-width: 0; overflow-wrap: anywhere; }
+@media (max-width: 520px) {
+  :where(.matrix-ap-coding-agents) .matrix-ap-sign-in-panel { padding: 12px; }
+  :where(.matrix-ap-coding-agents) .matrix-ap-sign-in-panel :is(.matrix-ap-button, .matrix-ap-link-button),
+  :where(.matrix-ap-coding-agents) .matrix-ap-harness-workflow > .matrix-ap-workflow-actions > :is(.matrix-ap-button, .matrix-ap-link-button) { min-height: 44px; }
+}
+
 .matrix-ap-agent-logo, .matrix-ap-harness-mark:has(.matrix-ap-agent-logo) { height: 32px; width: 32px; }
 .matrix-ap-agent-logo { border: 1px solid var(--matrix-ap-border); background: var(--matrix-ap-sunken); border-radius: 8px; }
 .matrix-ap-agent-logo img { height: 20px; width: 20px; }

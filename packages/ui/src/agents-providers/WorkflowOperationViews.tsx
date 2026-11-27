@@ -2,13 +2,14 @@ import { randomUUID } from "../random-uuid.js";
 import { WorkflowLoadingSpinner } from "./WorkflowLoadingSpinner.js";
 import type { HarnessWorkflowController } from "./use-harness-workflow-controller.js";
 import { keyFormatFailure } from "./key-format.js";
+import { isCodexExistingAccountOption, isCodexTerminalOption } from "./managed-connection-capability.js";
 const providerNames = { openai: "OpenAI", anthropic: "Anthropic", openrouter: "OpenRouter" };
 export function WorkflowKeyForm({ state }: { state: HarnessWorkflowController }) {
   const { selectedOption, harness, capability, client, disabled, onRefresh, method, setMethod, providerId, setProviderId, apiKey, setApiKey, pending, failure, setFailure, run, back } = state;
   return <>
           {method === "key" ? (
             <form
-              className="matrix-ap-key-form"
+              className="matrix-ap-key-form matrix-ap-sign-in-panel"
               onSubmit={(event) => {
                 event.preventDefault();
                 if (!apiKey.trim()) return;
@@ -92,23 +93,32 @@ export function WorkflowKeyForm({ state }: { state: HarnessWorkflowController })
 
 export function WorkflowLoginProgress({ state }: { state: HarnessWorkflowController }) {
   const { client, disabled, onOpenAuthorizationUrl, operation, authorizationCode, setAuthorizationCode, codeSubmitted, setCodeSubmitted, pending, startingLogin, copied, setCopied, run, seconds, connecting, browserLogin, subscriptionName } = state;
-  const runningLogin = operation?.kind === "login" && connecting;
-  const preparingPage = runningLogin && state.inlineLogin && !operation.authorizationUrl && !operation.deviceCode
+  const codexTerminal = state.harness.harness === "codex" && isCodexTerminalOption(operation?.connectionOption);
+  const existingCodexAccount = state.harness.harness === "codex"
+    && isCodexExistingAccountOption(startingLogin ? state.selectedOption : operation?.connectionOption);
+  const runningLogin = operation?.kind === "login" && connecting && (!codexTerminal || state.canContinueInTerminal);
+  const preparingPage = runningLogin && !existingCodexAccount && state.inlineLogin && !operation.authorizationUrl && !operation.deviceCode
     && operation.connectionOption?.method !== "terminal";
-  const status = startingLogin ? "Starting sign-in" : preparingPage ? "Preparing sign-in page" : "Waiting for sign-in";
+  const checkingConnection = codexTerminal && !operation?.authorizationUrl && !operation?.deviceCode;
+  const status = existingCodexAccount ? "Verifying existing Codex account"
+    : startingLogin ? "Starting sign-in"
+    : preparingPage ? "Preparing sign-in page"
+    : checkingConnection ? "Checking Codex connection"
+    : "Waiting for sign-in";
   return <>
           {state.reconciling ? <p role="status" aria-label="Updating connection" className="matrix-ap-help matrix-ap-loading-status">
             <WorkflowLoadingSpinner /><span>Sign-in complete. Updating connection…</span>
           </p> : null}
           {startingLogin || runningLogin ? (
-            <div className="matrix-ap-device-login">
-              <h3>Finish signing in to {subscriptionName}</h3>
-              {!startingLogin && operation?.deviceCode ? (
+            <div className="matrix-ap-device-login matrix-ap-sign-in-panel">
+              {!existingCodexAccount ? <h3>Finish signing in to {subscriptionName}</h3> : null}
+              {!startingLogin && !existingCodexAccount && operation?.deviceCode ? (
                 <div className="matrix-ap-device-code">
                   <code>{operation.deviceCode}</code>
                   <button
                     type="button"
                     className="matrix-ap-button"
+                    disabled={codexTerminal && disabled}
                     onClick={() =>
                       void run(async (signal) => {
                         await navigator.clipboard.writeText(
@@ -122,11 +132,11 @@ export function WorkflowLoginProgress({ state }: { state: HarnessWorkflowControl
                   </button>
                 </div>
               ) : null}
-              {!startingLogin && operation?.authorizationUrl && onOpenAuthorizationUrl ? (
+              {!startingLogin && !existingCodexAccount && operation?.authorizationUrl && onOpenAuthorizationUrl ? (
                 <button
                   type="button"
                   className="matrix-ap-button matrix-ap-button-primary"
-                  disabled={seconds === 0}
+                  disabled={seconds === 0 || (codexTerminal && disabled)}
                   onClick={() =>
                     void run(async () => {
                       onOpenAuthorizationUrl?.(operation!.authorizationUrl!);
@@ -160,7 +170,7 @@ export function WorkflowLoginProgress({ state }: { state: HarnessWorkflowControl
               ) : null}
               <p role="status" aria-label={status} className="matrix-ap-help matrix-ap-loading-status">
                 <WorkflowLoadingSpinner />
-                <span>{startingLogin || preparingPage ? `${status}…` : <>
+                <span>{status !== "Waiting for sign-in" ? `${status}…` : <>
                   Waiting for sign-in.{" "}
                   {seconds > 0
                     ? `Code expires in ${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}.`
@@ -170,6 +180,32 @@ export function WorkflowLoginProgress({ state }: { state: HarnessWorkflowControl
             </div>
           ) : null}
   </>;
+}
+
+const workflowFailureMessages = {
+  install: "Installation couldn't complete. Try again.",
+  uninstall: "Uninstall couldn't complete. Try again.",
+  login: "Couldn't connect. Try again.",
+};
+
+export function WorkflowFailure({ state, canRetryLogin }: { state: HarnessWorkflowController; canRetryLogin: boolean }) {
+  const { back, disabled, failed, harness, onConnectSaved, onRefresh, operation, pending, start } = state;
+  if (!failed || !operation) return null;
+  if (harness.harness === "codex" && isCodexExistingAccountOption(operation.connectionOption)) {
+    return <div className="matrix-ap-notice" data-tone="danger" role="alert">
+      <span>Could not verify the existing Codex account.</span>
+      {!onConnectSaved ? <button type="button" className="matrix-ap-button"
+        disabled={disabled || pending} onClick={onRefresh}>Check again</button> : null}
+    </div>;
+  }
+  return <div className="matrix-ap-notice" data-tone="danger" role="alert">
+    <span>{operation.state === "expired" ? "The sign-in code expired." : workflowFailureMessages[operation.kind]}</span>
+    {operation.kind !== "login" || canRetryLogin ? <button type="button" className="matrix-ap-button"
+      disabled={disabled || pending} onClick={() => void start(operation.kind)}>Try again</button> : null}
+    <button type="button" className="matrix-ap-button" onClick={back}>
+      {operation.kind === "login" ? "Choose another way" : "Back"}
+    </button>
+  </div>;
 }
 
 export function WorkflowDisconnectDialog({ state }: { state: HarnessWorkflowController }) {

@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { AiProviderSnapshotV3Schema } from '@matrix-os/contracts';
+import { AiProviderSnapshotV3Schema, ProviderWorkflowMethodSchema } from '@matrix-os/contracts';
 import { nativeWorkflowConnectionOptions } from '../../packages/gateway/src/ai-providers/native-workflow-options.js';
 import { createNativeProviderWorkflowAdapters } from '../../packages/gateway/src/ai-providers/provider-workflow-native.js';
 import { createProviderWorkflowService } from '../../packages/gateway/src/ai-providers/provider-workflows.js';
@@ -25,15 +25,28 @@ function registryFixture() {
   return { create: vi.fn(), get: vi.fn(), delete: vi.fn(), rename: vi.fn(), observeAgentLiveness: vi.fn() };
 }
 describe('embedded Codex subscription exclusion', () => {
-  it('excludes unsupported browser and legacy methods while retaining API keys', () => {
-    expect(nativeWorkflowConnectionOptions({ harness: 'codex', methods: ['browser', 'existing_codex'], keyProviders: ['openai'] }))
-      .toEqual([expect.objectContaining({ id: 'openai_api_key', authKind: 'api_key', availability: 'available' })]);
+  const apiKeyOption = {
+    id: 'openai_api_key', providerId: 'openai', authKind: 'api_key', billingKind: 'api_key',
+    executionKind: 'native', availability: 'available',
+  };
+
+  it('retains only the API key without qualified native login capabilities', () => {
+    expect(ProviderWorkflowMethodSchema.safeParse('oauth').success).toBe(false);
+    expect(nativeWorkflowConnectionOptions({ harness: 'codex', methods: ['browser'], keyProviders: ['openai'] }))
+      .toEqual([apiKeyOption]);
   });
-  it('projects the qualified native device-code method without restoring browser or legacy login', () => {
+  it('projects qualified native device and existing-account options alongside the API key', () => {
     expect(nativeWorkflowConnectionOptions({ harness: 'codex', methods: [...methods], keyProviders: ['openai'] }))
       .toEqual([
-        expect.objectContaining({ id: 'openai_device_code', method: 'device_code', authKind: 'subscription', availability: 'available' }),
-        expect.objectContaining({ id: 'openai_api_key', authKind: 'api_key', availability: 'available' }),
+        {
+          id: 'openai_device_code', providerId: 'openai', method: 'device_code', authKind: 'subscription',
+          billingKind: 'subscription', executionKind: 'native', availability: 'available',
+        },
+        {
+          id: 'openai_existing_codex', providerId: 'openai', method: 'existing_codex', authKind: 'subscription',
+          billingKind: 'subscription', executionKind: 'native', availability: 'available',
+        },
+        apiKeyOption,
       ]);
   });
   it('retains existing native account state and API key verification while denying every login entry point', async () => {
