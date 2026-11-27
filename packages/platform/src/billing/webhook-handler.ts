@@ -47,6 +47,12 @@ import {
 } from '../billing/stripe-webhook-projection.js';
 
 import type { createBillingRoutes } from '../billing-routes.js';
+import { ownerOnFreePlan } from '../free-tier/free-checkout-guard.js';
+import {
+  enqueueFreeOwnerCompensation,
+  FREE_OWNER_CHARGE_COMPENSATION_EVENT,
+  retireFreeOwnerCheckoutAttempt,
+} from '../free-tier/free-owner-billing.js';
 const BILLING_CHECKOUT_COMPLETED_EVENT =
   MATRIX_TELEMETRY_EVENTS.BILLING_CHECKOUT_COMPLETED ?? 'matrix_billing_checkout_completed';
 const BILLING_CHECKOUT_EXPIRED_EVENT =
@@ -67,6 +73,26 @@ export function createStripeWebhookHandler(options: Parameters<typeof createBill
   const env = options.env ?? process.env;
   const now = options.now ?? (() => new Date());
   const persistEntitlement = options.upsertEntitlement ?? upsertBillingEntitlement;
+
+  /**
+   * ENG-520 launch guard, layer 3: a paid subscription for an owner who is on
+   * the free plan right now is never projected (the free metal VM would keep
+   * free limits under a paid plan). It is queued for cancel and refund by the
+   * free owner billing sweep, outside this transaction. Idempotent: the queue
+   * is keyed by subscription and webhook events are deduplicated.
+   */
+  async function compensateFreeOwner(trx: Parameters<typeof enqueueFreeOwnerCompensation>[0], clerkUserId: string,
+    stripeSubscriptionId: string | null, at: string, eventType: string): Promise<void> {
+    const queued = stripeSubscriptionId ? await enqueueFreeOwnerCompensation(trx, stripeSubscriptionId, at) : false;
+    if (queued) {
+      console.error('[billing] ALERT free owner paid checkout; subscription queued for cancel and refund');
+      emitTelemetry(FREE_OWNER_CHARGE_COMPENSATION_EVENT, {
+        distinctId: clerkUserId,
+        properties: { stripe_event_type: eventType, compensation: 'cancel_and_refund_queued' },
+      });
+    }
+  }
+
   return async (c: Context) => {
     const signature = c.req.header('stripe-signature');
     const webhookSecret = env.STRIPE_WEBHOOK_SECRET;
@@ -128,6 +154,21 @@ export function createStripeWebhookHandler(options: Parameters<typeof createBill
         // it `expired`. Both only transition `open` rows.
         if (event.type === 'checkout.session.completed' || event.type === 'checkout.session.expired') {
           const sessionId = readStripeObjectId(event.data.object);
+          const sessionOwner = event.type === 'checkout.session.completed'
+            ? readClerkUserIdFromCheckoutSession(event.data.object)
+            : null;
+          if (sessionId && sessionOwner && await ownerOnFreePlan(trx, sessionOwner)) {
+            const subscription = (event.data.object as { subscription?: unknown }).subscription;
+            const subscriptionId = typeof subscription === 'string'
+              ? subscription
+              : readStripeObjectId(subscription);
+            const at = webhookProcessedAt.toISOString();
+            // The paid attempt is void: it must not hold the owner's free plan as a pending checkout.
+            await retireFreeOwnerCheckoutAttempt(trx, sessionId, 'abandoned', at, true);
+            await options.prebilling?.expireCheckout(trx, { stripeSessionId: sessionId, clerkUserId: sessionOwner, now: at });
+            await compensateFreeOwner(trx, sessionOwner, subscriptionId, at, event.type);
+            return { received: true, processed: true };
+          }
           if (sessionId) {
             await resolveCheckoutAttempt(
               trx,
@@ -262,6 +303,11 @@ export function createStripeWebhookHandler(options: Parameters<typeof createBill
 
         const projection = await projectSubscription(trx, event.data.object, webhookProcessedAt);
         if (!projection) return { received: true, ignored: true };
+        if (await ownerOnFreePlan(trx, projection.clerkUserId)) {
+          await compensateFreeOwner(trx, projection.clerkUserId, projection.stripeSubscriptionId,
+            webhookProcessedAt.toISOString(), event.type);
+          return { received: true, processed: true };
+        }
 
         const priceCatalog = loadStripePriceCatalog(env);
         const entitlement = deriveStripeEntitlement(projection, {

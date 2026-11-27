@@ -79,6 +79,12 @@ export interface StripeBillingClient {
     id: string;
   }>;
   expireCheckoutSession?(id: string): Promise<StripeCheckoutSessionProjection>;
+  /**
+   * ENG-520 launch guard compensation: cancel the subscription now (no
+   * proration, no final invoice) and refund every paid invoice payment on it.
+   * Idempotent: already canceled subscriptions and refunded payments are done.
+   */
+  cancelAndRefundSubscription?(subscriptionId: string): Promise<void>;
   retrieveTrackingCheckout?(id: string): Promise<unknown>;
   retrieveTrackingInvoice?(id: string): Promise<unknown>;
   retrieveCheckoutSession(id: string): Promise<StripeCheckoutSessionProjection>;

@@ -17,3 +17,27 @@ export async function migrateFreeTier(db: PlatformMigrationExecutor): Promise<vo
     )
   `.execute(db);
 }
+
+/**
+ * ENG-520 launch guard: a paid subscription that lands for a free owner is
+ * never projected; it is queued here for cancel and refund. Keyed by the
+ * Stripe subscription only (no owner identity), so account deletion has
+ * nothing to erase and a pending refund survives it.
+ */
+export async function migrateFreeOwnerCompensations(db: PlatformMigrationExecutor): Promise<void> {
+  await sql`
+    CREATE TABLE IF NOT EXISTS billing_free_owner_compensations (
+      stripe_subscription_id TEXT PRIMARY KEY CHECK (stripe_subscription_id ~ '^sub_[A-Za-z0-9]{1,255}$'),
+      status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'done')),
+      attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+      lease_until TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL,
+      completed_at TIMESTAMPTZ
+    )
+  `.execute(db);
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_billing_free_owner_compensations_pending
+    ON billing_free_owner_compensations (created_at) WHERE status = 'pending'
+  `.execute(db);
+}

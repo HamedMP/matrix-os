@@ -15,7 +15,7 @@ import { migrateGoldenSnapshots } from './migrations/golden-snapshots.js';
 import { migrateProviderDeletion } from './migrations/provider-deletion.js';
 import { migrateDirectoryAndSocial } from './migrations/directory-and-social.js';
 import { migratePreviewDrive } from './migrations/preview-drive.js';
-import { migrateFreeTier } from './migrations/free-tier.js';
+import { migrateFreeOwnerCompensations, migrateFreeTier } from './migrations/free-tier.js';
 import { migrateMetalSleep } from './migrations/metal-sleep.js';
 import { migrateFreeFunding } from './migrations/free-funding.js';
 
@@ -50,6 +50,7 @@ export const PLATFORM_MIGRATION_STEPS: readonly PlatformMigrationStep[] = [
   { name: 'free-tier', run: migrateFreeTier },
   { name: 'metal-sleep', run: migrateMetalSleep },
   { name: 'free-funding', run: migrateFreeFunding },
+  { name: 'free-owner-compensations', run: migrateFreeOwnerCompensations },
 ];
 
 export async function migratePlatformSchema(db: PlatformMigrationExecutor): Promise<void> {

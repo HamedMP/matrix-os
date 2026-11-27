@@ -652,6 +652,8 @@ export function createBillingRoutes(options: {
     const parsed = CheckoutPreparationStatusQuerySchema.safeParse(c.req.query());
     if (!parsed.success) return c.json({ error: 'Invalid request' }, 400);
     try {
+      // ENG-520 launch guard: never hand a free owner a payable session URL.
+      if (await ownerOnFreePlan(options.db, clerkUserId)) return c.json(FREE_UPGRADE_UNAVAILABLE_RESPONSE, 409);
       const attempt = await getActiveCheckoutAttempt(options.db, clerkUserId, 'primary');
       if (!attempt || attempt.id !== parsed.data.attemptId) {
         return c.json({ error: 'Checkout unavailable' }, 404);

@@ -1,4 +1,5 @@
 import { MATRIX_FREE_AI_CREDIT_UNAVAILABLE, MATRIX_FREE_UPGRADE_UNAVAILABLE } from '@matrix-os/contracts';
+import { sql, type Expression, type RawBuilder } from 'kysely';
 import type { PlatformDB } from '../db.js';
 import { FREE_RUNTIME_SLOT } from './free-entitlement.js';
 
@@ -46,6 +47,15 @@ export async function ownerOnFreePlan(db: PlatformDB, clerkUserId: string): Prom
     .where('runtime_slot', '=', FREE_RUNTIME_SLOT)
     .executeTakeFirst();
   return metal !== undefined;
+}
+
+/** The same test as ownerOnFreePlan, as SQL over an owner id expression (for sweeps over many owners). */
+export function freeOwnerPredicate(owner: Expression<unknown>): RawBuilder<boolean> {
+  return sql<boolean>`(EXISTS (SELECT 1 FROM billing_entitlements free_owner_entitlement
+      WHERE free_owner_entitlement.clerk_user_id = ${owner} AND free_owner_entitlement.source = 'free')
+    OR EXISTS (SELECT 1 FROM user_machines free_owner_machine
+      WHERE free_owner_machine.clerk_user_id = ${owner} AND free_owner_machine.deleted_at IS NULL
+        AND free_owner_machine.substrate = 'metal' AND free_owner_machine.runtime_slot = ${FREE_RUNTIME_SLOT}))`;
 }
 
 /** Throws FreeUpgradeUnavailableError for a free owner. Reads only; call it under the owner lock to close the admission race. */

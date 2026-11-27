@@ -168,6 +168,32 @@ export function createStripeBillingClient(options: {
       return { url: session.url, id: session.id };
     },
 
+    async cancelAndRefundSubscription(subscriptionId) {
+      // The SDK client carries the bounded request timeout (MATRIX_STRIPE_API_TIMEOUT_MS).
+      const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+      if (subscription.status !== 'canceled' && subscription.status !== 'incomplete_expired') {
+        await stripe.subscriptions.cancel(subscriptionId, { invoice_now: false, prorate: false },
+          { idempotencyKey: `matrix-free-owner-cancel:${subscriptionId}` });
+      }
+      const invoices = await stripe.invoices.list({ subscription: subscriptionId, status: 'paid', limit: 20 });
+      for (const invoice of invoices.data) {
+        if (!invoice.id) continue;
+        const payments = await stripe.invoicePayments.list({ invoice: invoice.id, status: 'paid', limit: 10 });
+        for (const payment of payments.data) {
+          const intent = payment.payment.payment_intent;
+          const paymentIntentId = typeof intent === 'string' ? intent : intent?.id;
+          if (!paymentIntentId) continue;
+          try {
+            await stripe.refunds.create({ payment_intent: paymentIntentId, metadata: { matrix_reason: 'free_owner_launch_guard' } },
+              { idempotencyKey: `matrix-free-owner-refund:${paymentIntentId}` });
+          } catch (error: unknown) {
+            if (error instanceof Error && (error as { code?: unknown }).code === 'charge_already_refunded') continue;
+            throw error;
+          }
+        }
+      }
+    },
+
     async expireCheckoutSession(id) {
       let session: Stripe.Checkout.Session;
       try {
@@ -270,6 +296,7 @@ export function createUnavailableStripeBillingClient(): StripeBillingClient {
     clearSubscriptionAttribution: unavailable,
     createAiCreditCheckoutSession: unavailable,
     expireCheckoutSession: unavailable,
+    cancelAndRefundSubscription: unavailable,
     retrieveCheckoutSession: unavailable,
     retrieveRecurringPrice: unavailable,
     createPortalSession: unavailable,

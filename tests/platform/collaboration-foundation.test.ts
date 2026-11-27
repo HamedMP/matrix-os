@@ -95,6 +95,7 @@ describe('platform schema registration (S01 foundation)', () => {
       'free-tier',
       'metal-sleep',
       'free-funding',
+      'free-owner-compensations',
     ]);
     expect(PLATFORM_MIGRATION_STEPS.every((step) => typeof step.run === 'function')).toBe(true);
   });
