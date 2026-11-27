@@ -30,7 +30,7 @@ export function createHerdrChatTerminalRoute(
     const target = run?.herdr;
     const discovery = run?.scope === "chat_herdr_discovery";
     if (!discovery && (run?.scope !== "chat_herdr" || !target || target.signal.aborted)) return c.json({ error: "forbidden" }, 403);
-    if (!adapter && !desktops) return c.json({ error: "terminal_unavailable" }, 503);
+    if (!discovery && !adapter && !desktops) return c.json({ error: "terminal_unavailable" }, 503);
     if (new URL(c.req.url).search || c.req.header("content-type")?.split(";")[0] !== "application/json") {
       return c.json({ error: "invalid_request" }, 400);
     }
@@ -40,7 +40,6 @@ export function createHerdrChatTerminalRoute(
         if (body?.action !== "discover") return c.json({ error: "forbidden" }, 403);
         const parsed = HerdrDiscoveryActionSchema.safeParse(body);
         if (!parsed.success) return c.json({ error: "invalid_request" }, 400);
-        if (!adapter?.discoverTerminals && !desktops) return c.json({ error: "terminal_unavailable" }, 503);
         const signal = run.herdrDiscoverySignal;
         if (!signal || signal.aborted) return c.json({ error: "forbidden" }, 403);
         const source = adapter?.discoverTerminals ? { discoverTerminals: adapter.discoverTerminals } : null;

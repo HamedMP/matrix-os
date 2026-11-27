@@ -109,6 +109,7 @@ import { createTerminalBrowserWindow } from "./terminal-window/window";
 import { createComputerCredentialBroker } from "./terminal-window/credential-broker";
 import { installTerminalWindowAuth } from "./terminal-window/gateway-auth";
 import { createLocalTerminalHost, type LocalTerminalHost } from "./local-terminals/host";
+import { readMatrixInventory } from "./desktop-link/matrix-inventory";
 import { startDesktopLink, type DesktopLinkService } from "./desktop-link/register";
 import { registerLocalTerminalIpc } from "./local-terminals/ipc";
 import { createLocalTerminalStreams, liveContents, type LocalTerminalStreams } from "./local-terminals/streams";
@@ -791,7 +792,7 @@ if (!gotLock) {
       }, { ...streams.sink, facts: (terminals) => sendTerminalWindowEvent("local-terminal:facts", { terminals }) });
       streams.bind(localTerminalHost);
       localTerminals = localTerminalHost;
-      desktopLink = startDesktopLink({ userData, home: homedir(), appVersion: app.getVersion(), localTerminals: localTerminalHost, pairing: desktopPairing, showDialog: (request) => showMacActivityDialog(mainWindow, request), ...(macActivity ? { activity: (kind) => macActivity.begin(kind) } : {}), computerToken: (slot) => terminalCredentials.token(slot), powerMonitor, quitting: (listener) => app.once("before-quit", listener), ipc: { ipcMain, authorizeSender, emit: (channel, payload) => sendTerminalWindowEvent(channel, payload as never) } });
+      desktopLink = startDesktopLink({ matrixInventory: (ownerId) => readMatrixInventory(auth, ownerId), userData, home: homedir(), appVersion: app.getVersion(), localTerminals: localTerminalHost, pairing: desktopPairing, showDialog: (request) => showMacActivityDialog(mainWindow, request), ...(macActivity ? { activity: (kind) => macActivity.begin(kind) } : {}), computerToken: (slot) => terminalCredentials.token(slot), powerMonitor, quitting: (listener) => app.once("before-quit", listener), ipc: { ipcMain, authorizeSender, emit: (channel, payload) => sendTerminalWindowEvent(channel, payload as never) } });
       { const restored = auth.getStatus(); desktopLink.seedAccount(restored.signedIn ? { signedIn: true, userId: restored.userId, handle: restored.handle } : { signedIn: false }); }
       registerLocalTerminalIpc(ipcMain, localTerminalHost, authorizeSender, streams);
       const macTerminalChecks = registerChatMacTerminal(ipcMain, {

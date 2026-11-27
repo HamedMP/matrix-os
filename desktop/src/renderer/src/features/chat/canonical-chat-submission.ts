@@ -1,4 +1,5 @@
 import { generatedChatTitle } from "@matrix-os/ui";
+import { herdrControlCommand } from "@matrix-os/ui/herdr-sessions";
 import type { CanonicalChatMessagePart } from "@matrix-os/contracts";
 import type { SharedChatComposerSubmission } from "./composer-reference-tokens";
 
@@ -7,7 +8,8 @@ export function canonicalChatInputParts(
 ): CanonicalChatMessagePart[] {
   return [
     ...(submission.text ? [{ type: "text" as const, text: submission.text }] : []),
-    ...submission.invocations.map((invocation) => ({
+    // The picker supplies this command only on a fresh owner choice, outside durable draft tokens.
+    ...submission.invocations.filter(invocation => invocation.descriptorId !== herdrControlCommand.descriptorId).map((invocation) => ({
       type: "invocation_reference" as const,
       invocation,
     })),

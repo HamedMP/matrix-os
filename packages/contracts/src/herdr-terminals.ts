@@ -64,7 +64,9 @@ export function isHerdrChatTerminalRef(ref: { workspaceId: string } | null | und
 
 /** Read-only owner Chat discovery; a machine ID is never permission to execute. */
 export const HerdrDiscoveryQuerySchema = z.strictObject({
-  machine: z.string().regex(/^(?:gateway|herdr:[a-z0-9_.-]{1,32}|desktop:[0-9a-f]{64})$/).optional(),
+  machine: z.string().regex(/^(?:gateway|herdr:[a-z0-9_.-]{1,32}|desktop:[0-9a-f]{64}|via:[0-9a-f]{64}:(?:(?:private-herdr|herdr):[a-z0-9][a-z0-9._-]{0,31}|matrix:[a-z0-9][a-z0-9-]{1,62}:[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?))$/).optional(),
+  machineQuery: z.string().trim().min(1).max(100).optional(),
+  onlineOnly: z.boolean().optional(),
   query: z.string().trim().min(1).max(100).optional(),
   offset: z.number().int().min(0).max(4096).optional(),
 });

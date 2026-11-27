@@ -96,6 +96,7 @@ export function createDesktopPairing(options: DesktopPairingOptions) {
       : pendingRevocation
         ? "Chat Full Access is blocked on this Mac while a previous revocation needs attention."
         : "Chats set to Full Access can run Mac Verification on this Mac without asking each time. You can revoke this permission in Mac Pairing.";
+    const inventoryDetail = " While Desktop Link is on, your private Chat can list computer names and connection states from this desktop.";
     const buttons = paired ? ["Done", `Disconnect This ${noun}`] : ["Cancel", `Pair This ${noun}`];
     if (!offersFullAccess) {
       // No Full Access choice off macOS.
@@ -116,8 +117,8 @@ export function createDesktopPairing(options: DesktopPairingOptions) {
       type: "question",
       message: paired ? `This ${noun} is paired.` : `Pair this ${noun}?`,
       detail: paired
-        ? `Paired with ${origin}. ${fullAccess ? "Chat Full Access is allowed. " : ""}${fullAccessDetail}${linkDetail}`
-        : `Pair this ${noun} with ${origin}. ${fullAccessDetail}`,
+        ? `Paired with ${origin}. ${fullAccess ? "Chat Full Access is allowed. " : ""}${fullAccessDetail}${linkDetail}${inventoryDetail}`
+        : `Pair this ${noun} with ${origin}. ${fullAccessDetail}${inventoryDetail}`,
       buttons,
       defaultId: 0,
       cancelId: 0,

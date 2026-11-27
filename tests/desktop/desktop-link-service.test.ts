@@ -23,7 +23,7 @@ import type { DesktopPairingDatabase } from "../../packages/gateway/src/desktop-
 import { createRuntimeDesktopPairingRoutes } from "../../packages/gateway/src/desktop-pairing/routes.js";
 import { createFakeHerdrCore } from "../gateway/fixtures/fake-herdr-core-server.js";
 import { createDesktopLinkPreferenceStore } from "../../desktop/src/main/desktop-link/preferences";
-import { createDesktopLinkService, type DesktopLinkService, type DesktopLinkSocket } from "../../desktop/src/main/desktop-link/service";
+import { createDesktopLinkService, type DesktopLinkService, type DesktopLinkServiceOptions, type DesktopLinkSocket } from "../../desktop/src/main/desktop-link/service";
 
 const OWNER = "owner_mac";
 const HANDLE = "mac-test";
@@ -137,7 +137,7 @@ function testPairing(origin: string, key: { privateKey: KeyObject; publicKey: st
   };
 }
 
-function mac(origin: string, options: { core?: ReturnType<typeof createFakeHerdrCore> } = {}) {
+function mac(origin: string, options: { core?: ReturnType<typeof createFakeHerdrCore>; readInventory?: DesktopLinkServiceOptions["readInventory"] } = {}) {
   const userData = mkdtempSync(join(tmpdir(), "desktop-link-"));
   cleanup.push(() => rmSync(userData, { recursive: true, force: true }));
   const pairing = testPairing(origin);
@@ -149,6 +149,7 @@ function mac(origin: string, options: { core?: ReturnType<typeof createFakeHerdr
     credential: async () => ownerJwt(),
     consent: ALLOW_ALL,
     openCore: async () => core.connect(),
+    readInventory: options.readInventory,
     preferences: createDesktopLinkPreferenceStore(userData, () => {}),
     home: tmpdir(),
     deviceName: "Hamed's MacBook Pro",
@@ -194,6 +195,22 @@ describe("Desktop link service", () => {
     expect(listed.sessions.map((session) => session.id)).toEqual(["t1"]);
     // The computer's own calls reached the desktop's core through the guard.
     expect(core.calls.some((call) => call.method === "terminal.list")).toBe(true);
+  });
+
+  it("sends only the paired owner's inventory after admission and clears it on Stop", async () => {
+    const gateway = await computer();
+    const machines = [{ name: "independent-mac", state: "unreachable" as const }];
+    const readInventory = vi.fn(async () => ({ machines, partial: true }));
+    const desktop = mac(gateway.origin, { readInventory });
+    await desktop.service.start();
+    expect(readInventory).not.toHaveBeenCalled();
+    await desktop.pairing.pair();
+    await desktop.service.enable("primary", "matrix-demo");
+    await until(() => gateway.registry.linked()[0]?.herdrMachines?.[0]?.name === "independent-mac");
+    expect(readInventory.mock.calls).toEqual([[OWNER]]);
+    expect(gateway.registry.linked()[0]).toMatchObject({ herdrMachines: machines, herdrMachinesPartial: true });
+    await desktop.service.disable("primary");
+    await until(() => gateway.registry.linked().length === 0);
   });
 
   it("switching off closes the link at once and does not reconnect", async () => {

@@ -48,6 +48,8 @@ export interface DiscoveredMachine {
   id: string;
   name: string;
   online: boolean;
+  /** Reachability of this named route as reported by the core. */
+  state?: "connected" | "unreachable" | "unknown";
   terminals: Array<Pick<LocalTerminal, "id" | "title" | "status">>;
 }
 
@@ -91,7 +93,8 @@ export function discoverHerdrMachines(reply: unknown): { machines: DiscoveredMac
     const machine = MachinePresenceSchema.safeParse(raw);
     if (!machine.success) continue;
     const { name, state } = machine.data;
-    remotes.set(name, { id: `herdr:${name}`, name, online: state === "connected", terminals: [] });
+    remotes.set(name, { id: `herdr:${name}`, name, online: state === "connected",
+      state: state === "connected" || state === "unreachable" ? state : "unknown", terminals: [] });
   }
   for (const raw of snapshot.terminals) {
     const row = DiscoveryTerminalSchema.safeParse(raw);

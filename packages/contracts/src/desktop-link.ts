@@ -5,6 +5,7 @@
 // Consumed as raw TS source by plain Node: import only from packages, never
 // from "./module.js" siblings.
 import { z } from "zod/v4";
+import { MatrixComputerHandleSchema, MatrixComputerRuntimeSlotSchema } from "#contract-primitives";
 
 /** SHA-256 of the device's Ed25519 public key (SPKI DER), lower-case hex. */
 export const DesktopLinkDeviceIdSchema = z.string().regex(/^[a-f0-9]{64}$/);
@@ -81,11 +82,30 @@ export const DesktopLinkProofFrameSchema = z.strictObject({
   }),
 });
 
+/** Names are display-only. An owner's Core alias and Matrix handle may share a name. */
+export const DESKTOP_LINK_MAX_HERDR_MACHINES = 32;
+const InventoryStateSchema = z.enum(["connected", "unreachable", "unknown"]);
+export const DesktopLinkHerdrMachineSchema = z.discriminatedUnion("source", [
+  z.strictObject({
+    source: z.undefined().optional(),
+    core: z.literal("private").optional(),
+    name: z.string().regex(/^[a-z0-9][a-z0-9._-]{0,31}$/),
+    state: InventoryStateSchema,
+  }),
+  z.strictObject({
+    source: z.literal("matrix"),
+    name: MatrixComputerHandleSchema,
+    runtimeSlot: MatrixComputerRuntimeSlotSchema,
+    state: InventoryStateSchema,
+  }),
+]);
+export type DesktopLinkHerdrMachine = z.infer<typeof DesktopLinkHerdrMachineSchema>;
+
 export const DesktopLinkStreamSchema = z.number().int().min(1).max(Number.MAX_SAFE_INTEGER);
 
 /** Frames the gateway sends after admission. */
 export const DesktopLinkServerFrameSchema = z.discriminatedUnion("t", [
-  z.strictObject({ t: z.literal("ready") }),
+  z.strictObject({ t: z.literal("ready"), herdrInventory: z.literal(true).optional() }),
   z.strictObject({ t: z.literal("ping") }),
   z.strictObject({ t: z.literal("pong") }),
   /**
@@ -100,7 +120,11 @@ export const DesktopLinkServerFrameSchema = z.discriminatedUnion("t", [
 /** Frames the desktop sends after admission. */
 export const DesktopLinkClientFrameSchema = z.discriminatedUnion("t", [
   z.strictObject({ t: z.literal("ping") }),
-  z.strictObject({ t: z.literal("pong") }),
+  z.strictObject({
+    t: z.literal("pong"),
+    herdrMachines: z.array(DesktopLinkHerdrMachineSchema).max(DESKTOP_LINK_MAX_HERDR_MACHINES).optional(),
+    herdrMachinesPartial: z.literal(true).optional(),
+  }),
   /**
    * The desktop stopped piping every earlier stream and now pipes `stream`: desktop
    * bytes after this frame belong to it. Bytes before it are from older streams.

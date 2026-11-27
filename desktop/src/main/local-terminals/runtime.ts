@@ -14,6 +14,17 @@ export interface LocalTerminalRuntime {
   dataDir: string;
 }
 
+export const LOCAL_TERMINAL_SESSION = "mx";
+
+export function localTerminalRuntimeDir(userData: string, home: string): string {
+  const profile = createHash("sha256").update(userData).digest("hex").slice(0, 8);
+  return join(home, ".matrixos", "dt", profile);
+}
+
+export function localTerminalCoreSocket(runtimeDir: string): string {
+  return join(runtimeDir, "herdr-core", LOCAL_TERMINAL_SESSION + ".sock");
+}
+
 /**
  * The bundled binary ships at `<resources>/herdr/hc`. The app never runs an
  * `hc` found on PATH. A development build may name one explicitly with
@@ -29,13 +40,12 @@ export function resolveLocalTerminalRuntime(input: {
   const binaryPath = override && override.startsWith("/") ? override : exists(bundled) ? bundled : null;
   // Unix socket paths are short, so sockets live under the home directory in a
   // directory named for this profile; state and config stay in userData.
-  const profile = createHash("sha256").update(input.userData).digest("hex").slice(0, 8);
   const notices = join(input.resourcesPath, "herdr", "NOTICES.txt");
   return {
     binaryPath,
     // Only what ships inside the app is offered; a developer-supplied binary has no bundled notices.
     noticesPath: exists(notices) ? notices : null,
-    runtimeDir: join(input.home, ".matrixos", "dt", profile),
+    runtimeDir: localTerminalRuntimeDir(input.userData, input.home),
     dataDir: join(input.userData, "herdr"),
   };
 }

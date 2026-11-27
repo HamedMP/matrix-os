@@ -144,7 +144,7 @@ export function registerDesktopLinkRoutes(options: RegisterDesktopLinkOptions): 
   }
   const pairing = new DesktopPairingRepository(options.ownerDatabase, config);
   const registry = options.registry ?? createDesktopLinkRegistry({ now });
-  registry.usePairing(() => pairing.read());
+  registry.usePairing(() => pairing.read(), async (id, revision) => (await pairing.readReport(id, revision))?.name ?? null);
   const admissions: number[] = [];
   // When last-seen was last written for the paired device at its revision (D3):
   // at most once a minute. One entry: only the paired desktop links.
@@ -181,7 +181,8 @@ export function registerDesktopLinkRoutes(options: RegisterDesktopLinkOptions): 
 
   // --- The link -----------------------------------------------------------
 
-  app.get(DESKTOP_LINK_PATH, options.upgradeWebSocket(() => {
+  app.get(DESKTOP_LINK_PATH, options.upgradeWebSocket((c) => {
+    const herdrInventory = c.req.query("herdrInventory") === "1";
     let nonce = "";
     let link: DesktopLink | null = null;
     let admitting = false;
@@ -217,6 +218,7 @@ export function registerDesktopLinkRoutes(options: RegisterDesktopLinkOptions): 
       }
       const socket = ws.raw as { bufferedAmount?: number } | undefined;
       const admitted = createDesktopLink({
+        herdrInventory,
         info: { deviceId, revision, name, appVersion: client.version, os: client.os },
         transport: {
           sendText: (frame) => ws.send(frame),
@@ -236,7 +238,7 @@ export function registerDesktopLinkRoutes(options: RegisterDesktopLinkOptions): 
       }
       stop();
       link = admitted;
-      admitted.send({ t: "ready" });
+      admitted.send(herdrInventory ? { t: "ready", herdrInventory: true } : { t: "ready" });
       // The desktop's own name, stored for the paired device at this revision only (D3).
       pairing.describe(deviceId, revision, { name }, new Date(now())).catch((error: unknown) => {
         log(`device report update failed: ${error instanceof Error ? error.name : "UnknownError"}`);
