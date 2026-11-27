@@ -1,7 +1,7 @@
 import { Hono, type Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { z } from 'zod/v4';
-import { SITE_MANAGEMENT_CONTRACT_VERSION, SITE_MANAGEMENT_CONTRACT_VERSION_HEADER,
+import { SITE_ALLOWLIST_READINESS_VERSION, SITE_MANAGEMENT_CONTRACT_VERSION, SITE_MANAGEMENT_CONTRACT_VERSION_HEADER,
     SITE_PUBLISH_TIMEOUT_MS, SiteAccessLinkCreateRequestSchema, SiteAccessLinksQuerySchema,
     SiteAppSlugSchema, SiteIdSchema, SiteRollbackSchema, type SiteAccessLinksResponse, type SiteRecord,
     SiteEmailInvitationCreateRequestSchema, SiteEmailInvitationListQuerySchema, SiteEmailInvitationMutationRequestSchema,
@@ -57,9 +57,9 @@ export function createSiteManagementRoutes(options: {
     app.use('*', async (c, next) => { c.header('Cache-Control', 'no-store'); await next(); });
     const denied = (c: Context) => c.json({ error: 'Unauthorized' }, 401);
     const smallBody = bodyLimit({ maxSize: 2048, onError: c => c.json({ error: 'Site unavailable' }, 413) });
-    const usesCurrentContract = (c: Context) => c.req.header(SITE_MANAGEMENT_CONTRACT_VERSION_HEADER) === SITE_MANAGEMENT_CONTRACT_VERSION;
-    // Version 3 gateways understand email capabilities in site records but not allowlist mode.
-    const usesEmailContract = (c: Context) => c.req.header(SITE_MANAGEMENT_CONTRACT_VERSION_HEADER) === '3' || usesCurrentContract(c);
+    // Only the owner readiness read uses version 4; it also implies version 3 everywhere else.
+    const allowlistAware = (c: Context) => c.req.header(SITE_MANAGEMENT_CONTRACT_VERSION_HEADER) === SITE_ALLOWLIST_READINESS_VERSION;
+    const usesEmailContract = (c: Context) => c.req.header(SITE_MANAGEMENT_CONTRACT_VERSION_HEADER) === SITE_MANAGEMENT_CONTRACT_VERSION || allowlistAware(c);
     const usesAccessModeContract = (c: Context) => c.req.header(SITE_MANAGEMENT_CONTRACT_VERSION_HEADER) === '2' || usesEmailContract(c);
     const rejectUnnegotiatedAccessMode = (c: Context, input: unknown) => {
         if (!usesAccessModeContract(c) && typeof input === 'object' && input !== null && Object.hasOwn(input, 'accessMode'))
@@ -154,7 +154,7 @@ export function createSiteManagementRoutes(options: {
     app.get('/:appSlug/email-invitation-capabilities', async c => {
         const identity = await owner(c); if (!identity) return denied(c);
         // Older gateways would render email-delivery copy, so they never see allowlist mode as ready.
-        if (!usesCurrentContract(c)) return c.json({ privateEmailInvitations: false });
+        if (!allowlistAware(c)) return c.json({ privateEmailInvitations: false });
         return c.json({ privateEmailInvitations: options.emailEnabled ? await options.emailEnabled() : false, emailDelivery: 'none' });
     });
     app.get('/:appSlug/invitations', async c => {

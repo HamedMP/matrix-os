@@ -7,7 +7,7 @@ import { createSitesService } from '../../packages/platform/src/sites/service.js
 import { createSiteManagementRoutes } from '../../packages/platform/src/sites/management-routes.js';
 import { registerSiteRoutes } from '../../packages/platform/src/sites/registration.js';
 import { randomUUID } from 'node:crypto';
-import { SITE_MANAGEMENT_CONTRACT_VERSION, SITE_MANAGEMENT_CONTRACT_VERSION_HEADER } from '@matrix-os/contracts';
+import { SITE_ALLOWLIST_READINESS_VERSION, SITE_MANAGEMENT_CONTRACT_VERSION, SITE_MANAGEMENT_CONTRACT_VERSION_HEADER } from '@matrix-os/contracts';
 import { seedLegacyAccessLink } from './site-legacy-access-links.js';
 let db: PlatformDB;
 let app: Hono;
@@ -193,7 +193,7 @@ it.each(['NaN', '-1', '1.5', '1e12', '9999999999999999'])('rejects an invalid in
 it('advertises disabled invitation readiness before publication without creating a site', async () => {
  const url='/internal/containers/launch/sites/not-published/email-invitation-capabilities?runtimeSlot=primary';
  expect((await app.request(url)).status).toBe(401);
- const response=await app.request(url,{headers:{authorization:'Bearer '+token,[SITE_MANAGEMENT_CONTRACT_VERSION_HEADER]:SITE_MANAGEMENT_CONTRACT_VERSION}});
+ const response=await app.request(url,{headers:{authorization:'Bearer '+token,[SITE_MANAGEMENT_CONTRACT_VERSION_HEADER]:SITE_ALLOWLIST_READINESS_VERSION}});
  expect(response.status).toBe(200);
  expect(response.headers.get('cache-control')).toBe('no-store');
  expect(await response.json()).toEqual({privateEmailInvitations:false,emailDelivery:'none'});
@@ -203,7 +203,7 @@ it('reads readiness through verified machine authority and rejects untrusted que
  const enabled=vi.fn(async()=>true);
  const ready=new Hono().route('/internal/containers/:handle/sites',createSiteManagementRoutes({db,platformSecret:secret,service:createSitesService({db}),emailEnabled:enabled}));
  const url='/internal/containers/launch/sites/not-published/email-invitation-capabilities?runtimeSlot=primary';
- const current={authorization:'Bearer '+token,[SITE_MANAGEMENT_CONTRACT_VERSION_HEADER]:SITE_MANAGEMENT_CONTRACT_VERSION};
+ const current={authorization:'Bearer '+token,[SITE_MANAGEMENT_CONTRACT_VERSION_HEADER]:SITE_ALLOWLIST_READINESS_VERSION};
  expect((await ready.request(url)).status).toBe(401);
  expect(enabled).not.toHaveBeenCalled();
  const response=await ready.request(url,{headers:current});
@@ -217,4 +217,9 @@ it('keeps allowlist readiness off for gateways that cannot show allowlist copy',
   const response=await ready.request(url,{headers:{authorization:'Bearer '+token,...(version?{[SITE_MANAGEMENT_CONTRACT_VERSION_HEADER]:version}:{})}});
   expect(await response.json(),version).toEqual({privateEmailInvitations:false});
  }
+});
+it('keeps ordinary Sites operations on contract 3 so previous Platforms keep publishing', () => {
+ // A v4 header on publish/edit would be rejected by a Platform that predates allowlist mode.
+ expect(SITE_MANAGEMENT_CONTRACT_VERSION).toBe('3');
+ expect(SITE_ALLOWLIST_READINESS_VERSION).toBe('4');
 });

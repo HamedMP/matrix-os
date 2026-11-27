@@ -1,4 +1,4 @@
-import { SITE_MANAGEMENT_CONTRACT_VERSION, SITE_MANAGEMENT_CONTRACT_VERSION_HEADER, SITE_PUBLISH_TIMEOUT_MS, SiteAccessLinkCreateResponseSchema, SiteAccessLinksQuerySchema, SiteAccessLinksResponseSchema, SiteRecordSchema, SiteSlugAvailabilitySchema, type SiteAccessLinkCreateResponse, type SiteAccessLinksResponse, type SiteRecord, type SiteSlugAvailability, SiteEmailInvitationReadinessSchema, SiteEmailInvitationCreateResponseSchema, SiteEmailInvitationMutationResponseSchema, SiteEmailInvitationPageSchema, SiteInvitationAuditPageSchema } from '@matrix-os/contracts';
+import { SITE_ALLOWLIST_READINESS_VERSION, SITE_MANAGEMENT_CONTRACT_VERSION, SITE_MANAGEMENT_CONTRACT_VERSION_HEADER, SITE_PUBLISH_TIMEOUT_MS, SiteAccessLinkCreateResponseSchema, SiteAccessLinksQuerySchema, SiteAccessLinksResponseSchema, SiteRecordSchema, SiteSlugAvailabilitySchema, type SiteAccessLinkCreateResponse, type SiteAccessLinksResponse, type SiteRecord, type SiteSlugAvailability, SiteEmailInvitationReadinessSchema, SiteEmailInvitationCreateResponseSchema, SiteEmailInvitationMutationResponseSchema, SiteEmailInvitationPageSchema, SiteInvitationAuditPageSchema } from '@matrix-os/contracts';
 import { z } from 'zod/v4';
 // 410: platform refused a retired capability (one-time links, ENG-490); relayed with generic copy only.
 export class SitePlatformError extends Error{constructor(readonly status:400|404|409|410|503){super('Publishing request failed');}}
@@ -17,7 +17,7 @@ export interface SitePlatformClient {
 }
 export function createSitePlatformClient(options:{url:string;token:string;handle:string;runtimeSlot?:string}):SitePlatformClient{
  const base=new URL(options.url);if(!['https:','http:'].includes(base.protocol)||base.username||base.password)throw new Error('Invalid site platform configuration');
- async function request<T>(slug:string,method:string,body:unknown,child:string,signal:AbortSignal|undefined,deadlineAt:number|undefined,schema:z.ZodType<T>,missingIsNull=false):Promise<T|null>{
+ async function request<T>(slug:string,method:string,body:unknown,child:string,signal:AbortSignal|undefined,deadlineAt:number|undefined,schema:z.ZodType<T>,missingIsNull=false,contractVersion=SITE_MANAGEMENT_CONTRACT_VERSION):Promise<T|null>{
   const target=new URL('/internal/containers/'+encodeURIComponent(options.handle)+'/sites/'+encodeURIComponent(slug)+child,base);if(options.runtimeSlot)target.searchParams.set('runtimeSlot',options.runtimeSlot);
   try{
    if(signal?.aborted)throw new SitePlatformError(503);
@@ -30,7 +30,7 @@ export function createSitePlatformClient(options:{url:string;token:string;handle
     timeoutMs=remaining;
    }
    const timeout=AbortSignal.timeout(timeoutMs);
-   const response=await fetch(target,{method,headers:{authorization:'Bearer '+options.token,'content-type':'application/json',[SITE_MANAGEMENT_CONTRACT_VERSION_HEADER]:SITE_MANAGEMENT_CONTRACT_VERSION,...(deadlineAt===undefined?{}:{'x-matrix-site-deadline':String(deadlineAt)})},...(body===undefined?{}:{body:JSON.stringify(body)}),signal:signal?AbortSignal.any([signal,timeout]):timeout,redirect:'error'});
+   const response=await fetch(target,{method,headers:{authorization:'Bearer '+options.token,'content-type':'application/json',[SITE_MANAGEMENT_CONTRACT_VERSION_HEADER]:contractVersion,...(deadlineAt===undefined?{}:{'x-matrix-site-deadline':String(deadlineAt)})},...(body===undefined?{}:{body:JSON.stringify(body)}),signal:signal?AbortSignal.any([signal,timeout]):timeout,redirect:'error'});
    if(response.status===404&&method==='GET'&&missingIsNull){await response.body?.cancel();return null;}
    if(!response.ok){await response.body?.cancel();throw new SitePlatformError(response.status===409?409:response.status===400?400:response.status===404?404:response.status===410?410:503);}
    // Bound streamed upstream response; Content-Length alone is not sufficient.
@@ -46,7 +46,7 @@ export function createSitePlatformClient(options:{url:string;token:string;handle
   revokeAccessLink:async(slug,linkId)=>{await request(slug,'DELETE',undefined,'/access-links/'+encodeURIComponent(linkId),undefined,undefined,z.object({ok:z.literal(true)}).strict());},
   slugAvailability:async(slug,friendlySlug,signal)=>request(slug,'GET',undefined,`/slug-availability?${new URLSearchParams({slug:friendlySlug})}`,signal,undefined,SiteSlugAvailabilitySchema) as Promise<SiteSlugAvailability>,
   emailInvitationCapabilities:async(slug,signal)=>request(slug,'GET',undefined,
-   '/email-invitation-capabilities',signal,undefined,SiteEmailInvitationReadinessSchema) as Promise<z.infer<typeof SiteEmailInvitationReadinessSchema>>,
+   '/email-invitation-capabilities',signal,undefined,SiteEmailInvitationReadinessSchema,false,SITE_ALLOWLIST_READINESS_VERSION) as Promise<z.infer<typeof SiteEmailInvitationReadinessSchema>>,
   listEmailInvitations:async(slug,query)=>request(slug,'GET',undefined,
    `/invitations?limit=${query.limit}${query.cursor?'&cursor='+encodeURIComponent(query.cursor):''}`,
    undefined,undefined,SiteEmailInvitationPageSchema) as Promise<z.infer<typeof SiteEmailInvitationPageSchema>>,

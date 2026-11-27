@@ -5,7 +5,7 @@ import { createConfiguredAccountDeletionRuntime } from '../../packages/platform/
 import { createApp } from '../../packages/platform/src/main.js';
 import { insertUserMachine } from '../../packages/platform/src/db.js';
 import { buildPlatformSyncVerificationToken } from '../../packages/platform/src/platform-token.js';
-import { SITE_MANAGEMENT_CONTRACT_VERSION, SITE_MANAGEMENT_CONTRACT_VERSION_HEADER } from '@matrix-os/contracts';
+import { SITE_ALLOWLIST_READINESS_VERSION, SITE_MANAGEMENT_CONTRACT_VERSION_HEADER } from '@matrix-os/contracts';
 
 // Fault detected: production main.ts never passes readiness, so the Private tab
 // stays hidden even when every allowlist prerequisite is configured.
@@ -39,7 +39,7 @@ describe('production Matrix.page allowlist readiness wiring', () => {
         accountDeletion: runtime ?? undefined,
         clerkAuth: { verify: async () => ({ authenticated: false }), extractToken: () => null } as never });
       const response = await app.request(url, { headers: {
-        [SITE_MANAGEMENT_CONTRACT_VERSION_HEADER]: SITE_MANAGEMENT_CONTRACT_VERSION,
+        [SITE_MANAGEMENT_CONTRACT_VERSION_HEADER]: SITE_ALLOWLIST_READINESS_VERSION,
         authorization: `Bearer ${buildPlatformSyncVerificationToken(identity, platformSecret, 2)}` } });
       expect(response.status).toBe(200);
       return await response.json();

@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 const client=()=>createSitePlatformClient({url:'https://platform.example',token:'machine-token',handle:'owner',runtimeSlot:'main'});
 afterEach(()=>{vi.restoreAllMocks();vi.unstubAllGlobals();vi.useRealTimers();});
 describe('bounded site management transport',()=>{
- it('uses configured destination, machine proof, versioned site responses and rejects redirects',async()=>{const missing=new Response('missing',{status:404});const fetch=vi.fn().mockResolvedValue(missing);vi.stubGlobal('fetch',fetch);expect(await client().request('event','GET')).toBeNull();expect(missing.bodyUsed).toBe(true);const [url,options]=fetch.mock.calls[0];expect(String(url)).toBe('https://platform.example/internal/containers/owner/sites/event?runtimeSlot=main');expect(options.headers.authorization).toBe('Bearer machine-token');expect(options.headers['x-matrix-sites-contract-version']).toBe('4');expect(options.redirect).toBe('error');expect(options.signal).toBeInstanceOf(AbortSignal);});
+ it('uses configured destination, machine proof, versioned site responses and rejects redirects',async()=>{const missing=new Response('missing',{status:404});const fetch=vi.fn().mockResolvedValue(missing);vi.stubGlobal('fetch',fetch);expect(await client().request('event','GET')).toBeNull();expect(missing.bodyUsed).toBe(true);const [url,options]=fetch.mock.calls[0];expect(String(url)).toBe('https://platform.example/internal/containers/owner/sites/event?runtimeSlot=main');expect(options.headers.authorization).toBe('Bearer machine-token');expect(options.headers['x-matrix-sites-contract-version']).toBe('3');expect(options.redirect).toBe('error');expect(options.signal).toBeInstanceOf(AbortSignal);});
  it('returns coarse unavailable on network, oversize and malformed responses',async()=>{for(const response of [new Error('postgres://secret/path'),new Response('x'.repeat(600000)),new Response('{}')]){vi.stubGlobal('fetch',response instanceof Error?vi.fn().mockRejectedValue(response):vi.fn().mockResolvedValue(response));await expect(client().request('event','GET')).rejects.toMatchObject({status:503,message:'Publishing request failed'});}});
  it('validates response and preserves conflict status',async()=>{const record={id:randomUUID(),appSlug:'event',title:'Launch',description:'',slug:null,url:'https://matrix.page/test',revision:1,status:'published',accessMode:'public' as const,activeVersion:randomUUID(),versions:[],config:{data:{},forms:[]}};vi.stubGlobal('fetch',vi.fn().mockResolvedValue(new Response(JSON.stringify(record))));expect(await client().request('event','GET')).toEqual(record);vi.stubGlobal('fetch',vi.fn().mockResolvedValue(new Response('{}',{status:409})));await expect(client().request('event','PATCH',{})).rejects.toEqual(new SitePlatformError(409));});
  it('preserves the retired one-time link status without exposing the platform body',async()=>{
@@ -31,7 +31,7 @@ describe('bounded site management transport',()=>{
   ]);
   const listQuery=new URL(String(fetch.mock.calls[0]![0])).searchParams;
   expect({runtimeSlot:listQuery.get('runtimeSlot'),limit:listQuery.get('limit')}).toEqual({runtimeSlot:'main',limit:'50'});
-  expect(fetch.mock.calls[0]![1].headers['x-matrix-sites-contract-version']).toBe('4');
+  expect(fetch.mock.calls[0]![1].headers['x-matrix-sites-contract-version']).toBe('3');
   expect(fetch.mock.calls.map(([,options])=>options.method)).toEqual(['GET','POST','DELETE']);
   vi.stubGlobal('fetch',vi.fn().mockResolvedValue(new Response(JSON.stringify({links:[{...link,token:'secret'}]}))));
   await expect(api.accessLinks('event')).rejects.toMatchObject({status:503});
@@ -95,6 +95,36 @@ it('uses the machine-bound readiness endpoint and rejects a malformed capability
  await expect(api.emailInvitationCapabilities!('event')).resolves.toEqual({privateEmailInvitations:false});
  await expect(api.emailInvitationCapabilities!('event')).resolves.toEqual({privateEmailInvitations:true,emailDelivery:'none'});
  expect(String(fetch.mock.calls[0][0])).toBe('https://platform.example/internal/containers/owner/sites/event/email-invitation-capabilities?runtimeSlot=main');
- expect(fetch.mock.calls[0][1]).toMatchObject({redirect:'error',headers:{authorization:'Bearer machine-token'}});
+ expect(fetch.mock.calls[0][1]).toMatchObject({redirect:'error',headers:{authorization:'Bearer machine-token','x-matrix-sites-contract-version':'4'}});
  await expect(api.emailInvitationCapabilities!('event')).rejects.toMatchObject({status:503});
+});
+
+// Fault detected: a Gateway that sends v4 on every Sites call breaks publishing against
+// a Platform that still knows only v2/v3 (rollout or Platform rollback). Only the owner
+// readiness read may ask for allowlist mode.
+describe('Sites contract across mixed Gateway/Platform versions',()=>{
+ const record=(accessMode:'public'|'private_email')=>({id:randomUUID(),appSlug:'event',title:'Launch',description:'',slug:null,
+  url:'https://matrix.page/test',revision:2,status:'published',accessMode,activeVersion:randomUUID(),versions:[],config:{data:{},forms:[]}});
+ // The access-mode rule of the Platform before allowlist mode (v2/v3 only).
+ function previousPlatform(){
+  return vi.fn(async(_url:unknown,init:RequestInit)=>{
+   const version=(init.headers as Record<string,string>)['x-matrix-sites-contract-version'];
+   const negotiated=version==='2'||version==='3';
+   const body=init.body?JSON.parse(String(init.body)) as Record<string,unknown>:{};
+   if(!negotiated&&Object.hasOwn(body,'accessMode'))return new Response('{}',{status:400});
+   const site=record('private_email');
+   if(String(_url).includes('/email-invitation-capabilities'))return new Response(JSON.stringify({privateEmailInvitations:false}));
+   if(negotiated)return new Response(JSON.stringify(site));
+   const {accessMode:_mode,...legacy}=site;return new Response(JSON.stringify(legacy));
+  });
+ }
+ it('keeps publish, metadata edits and reads working against the previous Platform',async()=>{
+  const fetch=previousPlatform();vi.stubGlobal('fetch',fetch);
+  const api=client();
+  await expect(api.request('event','POST',{accessMode:'private_email',title:'Launch'})).resolves.toMatchObject({accessMode:'private_email'});
+  await expect(api.request('event','PATCH',{accessMode:'private_email',baseRevision:2})).resolves.toMatchObject({accessMode:'private_email'});
+  await expect(api.request('event','GET')).resolves.toMatchObject({accessMode:'private_email'});
+  await expect(api.emailInvitationCapabilities!('event')).resolves.toEqual({privateEmailInvitations:false});
+  expect(fetch.mock.calls.slice(0,3).map(([,init])=>(init.headers as Record<string,string>)['x-matrix-sites-contract-version'])).toEqual(['3','3','3']);
+ });
 });
