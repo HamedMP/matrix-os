@@ -31,20 +31,15 @@ const STATUS: Record<Attempt["status"], string> = {
   "already-handled": "This Mac verification was already handled.",
 };
 
-export function useMacVerification({ candidate, busy, editingQueuedTurn, permissionMode }: {
+export function useMacVerification({ candidate, busy, editingQueuedTurn }: {
   candidate: Candidate | null;
   busy: boolean;
   editingQueuedTurn: boolean;
-  permissionMode?: string;
 }) {
   const key = candidate
     ? JSON.stringify([candidate.chatId, candidate.worktree.projectId, candidate.worktree.worktreeId])
     : null;
   const selection = useRef<Selection | null>(null);
-  const fullAccess = useRef<{ viewId: string; ready: Promise<boolean> } | null>(null);
-  const chatId = candidate?.chatId;
-  const projectId = candidate?.worktree.projectId;
-  const worktreeId = candidate?.worktree.worktreeId;
   const inFlight = useRef<Attempt | null>(null);
   const [attempt, setAttempt] = useState<Attempt | null>(null);
   const [intent, setIntent] = useState<Intent | null>(null);
@@ -76,27 +71,6 @@ export function useMacVerification({ candidate, busy, editingQueuedTurn, permiss
     }
   }, [currentRunId, draftRunId]);
 
-  useLayoutEffect(() => {
-    if (!pendingIntent.current) return;
-    pendingIntent.current = null;
-    setIntent(null);
-  }, [permissionMode]);
-
-  useLayoutEffect(() => {
-    if (permissionMode !== "full_access" || !chatId || !projectId || !worktreeId) return;
-    const viewId = crypto.randomUUID();
-    const warn = (error: unknown) => {
-      console.warn("[mac-verification] selection update failed", error instanceof Error ? error.name : "UnknownError");
-    };
-    const ready = invoke("chat:mac-verification-selection", { viewId, scope: { chatId, projectId, worktreeId } })
-      .then(success => success.accepted, error => { warn(error); return false; });
-    fullAccess.current = { viewId, ready };
-    return () => {
-      fullAccess.current = null;
-      void invoke("chat:mac-verification-selection", { viewId, scope: null }).catch(warn);
-    };
-  }, [chatId, permissionMode, projectId, worktreeId]);
-
   const status = attempt?.scope === key ? attempt?.status : undefined;
   const sameRun = attempt?.runId === candidate?.run.id;
   const canStart = Boolean(candidate && !busy && status !== "pending"
@@ -116,17 +90,10 @@ export function useMacVerification({ candidate, busy, editingQueuedTurn, permiss
     inFlight.current = pending;
     setAttempt(pending);
     try {
-      const binding = permissionMode === "full_access" ? fullAccess.current : null;
-      if (permissionMode === "full_access" && (!binding || !await binding.ready || fullAccess.current !== binding
-        || selection.current !== current || latestRun.current !== candidate.run.id)) {
-        if (selection.current === current) setAttempt({ ...pending, status: "unavailable" });
-        return;
-      }
       const response = await invoke("chat:electron-preview-run", {
         chatId: candidate.chatId,
         runId: candidate.run.id,
         requestKind: "verification",
-        ...(binding ? { fullAccessViewId: binding.viewId } : {}),
       });
       if (selection.current === current) setAttempt({ ...pending, status: response.status });
     } catch (error: unknown) {
@@ -208,9 +175,7 @@ export function useMacVerification({ candidate, busy, editingQueuedTurn, permiss
     <div className="mb-2 flex items-center gap-2 px-1 text-xs text-[var(--text-secondary)]">
       <p role="status">{currentIntent
         ? currentIntent.state === "draft" ? "Mac verification will run after this message." : "Waiting for the worktree run…"
-        : status === "unavailable" && permissionMode === "full_access"
-          ? "Mac verification is unavailable. Check Mac Pairing, or switch to Supervised to approve once."
-          : status ? STATUS[status] : null}</p>
+        : status ? STATUS[status] : null}</p>
       {currentIntent ? <button type="button" className="underline" onClick={() => stage(null)}>Cancel verification</button> : null}
     </div>
   ) : null;

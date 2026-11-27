@@ -1,22 +1,6 @@
 import type { CanonicalChatDetailResponse, CanonicalChatMessage, CanonicalChatRun } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 
-export const CHAT_ELECTRON_PREVIEW_RECEIPT_PREFIX = "req_electron_preview_";
-
-export function isMacVerificationReceiptRun(detail: CanonicalChatDetailResponse, runId: string): boolean {
-  const chatId = detail.record.chat.id;
-  const run = detail.runs.at(-1);
-  const prior = detail.runs.at(-2);
-  const root = run?.executionRoot;
-  if (run?.id !== runId || run.chatId !== chatId || run.driverKind !== "codex" || run.permissionMode !== "supervised"
-    || root?.kind !== "worktree" || root.projectId !== detail.record.projectId || prior?.chatId !== chatId
-    || prior.executionRoot?.kind !== "worktree" || prior.executionRoot.projectId !== root.projectId
-    || prior.executionRoot.worktreeId !== root.worktreeId) return false;
-  const turn = detail.turns.find(candidate => candidate.id === run.turnId && candidate.chatId === chatId);
-  return Boolean(turn?.clientRequestId.startsWith(CHAT_ELECTRON_PREVIEW_RECEIPT_PREFIX)
-    && /^[a-f0-9]{64}$/.test(turn.clientRequestId.slice(CHAT_ELECTRON_PREVIEW_RECEIPT_PREFIX.length)));
-}
-
 export const CHAT_ELECTRON_PREVIEW_PREFIX = "MATRIX_ELECTRON_PREVIEW_V1 ";
 export const CHAT_ELECTRON_PREVIEW_MAX_AGE_MS = 10 * 60 * 1_000;
 export const CHAT_ELECTRON_PREVIEW_SOURCE = "desktop/src/renderer/src/features/signin/SignIn.tsx";

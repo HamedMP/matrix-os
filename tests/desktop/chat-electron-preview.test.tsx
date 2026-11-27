@@ -1,12 +1,12 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import React, { StrictMode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CanonicalChatDetailResponse, CanonicalChatMessage } from "@matrix-os/contracts";
 import { type StageChatWorktreeDraft, useChatElectronPreview } from "@desktop/renderer/src/features/chat/ChatElectronPreview";
 import {
-  CHAT_ELECTRON_PREVIEW_MAX_AGE_MS, CHAT_ELECTRON_PREVIEW_RECEIPT_PREFIX,
-  getChatElectronPreviewMarkerForRun, isMacVerificationReceiptRun,
+  CHAT_ELECTRON_PREVIEW_MAX_AGE_MS,
+  getChatElectronPreviewMarkerForRun,
   parseChatElectronPreviewMarker,
 } from "@desktop/shared/chat-electron-preview";
 import { createCanonicalChatFixture } from "../contracts/fixtures/canonical-chat";
@@ -24,18 +24,6 @@ const selectedRun = {
   ...snapshot.runs[0]!,
   executionRoot: { kind: "worktree", projectId: project!.projectId, worktreeId: "wt_preview" } as const,
 };
-
-function acceptVerificationDraft(
-  draft: ReturnType<typeof useChatElectronPreview>["verificationDraft"],
-  run: CanonicalChatDetailResponse["runs"][number],
-) {
-  act(() => {
-    const submission = draft?.beginSubmission(run.id);
-    if (!submission || submission === "draft-changed") throw new Error("Expected the current verification draft to submit");
-    submission.accept(run);
-    submission.finish();
-  });
-}
 
 function detailWithPreview(message: Partial<CanonicalChatMessage> = {}): CanonicalChatDetailResponse {
   return {
@@ -192,81 +180,6 @@ describe("Mac Verification", () => {
     expect(invoke.mock.calls.filter(([channel]) => channel === "chat:electron-preview-run")).toEqual([
       ["chat:electron-preview-run", { chatId: chat.id, runId: selectedRun.id, requestKind: "verification" }],
     ]);
-  });
-
-  it("binds the current Full Access selection, verifies the previously completed run, and releases on downgrade", async () => {
-    const invoke = vi.fn(async (channel: string, _payload: unknown) => {
-      if (channel === "chat:electron-preview-available") return { available: false, verificationAvailable: true };
-      if (channel === "chat:mac-verification-selection") return { accepted: true };
-      return { status: "returned" };
-    });
-    vi.stubGlobal("operator", { invoke });
-    const detail = verificationDetail();
-    const { rerender } = render(<ChatElectronPreview {...initialProps} detail={detail} permissionMode="supervised" />);
-    await screen.findByRole("button", { name: "Mac Verification" });
-    expect(invoke.mock.calls).toHaveLength(1);
-
-    rerender(<ChatElectronPreview {...initialProps} detail={detail} permissionMode="full_access" />);
-    fireEvent.click(screen.getByRole("button", { name: "Mac Verification" }));
-    expect(await screen.findByText("Mac verification returned to this Chat.")).toBeTruthy();
-    const viewId = (invoke.mock.calls[1]?.[1] as { viewId: string }).viewId;
-    expect(viewId).toEqual(expect.any(String));
-    expect(invoke.mock.calls.slice(1)).toEqual([
-      ["chat:mac-verification-selection", { viewId, scope: {
-        chatId: chat.id, projectId: project!.projectId, worktreeId: "wt_00000000000a",
-      } }],
-      ["chat:electron-preview-run", { chatId: chat.id, runId: selectedRun.id, requestKind: "verification", fullAccessViewId: viewId }],
-    ]);
-    rerender(<ChatElectronPreview {...initialProps} detail={detail} permissionMode="supervised" />);
-    expect(invoke).toHaveBeenLastCalledWith("chat:mac-verification-selection", {
-      viewId,
-      scope: null,
-    });
-  });
-
-  it("does not send a verification after the native process declines the Full Access selection", async () => {
-    const invoke = vi.fn(async (channel: string) => channel === "chat:electron-preview-available"
-      ? { available: false, verificationAvailable: true } : { accepted: false });
-    vi.stubGlobal("operator", { invoke });
-    render(<ChatElectronPreview {...initialProps} detail={verificationDetail()} permissionMode="full_access" />);
-    fireEvent.click(await screen.findByRole("button", { name: "Mac Verification" }));
-    expect(await screen.findByText(/Check Mac Pairing/)).toBeTruthy();
-    expect(invoke.mock.calls.some(([channel]) => channel === "chat:electron-preview-run")).toBe(false);
-  });
-
-  it("cancels an edit's waiting Mac verification when the owner changes permission mode", async () => {
-    const invoke = vi.fn(async (channel: string) => channel === "chat:electron-preview-available"
-      ? { available: false, verificationAvailable: true } : { accepted: true });
-    vi.stubGlobal("operator", { invoke });
-    const detail = verificationDetail();
-    const hook = renderHook(useChatElectronPreview, {
-      initialProps: { ...initialProps, detail, permissionMode: "full_access" },
-    });
-    await waitFor(() => expect(hook.result.current.verificationAction).toBeDefined());
-    act(() => hook.result.current.verificationAction?.select("@Mac Verification change", "change"));
-    const run = { ...detail.runs[0]!, id: "run_new_edit" };
-    acceptVerificationDraft(hook.result.current.verificationDraft, run);
-    expect(hook.result.current.verificationFeedback?.props.children[0].props.children).toBe("Waiting for the worktree run…");
-    hook.rerender({ ...initialProps, detail, permissionMode: "supervised" });
-    hook.rerender({ ...initialProps, detail: { ...detail, runs: [...detail.runs, run] }, permissionMode: "supervised" });
-    expect(invoke.mock.calls.some(([channel]) => channel === "chat:electron-preview-run")).toBe(false);
-    expect(hook.result.current.verificationFeedback).toBeNull();
-  });
-
-  it("recognizes only a supervised native receipt in the existing Chat and worktree", () => {
-    const detail = verificationDetail();
-    const original = detail.runs[0]!;
-    const receipt = { ...original, id: "run_receipt", turnId: "cturn_receipt", permissionMode: "supervised" };
-    const requestId = `${CHAT_ELECTRON_PREVIEW_RECEIPT_PREFIX}${"a".repeat(64)}`;
-    const turn = { ...detail.turns[0]!, id: receipt.turnId, clientRequestId: requestId };
-    detail.runs.push(receipt);
-    detail.turns.push(turn);
-    expect(isMacVerificationReceiptRun(detail, receipt.id)).toBe(true);
-    turn.clientRequestId = "req_other";
-    expect(isMacVerificationReceiptRun(detail, receipt.id)).toBe(false);
-    turn.clientRequestId = requestId;
-    receipt.executionRoot = { kind: "worktree", projectId: detail.record.projectId!, worktreeId: "wt_00000000000b" };
-    expect(isMacVerificationReceiptRun(detail, receipt.id)).toBe(false);
   });
 
   it("does not use the legacy preview capability to expose Mac Verification", async () => {

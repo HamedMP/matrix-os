@@ -14,10 +14,8 @@ interface PreviewResult {
   testSummary: string;
 }
 
-interface ForegroundApproval {
-  signal: AbortSignal;
-  acquire(request: ChatElectronPreviewRequest, operation: AbortController, signal: AbortSignal):
-    Promise<MacActionPairingLease | null>;
+interface ScopedApproval {
+  check(signal: AbortSignal, retryBadGateway?: () => boolean): Promise<boolean>;
 }
 
 interface Dependencies {
@@ -27,7 +25,7 @@ interface Dependencies {
   isCurrent(request: ChatElectronPreviewRequest): boolean;
   wasHandled(key: string): Promise<boolean>;
   claim(key: string): Promise<boolean>;
-  approve(request: ChatElectronPreviewRequest, signal: AbortSignal): Promise<boolean>;
+  approve(request: ChatElectronPreviewRequest, signal: AbortSignal): Promise<boolean | ScopedApproval>;
   execute(request: ChatElectronPreviewRequest, signal: AbortSignal): Promise<PreviewResult>;
   returnResult(request: ChatElectronPreviewRequest, result: PreviewResult | { error: "build-failed" }, signal: AbortSignal): Promise<void>;
   beginActivity?: BeginMacActivity;
@@ -55,18 +53,21 @@ export function createChatElectronPreviewService(deps: Dependencies) {
 
   async function runPreview(
     target: ChatElectronPreviewTarget, background: BackgroundPreview | undefined,
-    operation: AbortController, signal: AbortSignal, foreground?: ForegroundApproval,
+    operation: AbortController, signal: AbortSignal,
   ): Promise<ChatElectronPreviewReply> {
     const read = () => deps.read(target, background ? { ...background, signal } : undefined, signal);
     let activity: MacActivityHandle | undefined;
     let pairing: MacActionPairingLease | null | undefined;
     let completion: MacActivityPhase = "failed";
     let approvalSignal = signal;
+    let scopedApproval: ScopedApproval | undefined;
 
     async function pairingIsCurrent(boundarySignal: AbortSignal, retryBadGateway?: () => boolean): Promise<boolean> {
       if (boundarySignal.aborted || (pairing && !await pairing.check(boundarySignal, retryBadGateway))) return false;
       // A freshly paired device cannot inherit permission from an older background grant.
       if (background?.pairing && !await background.pairing.check(boundarySignal)) return false;
+      // A fresh action pairing cannot replace the grant that skipped native consent.
+      if (scopedApproval && !await scopedApproval.check(boundarySignal, retryBadGateway)) return false;
       return !boundarySignal.aborted;
     }
 
@@ -104,20 +105,14 @@ export function createChatElectronPreviewService(deps: Dependencies) {
       if (remaining <= 0 || signal.aborted || !deps.isCurrent(request)) return { status: "unavailable" };
       approvalSignal = AbortSignal.any([signal, AbortSignal.timeout(remaining)]);
       activity = deps.beginActivity?.("preview", request.worktreeId);
+      activity?.update("awaiting-approval");
+      const approved = await deps.approve(request, approvalSignal);
+      if (typeof approved === "object") scopedApproval = approved;
       completion = "revoked";
-      let approved: boolean;
-      if (foreground) {
-        pairing = await foreground.acquire(request, operation, approvalSignal);
+      if (approvalSignal.aborted || !deps.isCurrent(request)) return { status: "unavailable" };
+      if (approved && deps.acquireActionPairing) {
+        pairing = await deps.acquireActionPairing(operation, approvalSignal);
         if (!pairing || approvalSignal.aborted || !deps.isCurrent(request)) return { status: "unavailable" };
-        approved = true;
-      } else {
-        activity?.update("awaiting-approval");
-        approved = await deps.approve(request, approvalSignal);
-        if (approvalSignal.aborted || !deps.isCurrent(request)) return { status: "unavailable" };
-        if (approved && deps.acquireActionPairing) {
-          pairing = await deps.acquireActionPairing(operation, approvalSignal);
-          if (!pairing || approvalSignal.aborted || !deps.isCurrent(request)) return { status: "unavailable" };
-        }
       }
       if (approved && background?.pairing && !await background.pairing.check(approvalSignal)) {
         return { status: "unavailable" };
@@ -173,15 +168,12 @@ export function createChatElectronPreviewService(deps: Dependencies) {
     }
   }
 
-  async function run(
-    target: ChatElectronPreviewTarget, background?: BackgroundPreview, foreground?: ForegroundApproval,
-  ): Promise<ChatElectronPreviewReply> {
-    if (!deps.enabled || background?.signal.aborted || foreground?.signal.aborted) return { status: "unavailable" };
+  async function run(target: ChatElectronPreviewTarget, background?: BackgroundPreview): Promise<ChatElectronPreviewReply> {
+    if (!deps.enabled || background?.signal.aborted) return { status: "unavailable" };
     if (active) return { status: "busy" };
     const operation = new AbortController();
-    const boundSignal = background?.signal ?? foreground?.signal;
-    const signal = boundSignal ? AbortSignal.any([operation.signal, boundSignal]) : operation.signal;
-    const result = runPreview(target, background, operation, signal, foreground).finally(() => { active = null; });
+    const signal = background ? AbortSignal.any([operation.signal, background.signal]) : operation.signal;
+    const result = runPreview(target, background, operation, signal).finally(() => { active = null; });
     active = { operation, result };
     return result;
   }

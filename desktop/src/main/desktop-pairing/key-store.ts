@@ -1,29 +1,21 @@
 import { createHash, createPrivateKey, createPublicKey, generateKeyPairSync, randomUUID, type KeyObject } from "node:crypto";
 import { constants } from "node:fs";
-import { link, lstat, mkdir, open, opendir, rename, rm } from "node:fs/promises";
+import { link, lstat, mkdir, open, opendir, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { DesktopPairingDeviceIdSchema, DesktopPairingStateSchema } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 import type { SafeStorageLike } from "../auth/credential-store";
-import { matchingPairingState, type PairingState } from "./transport";
 
-const MAX_FILE_BYTES = 4096;
+const MAX_KEY_BYTES = 4096;
 const TEMP_SWEEP_INTERVAL_MS = 60_000;
 const TEMP_WRITE_GRACE_MS = 60 * 60_000;
 const MAX_TEMP_SWEEP_ENTRIES = 256;
-const TEMP_FILE = /^(?:device|chat-full-access)-[a-f0-9]{64}\.bin\.[a-f0-9-]{36}\.tmp$/;
-const ScopeId = z.string().regex(/^[a-f0-9]{64}$/);
+const TEMP_FILE = /^device-[a-f0-9]{64}\.bin\.[a-f0-9-]{36}\.tmp$/;
 const SavedKey = z.strictObject({
-  scope: ScopeId,
+  scope: z.string().regex(/^[a-f0-9]{64}$/),
   privateKey: z.string().regex(/^[A-Za-z0-9_-]{64}$/),
 });
-const SavedChatFullAccess = DesktopPairingStateSchema.extend({
-  scope: ScopeId,
-  deviceId: DesktopPairingDeviceIdSchema,
-  capability: z.literal("mac-verification"),
-});
 
-export interface KeyScope { origin: string; ownerId: string }
+interface KeyScope { origin: string; ownerId: string }
 
 export type PairingSafeStorage = SafeStorageLike & { getSelectedStorageBackend?(): string };
 
@@ -57,7 +49,7 @@ export function createPairingKeyStore(userData: string, safeStorage: PairingSafe
 
   function files(scope: KeyScope) {
     const id = createHash("sha256").update(JSON.stringify([scope.ownerId, scope.origin])).digest("hex");
-    return { id, keyPath: join(directory, `device-${id}.bin`), fullAccessPath: join(directory, `chat-full-access-${id}.bin`) };
+    return { id, path: join(directory, `device-${id}.bin`) };
   }
 
   async function inspectDirectory() {
@@ -100,21 +92,26 @@ export function createPairingKeyStore(userData: string, safeStorage: PairingSafe
     }
   }
 
-  async function readEncryptedRecord(path: string): Promise<unknown> {
+  async function load(scope: KeyScope) {
     if (!await inspectDirectory()) return null;
     await sweepTempFiles();
+    const { id, path } = files(scope);
     let handle;
     try {
       handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
       const info = await handle.stat();
-      if (!info.isFile() || (info.mode & 0o077) !== 0 || info.size === 0 || info.size > MAX_FILE_BYTES) {
-        throw new Error("Invalid pairing file");
+      if (!info.isFile() || (info.mode & 0o077) !== 0 || info.size === 0 || info.size > MAX_KEY_BYTES) {
+        throw new Error("Invalid pairing key file");
       }
       checkEncryption();
-      const bytes = Buffer.alloc(MAX_FILE_BYTES + 1);
+      const bytes = Buffer.alloc(MAX_KEY_BYTES + 1);
       const { bytesRead } = await handle.read(bytes, 0, bytes.length, 0);
-      if (bytesRead !== info.size) throw new Error("Pairing file changed");
-      return JSON.parse(safeStorage.decryptString(bytes.subarray(0, bytesRead))) as unknown;
+      if (bytesRead !== info.size) throw new Error("Pairing key changed");
+      const saved = SavedKey.parse(JSON.parse(safeStorage.decryptString(bytes.subarray(0, bytesRead))));
+      if (saved.scope !== id) throw new Error("Pairing key scope mismatch");
+      const privateKey = createPrivateKey({ key: Buffer.from(saved.privateKey, "base64url"), type: "pkcs8", format: "der" });
+      if (privateKey.asymmetricKeyType !== "ed25519") throw new Error("Invalid pairing key type");
+      return identifyPairingKey(privateKey);
     } catch (error: unknown) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
       throw error;
@@ -123,29 +120,25 @@ export function createPairingKeyStore(userData: string, safeStorage: PairingSafe
     }
   }
 
-  async function load(scope: KeyScope) {
-    const { id, keyPath } = files(scope);
-    const record = await readEncryptedRecord(keyPath);
-    if (record === null) return null;
-    const saved = SavedKey.parse(record);
-    if (saved.scope !== id) throw new Error("Pairing key scope mismatch");
-    const privateKey = createPrivateKey({ key: Buffer.from(saved.privateKey, "base64url"), type: "pkcs8", format: "der" });
-    if (privateKey.asymmetricKeyType !== "ed25519") throw new Error("Invalid pairing key type");
-    return identifyPairingKey(privateKey);
-  }
-
-  async function publishEncryptedRecord(
-    path: string, record: object, signal: AbortSignal, publish: (temporary: string) => Promise<void>,
-  ) {
+  async function loadOrCreate(scope: KeyScope, signal: AbortSignal) {
     signal.throwIfAborted();
+    const existing = await load(scope);
+    signal.throwIfAborted();
+    if (existing) return existing;
     checkEncryption();
     await mkdir(directory, { recursive: true, mode: 0o700 });
     if (!await inspectDirectory()) throw new Error("Pairing directory unavailable");
     await sweepTempFiles();
     signal.throwIfAborted();
 
-    const encrypted = safeStorage.encryptString(JSON.stringify(record));
-    if (encrypted.length === 0 || encrypted.length > MAX_FILE_BYTES) throw new Error("Invalid encrypted record size");
+    const { privateKey } = generateKeyPairSync("ed25519");
+    const { id, path } = files(scope);
+    const saved = {
+      scope: id,
+      privateKey: privateKey.export({ type: "pkcs8", format: "der" }).toString("base64url"),
+    };
+    const encrypted = safeStorage.encryptString(JSON.stringify(saved));
+    if (encrypted.length > MAX_KEY_BYTES) throw new Error("Invalid encrypted key size");
     const temporary = `${path}.${randomUUID()}.tmp`;
     activeWrites++;
     try {
@@ -158,7 +151,17 @@ export function createPairingKeyStore(userData: string, safeStorage: PairingSafe
           await handle.close();
         }
         signal.throwIfAborted();
-        await publish(temporary);
+        // Publish complete bytes atomically. Another process cannot replace our
+        // key and invalidate a challenge that we just signed.
+        try {
+          await link(temporary, path);
+        } catch (error: unknown) {
+          if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+          const winner = await load(scope);
+          if (winner) return winner;
+          throw error;
+        }
+        return identifyPairingKey(privateKey);
       } finally {
         await rm(temporary, { force: true });
       }
@@ -167,58 +170,9 @@ export function createPairingKeyStore(userData: string, safeStorage: PairingSafe
     }
   }
 
-  async function loadOrCreate(scope: KeyScope, signal: AbortSignal) {
-    signal.throwIfAborted();
-    const existing = await load(scope);
-    signal.throwIfAborted();
-    if (existing) return existing;
-    const { privateKey } = generateKeyPairSync("ed25519");
-    const { id, keyPath } = files(scope);
-    const saved = {
-      scope: id,
-      privateKey: privateKey.export({ type: "pkcs8", format: "der" }).toString("base64url"),
-    };
-    try {
-      // Publish complete bytes without replacing a key used by another process.
-      await publishEncryptedRecord(keyPath, saved, signal, temporary => link(temporary, keyPath));
-      return identifyPairingKey(privateKey);
-    } catch (error: unknown) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      const winner = await load(scope);
-      if (winner) return winner;
-      throw error;
-    }
-  }
-
-  async function hasChatFullAccess(scope: KeyScope, state: PairingState) {
-    if (!state.deviceId) return false;
-    const { id, fullAccessPath } = files(scope);
-    const record = await readEncryptedRecord(fullAccessPath);
-    if (record === null) return false;
-    const saved = SavedChatFullAccess.parse(record);
-    return saved.scope === id && matchingPairingState(state, saved);
-  }
-
-  async function allowChatFullAccess(scope: KeyScope, state: PairingState, signal: AbortSignal, assertCurrent: () => void) {
-    const { id, fullAccessPath } = files(scope);
-    const saved = SavedChatFullAccess.parse({ ...state, scope: id, capability: "mac-verification" });
-    await publishEncryptedRecord(fullAccessPath, saved, signal, temporary => {
-      assertCurrent();
-      return rename(temporary, fullAccessPath);
-    });
-  }
-
-  async function revokeChatFullAccess(scope: KeyScope) {
-    if (!await inspectDirectory()) return;
-    await rm(files(scope).fullAccessPath, { force: true });
-  }
-
   return {
     load,
     loadOrCreate,
-    hasChatFullAccess,
-    allowChatFullAccess,
-    revokeChatFullAccess,
     dispose() {
       disposed = true;
       clearInterval(timer);

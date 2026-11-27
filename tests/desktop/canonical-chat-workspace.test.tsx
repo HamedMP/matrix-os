@@ -1335,7 +1335,7 @@ describe("CanonicalChatWorkspace", () => {
     expect(reportedIds).toEqual([]);
   });
 
-  it("does not submit uploaded attachments after the selected runtime changes", async () => {
+  it.each(["runtime", "permission mode"] as const)("does not submit uploaded attachments after the %s changes", async (changed) => {
     let resolveUpload!: (value: { ok: true; path: string; size: number }) => void;
     const api = {
       baseUrl: "https://matrix.test",
@@ -1366,13 +1366,25 @@ describe("CanonicalChatWorkspace", () => {
     );
 
     const editor = await screen.findByRole("textbox", { name: "Start a chat" });
+    const permission = () => screen.getByRole("button", { name: "Permission mode" });
+    if (changed === "permission mode") {
+      fireEvent.click(permission());
+      fireEvent.click(screen.getByRole("menuitemradio", { name: "Full Access" }));
+      expect(permission().textContent).toContain("Full Access");
+    }
     await setSharedComposerText(editor, "Inspect the attachment");
     const file = new File(["hello"], "notes.txt", { type: "text/plain" });
     fireEvent.change(screen.getByLabelText("Choose files"), { target: { files: [file] } });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
     await waitFor(() => expect(api.putBytes).toHaveBeenCalledTimes(1));
 
-    advanceRuntimeGeneration();
+    if (changed === "runtime") {
+      advanceRuntimeGeneration();
+    } else {
+      fireEvent.click(permission());
+      fireEvent.click(screen.getByRole("menuitemradio", { name: "Supervised" }));
+      expect(permission().textContent).toContain("Supervised");
+    }
     await act(async () => {
       const uploadPath = vi.mocked(api.putBytes).mock.calls[0]?.[0] as string;
       const path = decodeURIComponent(uploadPath.split("path=")[1] ?? "");

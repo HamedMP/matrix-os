@@ -34,7 +34,6 @@ export function useCanonicalComposerSelection({
   currentSelection,
   boundInstanceId,
   executionControls,
-  macReceiptRunId,
 }: {
   catalog: CanonicalProviderCatalog;
   catalogReady: boolean;
@@ -43,7 +42,6 @@ export function useCanonicalComposerSelection({
   currentSelection?: CanonicalChatSummary["currentSelection"];
   boundInstanceId?: string;
   executionControls?: CanonicalChatExecutionControls;
-  macReceiptRunId?: string;
 }) {
   const [selection, setSelection] = useState<CanonicalComposerSelection | null>(() => (
     initializeImmediately && !chatId && useProviderPreferences.getState().hydrated
@@ -59,7 +57,6 @@ export function useCanonicalComposerSelection({
   const observedCatalog = useRef(false);
   const controlsRunId = executionControls?.chatId === chatId ? executionControls.runId : undefined;
   const observedControlsRunId = useRef(controlsRunId);
-  const receivingMacReceipt = controlsRunId !== undefined && controlsRunId === macReceiptRunId;
 
   useEffect(() => {
     void useProviderPreferences.getState().hydrate();
@@ -71,7 +68,7 @@ export function useCanonicalComposerSelection({
     const chatChanged = selectionChatId.current !== chatId;
     const acceptedControlsChanged = observedControlsRunId.current !== controlsRunId;
     observedControlsRunId.current = controlsRunId;
-    if (chatChanged || scopeChanged || (acceptedControlsChanged && !receivingMacReceipt)) {
+    if (chatChanged || scopeChanged || acceptedControlsChanged) {
       selectionChatId.current = chatId;
       composerSelectionTouched.current = false;
     }
@@ -106,11 +103,7 @@ export function useCanonicalComposerSelection({
         && currentInstance.supports.permissionModes.includes(current.permissionMode)
         && rememberedOptions(catalog, current).length === current.options.length
         && canonicalChatSubscriptionSelectionMatches(currentInstance, current.options);
-      // A native receipt's acknowledgement runs Supervised without changing
-      // the live owner's choice for this Chat. Opening the Chat anew still
-      // follows canonical controls.
-      if (!chatChanged && !scopeChanged && (composerSelectionTouched.current || receivingMacReceipt)
-        && currentIsSupported) return current;
+      if (!chatChanged && !scopeChanged && composerSelectionTouched.current && currentIsSupported) return current;
       if (!chatChanged && !scopeChanged && (composerSelectionTouched.current || hadObservedCatalog) && current
         && (!currentInstance || currentInstance.availability !== "available"
           || !currentInstance.models.some(model => model.id === current.model && model.availability === "available"))
@@ -195,7 +188,6 @@ export function useCanonicalComposerSelection({
     executionControls,
     lastComposerInstanceId,
     providerPreferencesHydrated,
-    receivingMacReceipt,
   ]);
 
   const onSelectionChange = useCallback((nextSelection: CanonicalComposerSelection) => {
@@ -204,8 +196,5 @@ export function useCanonicalComposerSelection({
     setSelection(nextSelection);
   }, [setComposerSelection]);
 
-  return {
-    selection, onSelectionChange,
-    scopeReady: selectionChatId.current === chatId && selectionIdentityKey.current === identityKey,
-  };
+  return { selection, onSelectionChange };
 }

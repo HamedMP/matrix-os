@@ -17,7 +17,6 @@ import { ChatAgentsContent } from "../../packages/ui/src/chat-agents/ChatAgentsC
 import { ChatAgentsEntry as AgentsLauncher } from "../../packages/ui/src/chat-agents/ChatAgentsEntry";
 import { seedNewChatDraft } from "@desktop/renderer/src/features/chat/use-chat-composer-drafts";
 import { useRetainedComposerDrafts } from "@desktop/renderer/src/features/chat/retained-composer-drafts";
-import { createCanonicalChatFixture } from "../contracts/fixtures/canonical-chat";
 const agent = { kind: "agent" as const, id: "bot_meeting01", label: "Meeting helper" };
 const contextChat = { kind: "chat" as const, id: "chat_notes", label: "Meeting notes" };
 beforeEach(() => {
@@ -170,16 +169,9 @@ it.each([false, true])("retries a mentioned draft through its original operation
   const client = createCanonicalChatWorkspaceClient();
   client.agents = { search: vi.fn(async () => ({ enabled: true, resources: [contextChat] })) } as unknown as ChatAgentClient;
   let active = initiallyActive;
-  vi.mocked(client.getDetail).mockImplementation(async () => {
-    const { snapshot } = createCanonicalChatFixture(active ? "running" : "completed");
-    const chatId = canonicalChatRecord.chat.id;
-    return { record: { ...canonicalChatRecord, ...(snapshot.chat.activeRun ? { activeRun: snapshot.chat.activeRun } : {}) },
-      messages: snapshot.messages.map(message => ({ ...message, chatId })),
-      turns: snapshot.turns.map(turn => ({ ...turn, chatId })),
-      runs: snapshot.runs.map(run => ({ ...run, chatId })),
-      activities: snapshot.activities.map(activity => ({ ...activity, chatId })),
-    };
-  });
+  vi.mocked(client.getDetail).mockImplementation(async () => ({ record: { ...canonicalChatRecord,
+    ...(active ? { activeRun: { runId: "run_busy", turnId: "cturn_busy", status: "running" as const } } : {}),
+  }, messages: snapshot.messages, turns: snapshot.turns, runs: snapshot.runs, activities: snapshot.activities }));
   const listeners = new Set<(event: CanonicalChatInvalidation) => void>();
   const eventSource = {
     subscribe(next: (event: CanonicalChatInvalidation) => void) {
