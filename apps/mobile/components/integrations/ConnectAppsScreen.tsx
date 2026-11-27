@@ -66,6 +66,7 @@ export function ConnectAppsScreen({ openedFrom }: ConnectAppsScreenProps) {
   const catalog = groupPostHogMarketplaceEntries(available, connectedIds);
   const catalogSections = buildIntegrationSections(catalog.services, {
     query, oauthOnly, connectedOnly, connectedIds: oauthOnly ? connectedIds : catalog.connectedIds,
+    postHogApiKey: catalog.postHogApiKey,
   });
   const connectedLabel = isPending
     ? "Loading connected accounts…"

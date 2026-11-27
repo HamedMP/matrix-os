@@ -90,6 +90,7 @@ describe("Connect Apps in Settings", () => {
       ],
     });
     render(<ConnectAppsSettingsScreen />);
+    fireEvent.changeText(screen.getByPlaceholderText("Search apps"), "API key");
     expect(screen.getByLabelText("Connect PostHog integration")).toBeTruthy();
     expect(screen.queryByLabelText("Connect PostHog (API key) integration")).toBeNull();
     fireEvent.press(screen.getByLabelText("Advanced options for PostHog"));

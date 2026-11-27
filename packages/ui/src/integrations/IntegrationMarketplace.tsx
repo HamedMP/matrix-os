@@ -54,6 +54,7 @@ export function IntegrationMarketplace<T extends IntegrationCatalogItem>({
   const catalog = groupPostHogMarketplaceEntries(services, connectedIds);
   const sections = buildIntegrationSections(catalog.services, {
     query, oauthOnly, connectedOnly, connectedIds: oauthOnly ? connectedIds : catalog.connectedIds,
+    postHogApiKey: catalog.postHogApiKey,
     ...(leadingSection ? { leading: leadingSection } : {}),
   });
   const connectedCount = catalog.services.filter(service => catalog.connectedIds.includes(service.id)).length;

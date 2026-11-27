@@ -92,14 +92,18 @@ export function groupPostHogMarketplaceEntries<T extends IntegrationCatalogItem>
 
 export function buildIntegrationSections<T extends IntegrationCatalogItem>(services: readonly T[], options: {
   query?: string; oauthOnly?: boolean; connectedOnly?: boolean; connectedIds?: readonly string[];
+  postHogApiKey?: IntegrationCatalogItem;
   /** An optional first section of chosen apps, in this order, left out of their category sections. */
   leading?: { title: string; ids: readonly string[] };
 } = {}): Array<{ title: string; services: T[] }> {
   const query = (options.query ?? "").trim().toLocaleLowerCase();
+  const matchesSearch = (service: IntegrationCatalogItem) =>
+    `${service.name} ${integrationDescription(service)} ${integrationCategory(service)}`.toLocaleLowerCase().includes(query);
+  const matchesPostHogApiKey = !options.oauthOnly && options.postHogApiKey !== undefined && matchesSearch(options.postHogApiKey);
   const filtered = services.filter(service =>
     (!options.oauthOnly || integrationAuthType(service) === "oauth")
     && (!options.connectedOnly || options.connectedIds?.includes(service.id))
-    && (!query || `${service.name} ${integrationDescription(service)} ${integrationCategory(service)}`.toLocaleLowerCase().includes(query)),
+    && (!query || matchesSearch(service) || (service.id === POSTHOG_OAUTH_SERVICE_ID && matchesPostHogApiKey)),
   );
   const leading = options.leading
     ? options.leading.ids.flatMap(id => filtered.filter(service => service.id === id))

@@ -99,4 +99,18 @@ describe("integration marketplace", () => {
     fireEvent.click(screen.getByRole("checkbox", { name: "Sign in without API keys" }));
     expect(screen.queryByRole("button", { name: "Advanced options for PostHog" })).toBeNull();
   });
+
+  it.each(["API key", "PostHog (API key)"])("finds the grouped PostHog entry when searching for %s", query => {
+    render(<IntegrationMarketplace services={[
+      { id: "posthog", name: "PostHog (API key)", category: "analytics" },
+      { id: "posthog_oauth", name: "PostHog", category: "analytics" },
+    ]} connectedIds={[]} onConnect={vi.fn()} />);
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search integrations" }), { target: { value: query } });
+    expect(screen.getByRole("button", { name: "Connect PostHog", exact: true })).toBeTruthy();
+    expect(screen.queryByText("PostHog (API key)")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Advanced options for PostHog" }));
+    expect(screen.getByRole("button", { name: "Connect PostHog (API key)", exact: true })).toBeTruthy();
+    fireEvent.click(screen.getByRole("checkbox", { name: "Sign in without API keys" }));
+    expect(screen.queryByRole("button", { name: "Connect PostHog", exact: true })).toBeNull();
+  });
 });
