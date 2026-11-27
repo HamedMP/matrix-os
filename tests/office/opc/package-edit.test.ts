@@ -9,7 +9,7 @@ import {
   findMainDocumentPart,
   openPackage,
 } from "../../../packages/office/src/opc/index.js";
-import { CONTENT_TYPES_XML, DOCUMENT_RELS_XML, ROOT_RELS_XML, handmadeDocx, handmadeZip, utf8 } from "./handmade-zip.js";
+import { CONTENT_TYPES_XML, DOCUMENT_RELS_XML, IMAGE_BYTES, ROOT_RELS_XML, handmadeDocx, handmadeZip, utf8 } from "./handmade-zip.js";
 
 const decoder = new TextDecoder();
 const DOCUMENT_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml";
@@ -443,5 +443,39 @@ describe("openPackage refuses damaged packages", () => {
       defaults: [{ extension: "xml", contentType: "application/xml" }],
       overrides: [{ partName: "/doc.xml", contentType: "a/b" }],
     });
+  });
+});
+
+describe("save snapshots", () => {
+  it("writes the package as it stood when save was called, even when a part changes while it runs", async () => {
+    const pkg = await openPackage(handmadeDocx());
+    const saving = pkg.save();
+    // Runs while save is suspended: new bytes and a new content type for the same part.
+    pkg.setPart("/word/media/image1.png", Uint8Array.from([9, 9, 9]), "image/x-changed");
+    const reopened = await openPackage(await saving);
+    expect(reopened.getContentType("/word/media/image1.png")).toBe("image/png");
+    expect([...(await reopened.getPartBytes("/word/media/image1.png"))]).toEqual([...IMAGE_BYTES]);
+
+    const later = await openPackage(await pkg.save());
+    expect(later.getContentType("/word/media/image1.png")).toBe("image/x-changed");
+    expect([...(await later.getPartBytes("/word/media/image1.png"))]).toEqual([9, 9, 9]);
+  });
+
+  it("keeps relationships and content types of overlapping saves in step with their parts", async () => {
+    const pkg = await openPackage(handmadeDocx());
+    pkg.setPart("/word/footnotes.xml", "<w:footnotes/>", FOOTNOTES_TYPE);
+    const first = pkg.save();
+    pkg.removePart("/word/footnotes.xml");
+    pkg.addRelationship("/word/document.xml", { type: IMAGE_REL, target: "https://example.com/x.png", targetMode: "External" });
+    const second = pkg.save();
+    const [a, b] = await Promise.all([first, second]);
+    const one = await openPackage(a);
+    expect(one.hasPart("/word/footnotes.xml")).toBe(true);
+    expect(one.getContentType("/word/footnotes.xml")).toBe(FOOTNOTES_TYPE);
+    expect(one.getRelationshipsByType("/word/document.xml", IMAGE_REL)).toHaveLength(1);
+    const two = await openPackage(b);
+    expect(two.hasPart("/word/footnotes.xml")).toBe(false);
+    expect(two.getContentTypes().overrides.map((entry) => entry.partName)).not.toContain("/word/footnotes.xml");
+    expect(two.getRelationshipsByType("/word/document.xml", IMAGE_REL)).toHaveLength(2);
   });
 });

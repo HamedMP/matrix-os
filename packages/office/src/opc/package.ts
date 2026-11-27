@@ -241,9 +241,10 @@ class Package implements OpcPackage {
     for (const slot of this.slots.values()) {
       if (slot !== this.contentTypesSlot && slot !== packageRels) ordered.push(slot);
     }
-    const records: ZipRecord[] = [];
-    for (const slot of ordered) records.push(await this.recordOf(slot));
-    return buildZip(records);
+    // Every slot's content is taken before the first await, so a change made
+    // while compression runs cannot mix two versions of the package in one archive.
+    const records = ordered.map((slot) => this.recordOf(slot));
+    return buildZip(await Promise.all(records));
   }
 
   /** A slot that callers may address as a part: an ordinary part or a relationships part. */
