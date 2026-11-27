@@ -172,6 +172,43 @@ describe('durable exact-owner pilot copy cleanup', () => {
         expect(f.fence.blocked).toBe(false);
         expect(JSON.stringify(await f.repository.getDetailPage(owner, 'chat_one', { limit: 20 }))).toContain('synthetic Google-derived result');
     });
+    it('keeps verified erasure and missing-proof backoff committed if a later stop exceeds the command budget', async () => {
+        const f = await fixture(false);
+        const source = (await f.contexts.sourcesForAccount(owner.ownerId, account))[0]!;
+        for (const suffix of ['ready', 'blocked']) {
+            await admit(f.repository, suffix);
+            const chatId = `chat_${suffix}`;
+            await f.contexts.mark({ ownerId: owner.ownerId, chatId, googleAccountId: account,
+                consentId: source.consentId, profileId: source.profileId, profileRevision: source.profileRevision,
+                purposeId: source.purposeId, expiresAt: source.expiresAt, retentionDeadline: source.expiresAt });
+            await f.repository.appendAssistantDelta(owner, { chatId, runId: `run_${suffix}`, messageId: `msg_assistant_${suffix}`,
+                delta: 'Synthetic retained answer', createdAt: new Date().toISOString() });
+        }
+        await f.repository.finishRun(owner, { chatId: 'chat_ready', runId: 'run_ready', outcome: 'completed',
+            completedAt: new Date().toISOString() });
+        await sql`UPDATE chat_runs SET driver_kind='matrix_pi' WHERE id='run_blocked'`.execute(f.repository.kysely);
+        await f.history.googleCopies!.provenance.requestPurge(owner.ownerId, source.originId, 'request_inflight');
+        await sql`UPDATE google_copy_purge_jobs j SET next_attempt=now() - CASE c.entity_ref
+            WHEN 'cm_msg_assistant_ready' THEN interval '3 seconds'
+            WHEN 'cm_msg_assistant_one' THEN interval '2 seconds' ELSE interval '1 second' END
+            FROM google_copy_registry c WHERE c.id=j.copy_id`.execute(f.repository.kysely);
+        const controller = new AbortController();
+        f.stop.mockImplementation(async input => {
+            if (input.runId === 'run_blocked') controller.abort();
+            throw new ManagedPiStopUnavailable();
+        });
+
+        await expect(lifecycle!.purgeAccount(command, controller.signal)).rejects.toThrow();
+        expect(JSON.stringify(await f.repository.getDetailPage(owner, 'chat_ready', { limit: 20 }))).not.toContain('Synthetic retained answer');
+        expect(f.stop.mock.calls.map(([input]) => input.runId)).toEqual(['run_one', 'run_blocked']);
+        const jobs = (await sql`SELECT c.entity_ref,j.state,j.attempts,j.next_attempt>clock_timestamp() AS deferred
+            FROM google_copy_purge_jobs j JOIN google_copy_registry c ON c.id=j.copy_id
+            WHERE c.entity_ref IN ('cm_msg_assistant_one','cm_msg_assistant_blocked') ORDER BY c.entity_ref`.execute(f.repository.kysely)).rows;
+        expect(jobs).toEqual([
+            { entity_ref: 'cm_msg_assistant_blocked', state: 'pending', attempts: 0, deferred: false },
+            { entity_ref: 'cm_msg_assistant_one', state: 'pending', attempts: 0, deferred: true },
+        ]);
+    });
     it('resolves hashed activity copies to their chat before accepting any run-status deletion proof', async () => {
         const f=await fixture(true); await admit(f.repository,'two');
         const source=(await f.contexts.sourcesForAccount(owner.ownerId,account))[0]!;

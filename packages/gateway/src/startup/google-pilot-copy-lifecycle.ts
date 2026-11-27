@@ -241,6 +241,9 @@ export async function createGooglePilotCopyLifecycle(options: {
             // Older deployments put missing run proof in terminal "unavailable".
             const recoverable = sql`j.state='unresolved' AND j.reason='unavailable'
                 AND c.kind='derived' AND c.entity_ref ~ '^(gae_|grc_|gqc_)'`;
+            const dueForProof = sql`(j.state='pending' AND j.next_attempt<=clock_timestamp())
+                OR (j.state='leased' AND j.lease_until<=clock_timestamp())
+                OR ((${recoverable}) AND j.next_attempt<=clock_timestamp())`;
             const rows = await boundedProvenanceTransaction(db, tx => sql<{
                 id: string;
                 kind: string;
@@ -250,9 +253,7 @@ export async function createGooglePilotCopyLifecycle(options: {
                 FROM google_copy_registry c JOIN google_copy_purge_jobs j ON j.copy_id=c.id AND j.owner_id=c.owner_id
                 WHERE c.owner_id=${options.ownerId} AND c.state='purging'
                 AND EXISTS(SELECT 1 FROM jsonb_array_elements(c.origins) o WHERE o->>'connectionId'=ANY(${contextPurge.originIds}::text[]))
-                AND ((j.state='pending' AND j.next_attempt<=clock_timestamp())
-                  OR (j.state='leased' AND j.lease_until<=clock_timestamp())
-                  OR ((${recoverable}) AND j.next_attempt<=clock_timestamp()))
+                AND (${dueForProof})
                 ORDER BY j.next_attempt,c.id LIMIT 500`.execute(tx));
             admitted();
             const selectedIds = rows.rows.map(row => row.id);
@@ -271,69 +272,68 @@ export async function createGooglePilotCopyLifecycle(options: {
             admitted();
             if (affected.rows.length > 500)
                 deny();
-            // Both collections are bounded by the discovery limits. A refusal affects
-            // every copy of that active Chat, or only the historical copy missing proof.
-            const blockedChats = new Set<string>();
-            const unverified = new Set<string>();
-            const ready: string[] = [];
-            for (const chatId of new Set(affected.rows.map(row => row.chat_id))) {
-                try { await quiesceChat(chatId); }
+            // Both maps are bounded by the 500-row discovery limits.
+            const chatsByCopy = new Map<string, string[]>();
+            for (const { copy_id, chat_id } of affected.rows) {
+                const chats = chatsByCopy.get(copy_id);
+                if (chats) chats.push(chat_id);
+                else chatsByCopy.set(copy_id, [chat_id]);
+            }
+            const chatProofs = new Map<string, boolean>();
+            async function verifyProof(work: () => Promise<unknown>) {
+                try { await work(); }
                 catch (error: unknown) {
                     admitted();
-                    if (!(error instanceof GoogleProvenanceUnavailable) && !(error instanceof ManagedPiStopUnavailable)) throw error;
-                    blockedChats.add(chatId);
-                }
-            }
-            for (const row of affected.rows) {
-                if (blockedChats.has(row.chat_id)) unverified.add(row.copy_id);
-            }
-            for (const copy of rows.rows) {
-                if (unverified.has(copy.id)) continue;
-                try {
-                    if (copy.kind === 'derived' && copy.entity_ref.startsWith('gae_'))
-                        await options.storage.activity.quiesceCopy(options.ownerId, copy.entity_ref, operationSignal);
-                    if (copy.kind === 'derived' && /^(grc_|gqc_)/.test(copy.entity_ref))
-                        await options.storage.context.quiesceCopy(options.ownerId, copy.entity_ref, operationSignal);
-                } catch (error: unknown) {
-                    admitted();
-                    if (!(error instanceof GoogleProvenanceUnavailable) && !(error instanceof ManagedPiStopUnavailable)) throw error;
-                    unverified.add(copy.id);
-                    continue;
+                    if (error instanceof GoogleProvenanceUnavailable || error instanceof ManagedPiStopUnavailable)
+                        return false;
+                    throw error;
                 }
                 admitted();
-                ready.push(copy.id);
+                return true;
             }
-            const recovered = rows.rows.filter(copy => copy.recovering && !unverified.has(copy.id)).map(copy => copy.id);
-            if (unverified.size || recovered.length) {
-                await boundedProvenanceTransaction(db, async tx => {
-                    if (unverified.size) await sql`UPDATE google_copy_purge_jobs j
-                        SET state=CASE WHEN j.state='leased' THEN 'pending' ELSE j.state END,
-                            lease_token=NULL,worker_id=NULL,lease_until=NULL,revision=j.revision+1,
-                            next_attempt=clock_timestamp()+${provenanceDefaults.retryDelayMs}*interval '1 millisecond',updated_at=now()
-                        FROM google_copy_registry c WHERE c.id=j.copy_id AND c.owner_id=j.owner_id AND c.state='purging'
-                        AND j.owner_id=${options.ownerId} AND j.copy_id=ANY(${[...unverified]}::uuid[])
-                        AND ((j.state='pending' AND j.next_attempt<=clock_timestamp())
-                          OR (j.state='leased' AND j.lease_until<=clock_timestamp())
-                          OR ((${recoverable}) AND j.next_attempt<=clock_timestamp()))`.execute(tx);
-                    if (recovered.length) await sql`UPDATE google_copy_purge_jobs j
-                        SET state='pending',reason=NULL,revision=j.revision+1,updated_at=now()
-                        FROM google_copy_registry c WHERE c.id=j.copy_id AND c.owner_id=j.owner_id AND c.state='purging'
-                        AND j.owner_id=${options.ownerId} AND j.copy_id=ANY(${recovered}::uuid[]) AND (${recoverable})`.execute(tx);
-                });
-                admitted();
+            async function verifyCopy(copy: typeof rows.rows[number]) {
+                for (const chatId of chatsByCopy.get(copy.id) ?? []) {
+                    const stopped = chatProofs.get(chatId) ?? await verifyProof(() => quiesceChat(chatId));
+                    chatProofs.set(chatId, stopped);
+                    if (!stopped) return false;
+                }
+                if (copy.kind === 'derived' && copy.entity_ref.startsWith('gae_'))
+                    return verifyProof(() => options.storage.activity.quiesceCopy(options.ownerId, copy.entity_ref, operationSignal));
+                if (copy.kind === 'derived' && /^(grc_|gqc_)/.test(copy.entity_ref))
+                    return verifyProof(() => options.storage.context.quiesceCopy(options.ownerId, copy.entity_ref, operationSignal));
+                return true;
             }
             const handlerWork = new Set<Promise<unknown>>();
             function track(handler: NonNullable<PurgeHandlers['derived']>): NonNullable<PurgeHandlers['derived']> { return input => { admitted(); const work = handler({ ...input, signal: AbortSignal.any([input.signal, operationSignal!]) }); handlerWork.add(work); void work.then(() => { handlerWork.delete(work); }, (error: unknown) => { handlerWork.delete(work); console.warn('[google-data] Copy handler failed', { errorClass: error instanceof Error ? 'Error' : 'UnknownError' }); }); return work; }; }
             const handlers: PurgeHandlers = { session: track(sessions), derived: track(input => input.entityRef.startsWith('cm_') ? canonical(input) : input.entityRef.startsWith('gae_') ? options.storage.activity.delete(input) : /^(grc_|gqc_)/.test(input.entityRef) ? options.storage.context.delete(input) : Promise.resolve({ status: 'unavailable' })) };
             try {
-                for (let i = 0; i < ready.length; i++) {
+                // Commit each erasure or proof backoff before the next stop wait so
+                // cancelling a later wait cannot undo work or monopolize the next pass.
+                for (const copy of rows.rows) {
                     admitted();
-                    const claim = await options.storage.provenance.claimPurge('google-pilot-host', { ownerId: options.ownerId, copyIds: ready });
+                    if (!await verifyCopy(copy)) {
+                        await boundedProvenanceTransaction(db, tx => sql`UPDATE google_copy_purge_jobs j
+                            SET state=CASE WHEN j.state='leased' THEN 'pending' ELSE j.state END,
+                                lease_token=NULL,worker_id=NULL,lease_until=NULL,revision=j.revision+1,
+                                next_attempt=clock_timestamp()+${provenanceDefaults.retryDelayMs}*interval '1 millisecond',updated_at=now()
+                            FROM google_copy_registry c WHERE c.id=j.copy_id AND c.owner_id=j.owner_id AND c.state='purging'
+                            AND j.owner_id=${options.ownerId} AND j.copy_id=${copy.id}::uuid AND (${dueForProof})`.execute(tx));
+                        continue;
+                    }
                     admitted();
-                    if (!claim)
-                        break;
-                    await options.storage.provenance.executeClaim(claim, handlers);
+                    if (copy.recovering) {
+                        await boundedProvenanceTransaction(db, tx => sql`UPDATE google_copy_purge_jobs j
+                            SET state='pending',reason=NULL,revision=j.revision+1,updated_at=now()
+                            FROM google_copy_registry c WHERE c.id=j.copy_id AND c.owner_id=j.owner_id AND c.state='purging'
+                            AND j.owner_id=${options.ownerId} AND j.copy_id=${copy.id}::uuid AND (${recoverable})`.execute(tx));
+                        admitted();
+                    }
+                    const claim = await options.storage.provenance.claimPurge('google-pilot-host', { ownerId: options.ownerId, copyIds: [copy.id] });
                     admitted();
+                    if (claim) {
+                        await options.storage.provenance.executeClaim(claim, handlers);
+                        admitted();
+                    }
                 }
             }
             finally {
