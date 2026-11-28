@@ -8,6 +8,7 @@ import { z } from 'zod/v4';
 import type { PlatformDb } from '../../platform-db.js';
 import type { IntegrationBroadcast } from '../routes.js';
 import { isNativeGmailAccount } from './request.js';
+import { logNativeGmailFailure } from './failure-log.js';
 
 export interface NativeGmailLifecycle {
   start(input: { userId: string; externalUserId: string; label?: string; redirectUri?: string }): Promise<{ url: string }>;
@@ -34,7 +35,7 @@ export function createNativeGmailRoutes(options: {
   const app = new Hono().route('/', createNativeGmailConnectionRoutes({ ...options, isEligible: options.isEligible ?? (async () => false) })).route('/', createNativeGmailDisconnectRoutes({ db: options.db, cleanup: options.oauth, resolveUserId: options.resolveUserId, broadcast: options.broadcast }));
   const notify = (event: { type: 'integration:connected'; service: string; accountLabel: string } | { type: 'integration:disconnected'; service: string; id: string }) => {
     try { if (event.type === 'integration:connected') options.broadcast?.(event); else options.broadcast?.(event); }
-    catch (error) { console.warn('[native-gmail] Connection notification failed:', error); }
+    catch (error) { logNativeGmailFailure('connection_notification', error); }
   };
   app.get('/gmail/oauth/callback', async c => {
     c.header('Cache-Control', 'no-store'); c.header('Referrer-Policy', 'no-referrer');
@@ -56,7 +57,7 @@ export function createNativeGmailRoutes(options: {
       notify({ type: 'integration:connected', service: 'gmail', accountLabel: result.accountLabel });
       if (result.redirectUri === 'matrixos://integrations') return c.redirect(result.redirectUri);
       return c.html(success);
-    } catch (error) { console.warn('[native-gmail] OAuth callback failed:', error); return c.json({ error: 'Connection unavailable. Start again from Matrix.' }, 502); }
+    } catch (error) { logNativeGmailFailure('oauth_callback', error); return c.json({ error: 'Connection unavailable. Start again from Matrix.' }, 502); }
   });
   app.post('/:id/refresh', bodyLimit({ maxSize: 1024 }), async (c, next) => {
     const userId = await options.resolveUserId(c);
@@ -68,7 +69,7 @@ export function createNativeGmailRoutes(options: {
     try {
       await options.oauth.refresh({ userId, connectionId: id.data });
       return c.json({ id: id.data, service: 'gmail', status: 'active' });
-    } catch (error) { console.warn('[native-gmail] Account lifecycle failed:', error); return c.json({ error: 'Connection unavailable' }, 502); }
+    } catch (error) { logNativeGmailFailure('account_refresh', error); return c.json({ error: 'Connection unavailable' }, 502); }
   });
   return app;
 }
@@ -91,7 +92,7 @@ export function createNativeGmailLaunchRoutes(options: { oauth: NativeGmailLifec
       const hash = stateHash(state.data);
       setCookie(c, cookieName(hash), browserProof, { httpOnly: true, secure: true, sameSite: 'Lax', path: '/', maxAge: 600 });
       return c.redirect(url);
-    } catch (error) { console.warn('[native-gmail] Consent owner rejected:', error); return c.json({ error: 'Connection unavailable. Start again from Matrix.' }, 403); }
+    } catch (error) { logNativeGmailFailure('consent_owner', error); return c.json({ error: 'Connection unavailable. Start again from Matrix.' }, 403); }
   });
   return app;
 }

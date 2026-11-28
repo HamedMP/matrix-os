@@ -61,6 +61,7 @@ beforeEach(async () => {
 describe('canonical assistant copy redaction', () => {
   async function prepared() {
     await mark(); await repository.appendAssistantDelta(owner, delta());
+    await repository.finishRun(owner, { chatId: key.chatId, runId: key.runId, outcome: 'completed', completedAt: new Date().toISOString() });
     const registered = (await copy())!;
     return { ownerId: owner.ownerId, entityRef: registered.entityRef, expectedHash: registered.contentHash,
       signal: new AbortController().signal };
@@ -86,6 +87,27 @@ describe('canonical assistant copy redaction', () => {
     expect((await remove(input)).status).toBe('missing');
     expect((await remove({...input,entityRef:'cm_msg_absent'})).status).toBe('missing');
   });
+  it('preserves a registered private copy after its authoritative scope becomes shared', async () => {
+    const input = await prepared();
+    const notify = vi.fn();
+    const before = await repository.kysely.selectFrom('chat_messages').selectAll().where('id', '=', key.messageId).executeTakeFirstOrThrow();
+    const outbox = await repository.kysely.selectFrom('chat_outbox').select('cursor').execute();
+    await sql`INSERT INTO collaboration_scopes(id,owner_type,owner_id,kind,resource_id,membership_mode,lifecycle,authority_runtime_id)
+      VALUES('10000000-0000-4000-8000-000000000099','personal',${owner.ownerId},'chat',${key.chatId},'direct','shared','runtime_test')`.execute(repository.kysely);
+    expect((await createGoogleCanonicalMessageDeletionHandler(repository.kysely, { onInvalidation: notify })(input)).status).toBe('modified');
+    expect(await repository.kysely.selectFrom('chat_messages').selectAll().where('id', '=', key.messageId).executeTakeFirstOrThrow()).toEqual(before);
+    expect(await repository.kysely.selectFrom('chat_outbox').select('cursor').execute()).toEqual(outbox);
+    expect(notify).not.toHaveBeenCalled();
+  });
+  it.each(['accepted', 'running', 'waiting_for_approval', 'waiting_for_input'] as const)('requires quiescence before erasing a %s run', async status => {
+    const input = await prepared();
+    await repository.kysely.updateTable('chat_runs').set({ status }).where('id', '=', key.runId).execute();
+    const before = await repository.kysely.selectFrom('chat_messages').selectAll().where('id', '=', key.messageId).executeTakeFirstOrThrow();
+    const notify = vi.fn();
+    expect((await createGoogleCanonicalMessageDeletionHandler(repository.kysely, { onInvalidation: notify })(input)).status).toBe('unavailable');
+    expect(await repository.kysely.selectFrom('chat_messages').selectAll().where('id', '=', key.messageId).executeTakeFirstOrThrow()).toEqual(before);
+    expect(notify).not.toHaveBeenCalled();
+  });
   it.each(['parts','search_text','byte_count'])('preserves a copy modified in %s', async field => {
     const input = await prepared();
     if(field==='parts') await sql`UPDATE chat_messages SET parts='[{"type":"text","text":"owner edited"}]'::jsonb WHERE id=${key.messageId}`.execute(repository.kysely);
@@ -106,6 +128,7 @@ describe('canonical assistant copy redaction', () => {
     await mark(); const occurrenceId=assistantCredentialOccurrenceId(key.messageId,0);
     const envelope=sealAssistantCredential(Buffer.alloc(32,7),{ownerId:owner.ownerId,...key,occurrenceId},'SYNTHETIC_SECRET');
     await repository.appendAssistantDelta(owner,{...delta('[redacted]'),credentials:[{occurrenceId,offset:0,length:10,envelope}]});
+    await repository.finishRun(owner, { chatId: key.chatId, runId: key.runId, outcome: 'completed', completedAt: new Date().toISOString() });
     const registered=(await copy())!;
     expect((await createGoogleCanonicalMessageDeletionHandler(repository.kysely)({ownerId:owner.ownerId,entityRef:registered.entityRef,expectedHash:registered.contentHash,signal:new AbortController().signal})).status).toBe('deleted');
     expect(await repository.kysely.selectFrom('chat_credentials').select('id').where('message_id','=',key.messageId).execute()).toEqual([]);

@@ -4,6 +4,7 @@ import { z } from 'zod/v4';
 import { GmailConnectionMethodSchema, GmailConnectionOptionsSchema } from '@matrix-os/contracts/integration-marketplace';
 import type { PlatformDb } from '../../platform-db.js';
 import type { NativeGmailLifecycle } from './routes.js';
+import { logNativeGmailFailure } from './failure-log.js';
 const Connect = z.object({ service: z.string().min(1).max(100), label: z.string().trim().min(1).max(100).optional(),
   redirectUri: z.literal('matrixos://integrations').optional(), connectionMethod: GmailConnectionMethodSchema.optional() })
   .refine(value => value.connectionMethod === undefined || value.service === 'gmail');
@@ -25,7 +26,7 @@ export function createNativeGmailConnectionRoutes(options: {
       return c.json(GmailConnectionOptionsSchema.parse(eligible
         ? { methods: ['matrix', 'pipedream'], defaultMethod: 'matrix' }
         : { methods: ['pipedream'], defaultMethod: 'pipedream' }));
-    } catch (error) { console.warn('[native-gmail] Connection options unavailable:', error); return c.json({ error: 'Connection unavailable' }, 503); }
+    } catch (error) { logNativeGmailFailure('connection_options', error); return c.json({ error: 'Connection unavailable' }, 503); }
   });
   app.post('/connect', bodyLimit({ maxSize: 4096 }), async (c, next) => {
     const userId = await options.resolveUserId(c);
@@ -55,7 +56,7 @@ export function createNativeGmailConnectionRoutes(options: {
       const launch = new URL('/auth/gmail', new URL(callback).origin);
       launch.searchParams.set('state', state);
       return c.json({ url: launch.href, service: 'gmail' });
-    } catch (error) { console.warn('[native-gmail] Connection start failed:', error); return c.json({ error: 'Connection unavailable' }, 502); }
+    } catch (error) { logNativeGmailFailure('connection_start', error); return c.json({ error: 'Connection unavailable' }, 502); }
   });
   return app;
 }

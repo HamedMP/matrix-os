@@ -41,9 +41,18 @@ export function createGoogleCanonicalMessageDeletionHandler(database: Kysely<Cha
         check(signal);
         if (!chat) return { status: 'missing' as const };
         if (chat.collaboration !== null || !discovered.run_id) return { status: 'modified' as const };
-        const run = await tx.selectFrom('chat_runs').select('id').where('id', '=', discovered.run_id)
+        // The authoritative scope can become shared before its chat projection
+        // changes. A personal-only redactor cannot notify that shared audience.
+        const shared = await sql`SELECT id FROM collaboration_scopes WHERE owner_type='personal' AND owner_id=${ownerId}
+          AND kind='chat' AND resource_id=${chat.id} AND lifecycle NOT IN ('private','preparing') LIMIT 1`.execute(tx);
+        check(signal);
+        if (shared.rows.length) return { status: 'modified' as const };
+        const run = await tx.selectFrom('chat_runs').select(['id', 'status']).where('id', '=', discovered.run_id)
           .where('chat_id', '=', chat.id).forUpdate().executeTakeFirst();
         if (!run) return { status: 'modified' as const };
+        // Host cancellation/drain happens before the copy-locked worker invokes
+        // us. Never attest deletion while that run can still produce content.
+        if (!['completed', 'failed', 'aborted'].includes(run.status)) return { status: 'unavailable' as const };
         const key = { owner: { type: 'personal' as const, ownerId }, chatId: chat.id, runId: run.id, messageId: messageId.data };
         const hash = await canonicalMessagePayloadHash(tx, key);
         check(signal);
