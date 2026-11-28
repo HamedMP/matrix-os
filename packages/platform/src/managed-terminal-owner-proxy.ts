@@ -1,5 +1,6 @@
 import { CanonicalCancelChatRunRequestSchema, CanonicalChatIdSchema, CanonicalChatRunIdSchema } from "@matrix-os/contracts";
 import type { PlatformDB, UserMachineRecord } from "./db.js";
+import { managedTerminalCanaryFromEnv, matchesManagedTerminalCanaryMachine } from "./managed-terminal-canary.js";
 import { createManagedTerminalGrantClaims } from "./managed-terminal-grant-claims.js";
 import { authenticatedManagedTerminalProxyProof } from "./managed-terminal-owner-proof.js";
 import { readRoutineProofProxyBody } from "./routine-proof-proxy-body.js";
@@ -14,8 +15,10 @@ export function createManagedTerminalOwnerProxy(options: { db: PlatformDB; env: 
     request: Request; method: string; path: string; machine: UserMachineRecord; identity: AppDomainIdentity;
   }): Promise<string | null | { status: 400 | 408 | 413 | 503 }> => {
     if (options.env.MATRIX_MANAGED_TERMINAL_CONTROL_ENABLED !== "1" || input.method !== "POST") return null;
+    const canary = managedTerminalCanaryFromEnv(options.env, Date.now());
+    if (canary === null) return null;
     const cancel = CANCEL.exec(input.path);
-    if (!cancel) return authenticatedManagedTerminalProxyProof({ ...input, platformSecret: options.platformSecret });
+    if (!cancel) return authenticatedManagedTerminalProxyProof({ ...input, canary, platformSecret: options.platformSecret });
     const { identity, machine } = input;
     if (identity.source !== "auth" || identity.sessionProvenance !== "clerk-browser"
       || (identity.verifiedHumanBrowserExpiresAt ?? 0) * 1000 <= Date.now()
@@ -25,11 +28,13 @@ export function createManagedTerminalOwnerProxy(options: { db: PlatformDB; env: 
       || new URL(input.request.url).searchParams.has("token")) return null;
     const chat = CanonicalChatIdSchema.safeParse(cancel[1]);
     const run = CanonicalChatRunIdSchema.safeParse(cancel[2]);
-    if (!chat.success || !run.success) return null;
+    if (!chat.success || !run.success || (canary && (chat.data !== canary.chatId
+      || !matchesManagedTerminalCanaryMachine(machine, canary.source)))) return null;
     const raw = await readRoutineProofProxyBody(input.request, 4 * 1024);
     if (typeof raw !== "string") return raw;
     try {
       if (!CanonicalCancelChatRunRequestSchema.safeParse(JSON.parse(raw)).success) return { status: 400 };
+      if (canary && canary.expiresAt <= Date.now()) return null;
       await grants.revoke({
         ownerId: machine.clerkUserId, sourceMachineId: machine.machineId,
         sourceRuntimeSlot: machine.runtimeSlot, sourceEpoch: machine.runtimeTokenEpoch,

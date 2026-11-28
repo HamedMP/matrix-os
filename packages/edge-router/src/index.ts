@@ -142,7 +142,7 @@ function previewChatCandidateOrigin(
   }
 }
 
-function buildPlatformRequest(
+export function buildPlatformRequest(
   request: Request,
   upstreamUrl: string,
   externalHost: string,
@@ -172,7 +172,7 @@ function buildPlatformRequest(
   });
 }
 
-async function readRequestBody(request: Request, limit: number): Promise<ArrayBuffer | null | Response> {
+export async function readRequestBody(request: Request, limit: number): Promise<ArrayBuffer | null | Response> {
   if (request.method === "GET" || request.method === "HEAD") return null;
 
   const contentLength = Number(request.headers.get("content-length") ?? NaN);
@@ -208,7 +208,7 @@ async function readRequestBody(request: Request, limit: number): Promise<ArrayBu
   } finally { reader.releaseLock(); }
 }
 
-function withEdgeHeaders(response: Response, routeClass: EdgeRouteClass, pathname: string): Response {
+export function withEdgeHeaders(response: Response, routeClass: EdgeRouteClass, pathname: string): Response {
   const headers = new Headers(response.headers);
   // This marker is asserted by the Worker after routing, never by an upstream.
   headers.delete("x-matrix-preview-platform-route");
@@ -303,7 +303,7 @@ function normalizePlatformOrigin(value: string): string | null {
   }
 }
 
-function normalizeEdgeSecret(value: string | undefined): string | null {
+export function normalizeEdgeSecret(value: string | undefined): string | null {
   const trimmed = value?.trim();
   return trimmed ? trimmed : null;
 }
@@ -314,11 +314,11 @@ function sanitizeForwardedFor(value: string | null): string | null {
   return /^[0-9A-Fa-f:.]+$/.test(trimmed) ? trimmed : null;
 }
 
-function isTimeoutError(err: unknown): boolean {
+export function isTimeoutError(err: unknown): boolean {
   return err instanceof DOMException && err.name === "TimeoutError";
 }
 
-function noStoreTextHeaders(): Headers {
+export function noStoreTextHeaders(): Headers {
   return new Headers({
     "content-type": "text/plain; charset=utf-8",
     "cache-control": "no-store",

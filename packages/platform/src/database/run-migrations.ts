@@ -17,7 +17,17 @@ import { migrateWhatsApp } from './migrations/whatsapp.js';
 import { WHATSAPP_SCHEMA_REVISION } from './whatsapp-migration-revision.js';
 import { migrateManagedTerminalGrants, MANAGED_TERMINAL_GRANT_REVISION } from './managed-terminal-grant-migration.js';
 
-export async function runPlatformStartupMigrations(db: Kysely<PlatformDatabase>): Promise<void> {
+function runManagedTerminalGrantMigration(db: Kysely<PlatformDatabase>): Promise<void> {
+  return runPlatformMigration(db, migrateManagedTerminalGrants, {
+    scope: 'managed-terminal-grants', revision: MANAGED_TERMINAL_GRANT_REVISION, deadlockAttempts: 12,
+  });
+}
+
+export async function runPlatformStartupMigrations(
+  db: Kysely<PlatformDatabase>,
+  scope: 'all' | 'managed-terminal-grants' = 'all',
+): Promise<void> {
+  if (scope === 'managed-terminal-grants') return runManagedTerminalGrantMigration(db);
   await runPlatformMigration(db, migratePlatformSchema, {
     revision: PLATFORM_SCHEMA_REVISION, deadlockAttempts: 12,
   });
@@ -44,7 +54,5 @@ export async function runPlatformStartupMigrations(db: Kysely<PlatformDatabase>)
   await runPlatformMigration(db, migrateWhatsApp, {
     scope: 'whatsapp', revision: WHATSAPP_SCHEMA_REVISION, deadlockAttempts: 12,
   });
-  await runPlatformMigration(db, migrateManagedTerminalGrants, {
-    scope: 'managed-terminal-grants', revision: MANAGED_TERMINAL_GRANT_REVISION, deadlockAttempts: 12,
-  });
+  await runManagedTerminalGrantMigration(db);
 }

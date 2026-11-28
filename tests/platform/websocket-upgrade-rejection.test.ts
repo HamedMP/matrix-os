@@ -61,12 +61,12 @@ let db: PlatformDB;
 beforeEach(async () => { db = await setupProxyRoutingTest(); tls.upstreams.length = 0; });
 afterEach(async () => { await cleanupProxyRoutingTest(db); });
 
-function listen(overrides: { runtimeProxyAllowed?: boolean } = {}) {
+function listen(overrides: { runtimeProxyAllowed?: boolean; env?: NodeJS.ProcessEnv } = {}) {
   const server = new EventEmitter();
   const decision = { runtimeProxyAllowed: overrides.runtimeProxyAllowed ?? true } as never;
   registerPlatformWebSocketUpgradeHandler({
     server: server as Server, app: { capturePlatformEvent: vi.fn() }, db,
-    env: {}, platformSecret: "platform-secret-upgrade-rejection", platformJwtSecret: JWT_SECRET, legacyContainerRoutingEnabled: false,
+    env: overrides.env ?? {}, platformSecret: "platform-secret-upgrade-rejection", platformJwtSecret: JWT_SECRET, legacyContainerRoutingEnabled: false,
     codeServerPort: 8080, getRuntimeEntitlementDecision: () => decision, getRuntimeEntitlementDecisionForUser: async () => decision,
   });
   return server.listeners("upgrade")[0] as (req: IncomingMessage, socket: ClientSocket, head: Buffer) => Promise<void>;
@@ -101,6 +101,19 @@ function statusLine(socket: ClientSocket): string | undefined {
 }
 
 describe("platform WebSocket upgrade refusals", () => {
+  it("refuses all upgrades on a terminal candidate before proxying or checking sessions", async () => {
+    await seedRunningMachine();
+    const listener = listen({ env: { MATRIX_MANAGED_TERMINAL_CONTROL_CANARY_V1: "malformed" } });
+    for (const url of ["/ws", "/internal/containers/owner-handle/gemini-live", "/internal/collaboration/control"]) {
+      const socket = await upgrade(listener, { url, headers: {
+        host: "app.matrix-os.com", upgrade: "websocket", authorization: `Bearer ${await ownerToken()}`,
+      } });
+      expect(statusLine(socket)).toBe("HTTP/1.1 404 Not Found");
+      await vi.waitFor(() => expect(socket.destroyed).toBe(true));
+    }
+    expect(tls.upstreams).toEqual([]);
+  });
+
   it("answers an unauthenticated upgrade with 401 before closing", async () => {
     const socket = await upgrade(listen(), { url: "/ws", headers: { host: "app.matrix-os.com", upgrade: "websocket" } });
     expect(statusLine(socket)).toBe("HTTP/1.1 401 Unauthorized");

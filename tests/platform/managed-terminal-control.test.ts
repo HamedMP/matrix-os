@@ -17,7 +17,7 @@ import { HERDR_TERMINAL_WORKSPACE_ID, TERMINAL_CONTROL_COMMAND } from "@matrix-o
 import { insertUserMachine, updateUserMachine, type PlatformDB, type NewUserMachine } from "../../packages/platform/src/db.js";
 import { buildPlatformSyncVerificationToken } from "../../packages/platform/src/platform-token.js";
 import { createManagedTerminalControlRoutes } from "../../packages/platform/src/managed-terminal-control-routes.js";
-import { authenticatedManagedTerminalProxyProof } from "../../packages/platform/src/managed-terminal-owner-proof.js";
+import { authenticatedManagedTerminalProxyProof, verifyManagedTerminalOwnerProof } from "../../packages/platform/src/managed-terminal-owner-proof.js";
 import { createApp } from "../../packages/platform/src/main.js";
 import { createPrivatePreviewEligibility } from "../../packages/platform/src/private-preview-eligibility.js";
 import { createTestPlatformDb, destroyTestPlatformDb } from "./platform-db-test-helper.js";
@@ -26,9 +26,8 @@ import { JWT_SECRET, stubOrchestrator } from "./proxy-routing-test-utils.js";
 
 const platformSecret = "fixture-only-platform-signing-key";
 const ownerId = "user_terminal_owner";
-const now = Date.parse("2026-11-28T00:00:00.000Z");
-const source = { machineId: "managed-source", ownerId, runtimeSlot: "primary" };
-const target = { machineId: "managed-target", ownerId, runtimeSlot: "dev" };
+const source = { machineId: "09ebba5a-5c49-4406-879b-73eab5801437", ownerId, runtimeSlot: "primary" };
+const target = { machineId: "b0e47e15-0ef5-47fb-8f7e-6908e20f7f73", ownerId, runtimeSlot: "dev" };
 const terminal = { workspaceId: HERDR_TERMINAL_WORKSPACE_ID, tabId: "tt_00000000000000000000000000000042" };
 const targetAction = {
   kind: "action" as const, targetMachineId: target.machineId, chatId: "chat_test", runId: "run_test",
@@ -45,23 +44,36 @@ const turn = {
       label: "Test terminal", kind: "terminal_session", revision: targetAction.revision } }],
 };
 const env = { MATRIX_MANAGED_TERMINAL_CONTROL_ENABLED: "1" };
+const edgeSecret = "managed-terminal-edge-fixture";
+const candidate = "https://tc-1234567---matrix-platform.example.run.app";
+function canaryEnv(expiresAt: number, overrides: Record<string, unknown> = {}): NodeJS.ProcessEnv {
+  return {
+    ...env,
+    EDGE_ROUTER_SECRET: edgeSecret,
+    MATRIX_MANAGED_TERMINAL_CONTROL_CANARY_V1: JSON.stringify({
+      sourceHandle: "main-computer", source, target, chatId: "chat_test", expiresAt, ...overrides,
+    }),
+  };
+}
 const bodyDigest = managedTerminalBodyDigest(canonicalPreviewDriveTurnBody(CanonicalCreateChatTurnRequestSchema.parse(turn)));
 let db: PlatformDB;
+let now: number;
 let action: typeof targetAction & { authority: ManagedTerminalTurnAuthority };
 
-async function ownerGrant(epoch: number) {
+async function ownerGrant(epoch: number, chatId = targetAction.chatId) {
+  const path = `/api/chats/${chatId}/turns`;
   const proof = await authenticatedManagedTerminalProxyProof({
-    request: new Request("https://app.matrix-os.com" + turnPath, {
+    request: new Request("https://app.matrix-os.com" + path, {
       method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(turn),
     }),
-    path: turnPath, method: "POST", platformSecret, now,
+    path, method: "POST", platformSecret, now,
     machine: {
       machineId: source.machineId, runtimeSlot: source.runtimeSlot, clerkUserId: ownerId, runtimeTokenEpoch: epoch,
       status: "running", activationState: "authorized", provisioningClass: "customer", deletedAt: null, accessClerkUserIds: [],
     },
     identity: {
       userId: ownerId, handle: "main-computer", source: "auth", sessionProvenance: "clerk-browser",
-      verifiedHumanBrowserExpiresAt: now / 1000 + 3600,
+      verifiedHumanBrowserExpiresAt: Math.floor(now / 1000) + 3600,
     },
   });
   if (typeof proof !== "string") throw new Error("Fixture owner grant missing");
@@ -90,9 +102,8 @@ function targetReply(init: RequestInit, value: unknown, status = 200) {
   });
 }
 
-function routes(options: { privatePreviewEligibility?: NonNullable<
-  Parameters<typeof createManagedTerminalControlRoutes>[0]["privatePreviewEligibility"]
-> } = {}) {
+function routes(options: Partial<Pick<Parameters<typeof createManagedTerminalControlRoutes>[0],
+  "privatePreviewEligibility" | "env" | "now">> = {}) {
   return createManagedTerminalControlRoutes({ db, platformSecret, env, now: () => now, ...options });
 }
 
@@ -115,6 +126,7 @@ function request(app: Pick<ReturnType<typeof routes>, "request">, input: unknown
 describe("same-owner managed terminal broker", () => {
   beforeEach(async () => {
     ({ db } = await createTestPlatformDb());
+    now = Date.now();
     await insertUserMachine(db, machine({ ...source, handle: "main-computer" }));
     await insertUserMachine(db, machine({ ...target, handle: "development-computer", publicIPv4: "203.0.113.21" }));
     action = { ...targetAction, authority: await ownerGrant(1) };
@@ -156,10 +168,106 @@ describe("same-owner managed terminal broker", () => {
       { kind: "computers" }, proof).response).status).toBe(403);
   });
 
+  it("isolates direct candidate ingress from all general Platform routes", async () => {
+    const scopedEnv = canaryEnv(Date.now() + 60_000);
+    const fetcher = vi.fn();
+    vi.stubGlobal("fetch", fetcher);
+    const app = createApp({ db, platformSecret, env: scopedEnv, orchestrator: stubOrchestrator() });
+    expect((await app.request(candidate + "/health")).status).toBe(200);
+    expect((await app.request(candidate + "/health", { method: "HEAD" })).status).toBe(200);
+    expect((await app.request(candidate + "/.well-known/matrix/server")).status).toBe(404);
+    const baseline = createApp({ db, platformSecret, env, orchestrator: stubOrchestrator() });
+    expect((await baseline.request(candidate + "/.well-known/matrix/server")).status).toBe(200);
+    const primaryTurn = "/vm/main-computer/~runtime/primary" + turnPath;
+    const edgeHeaders = { "x-matrix-edge-secret": edgeSecret, "x-forwarded-host": "app.matrix-os.com",
+      "x-forwarded-proto": "https", "content-type": "application/json" };
+    const post = (path: string, headers = edgeHeaders) => app.request(candidate + path, {
+      method: "POST", body: JSON.stringify(turn), headers,
+    });
+    for (const headers of [
+      { ...edgeHeaders, "x-matrix-edge-secret": "" },
+      { ...edgeHeaders, "x-matrix-edge-secret": "wrong" },
+      { ...edgeHeaders, "x-forwarded-host": "code.matrix-os.com" },
+      { ...edgeHeaders, "x-forwarded-proto": "http" },
+      { ...edgeHeaders, "origin": "https://foreign.example.test" },
+    ]) expect((await post(primaryTurn, headers)).status).toBe(404);
+    for (const path of [primaryTurn + "?runtime=dev", primaryTurn + "?token=some-query-capability",
+      primaryTurn + "?runtime=primary&runtime=primary", primaryTurn.replace("primary", "dev"),
+      "/vm/main-computer" + turnPath, primaryTurn.replace("main-computer", "other-computer"),
+      primaryTurn.replace("chat_test", "chat_other"), primaryTurn.replace("/turns", "/queued-turns")]) {
+      expect((await post(path)).status).toBe(404);
+    }
+    expect((await app.request(candidate + primaryTurn, { headers: edgeHeaders })).status).toBe(404);
+    expect((await post(primaryTurn)).status).toBe(401);
+    expect((await request(app, { kind: "computers" }, { issuedAt: Date.now() }).response).status).toBe(200);
+    scopedEnv.MATRIX_MANAGED_TERMINAL_CONTROL_CANARY_V1 = canaryEnv(now).MATRIX_MANAGED_TERMINAL_CONTROL_CANARY_V1;
+    expect((await post(primaryTurn)).status).toBe(404);
+    expect((await request(app, { kind: "computers" }, { issuedAt: Date.now() }).response).status).toBe(404);
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("routes the canary source exclusively to its named DEV runtime and original Chat", async () => {
+    const extraPeer = { machineId: "681bbc43-94e5-4201-81c0-dcf40b311e84", ownerId, runtimeSlot: "other" };
+    await insertUserMachine(db, machine({ ...extraPeer, handle: "other-owned-computer" }));
+    const foreign = { machineId: "0fcedd9b-82da-46e2-aed9-83ace5832aba", ownerId: "user_foreign", runtimeSlot: "primary" };
+    await insertUserMachine(db, machine({ ...foreign, clerkUserId: foreign.ownerId, handle: "foreign-computer" }));
+    const app = routes({ env: canaryEnv(now + 60 * 60_000) });
+    const fetcher = vi.fn(async (_url, init) => targetReply(init, { result: { stdout: "DEV: PASS", exitCode: 0 } }));
+    vi.stubGlobal("fetch", fetcher);
+    expect(await (await request(app, { kind: "computers" }).response).json()).toEqual({
+      computers: [{ machineId: target.machineId, name: "development-computer", runtimeSlot: "dev" }], partial: false,
+    });
+    expect((await request(app, { kind: "computers" }, {
+      machine: target, token: machineKey(target, "development-computer"),
+    }).response).status).toBe(403);
+    expect((await request(app, { kind: "computers" }, {
+      machine: foreign, token: machineKey(foreign, "foreign-computer"),
+    }).response).status).toBe(403);
+    expect((await request(app, { kind: "terminals", targetMachineId: extraPeer.machineId }).response).status).toBe(404);
+    expect((await request(app, { ...action, chatId: "chat_other", authority: await ownerGrant(1, "chat_other") }).response).status).toBe(403);
+    expect(fetcher).not.toHaveBeenCalled();
+    const result = await request(app, action).response;
+    expect(result.status).toBe(200);
+    expect(await result.json()).toEqual({ result: { stdout: "DEV: PASS", exitCode: 0 } });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails closed after expiry, on malformed scope, and on windows over two hours", async () => {
+    for (const scopedEnv of [
+      canaryEnv(now),
+      canaryEnv(now + 120 * 60_000 + 1),
+      canaryEnv(now + 60_000, { target: { ...target, ownerId: "user_foreign" } }),
+      { ...env, MATRIX_MANAGED_TERMINAL_CONTROL_CANARY_V1: "" },
+      { ...env, MATRIX_MANAGED_TERMINAL_CONTROL_CANARY_V1: "{" },
+    ]) {
+      expect((await request(routes({ env: scopedEnv }), { kind: "computers" }).response).status).toBe(404);
+    }
+    let clock = now;
+    const app = routes({ env: canaryEnv(now + 1000), now: () => clock });
+    expect((await request(app, { kind: "computers" }).response).status).toBe(200);
+    clock += 1000;
+    expect((await request(app, { kind: "computers" }).response).status).toBe(404);
+  });
+
+  it("withholds a DEV response that arrives after the canary expires", async () => {
+    let clock = now;
+    const app = routes({ env: canaryEnv(now + 30_000), now: () => clock });
+    const fetcher = vi.fn(async (_url, init) => {
+      clock += 30_000;
+      return targetReply(init, { available: true, status: "ready", sessions: [] });
+    });
+    vi.stubGlobal("fetch", fetcher);
+    const response = await request(app, { kind: "terminals", targetMachineId: target.machineId }).response;
+    expect(fetcher).toHaveBeenCalledOnce();
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ error: "unavailable" });
+  });
+
   it("mints only from the real Web proxy and cancels the same run even before its first tool request", async () => {
     vi.stubEnv("PLATFORM_JWT_SECRET", JWT_SECRET);
+    const expiresAt = Date.now() + 30_000;
     const app = createApp({
-      db, platformSecret, env: { ...env, PLATFORM_JWT_SECRET: JWT_SECRET }, orchestrator: stubOrchestrator(),
+      db, platformSecret, env: { ...canaryEnv(expiresAt), PLATFORM_JWT_SECRET: JWT_SECRET }, orchestrator: stubOrchestrator(),
     });
     let forwarded: string | null = null;
     const fetcher = vi.fn(async (_url: string, init: RequestInit) => {
@@ -173,19 +281,29 @@ describe("same-owner managed terminal broker", () => {
         gatewayUrl: "https://app.matrix-os.com/vm/main-computer", sessionProvenance: human ? "clerk-browser" : "clerk-device",
         ...(human ? { verifiedHumanBrowser: true as const } : {}),
       });
-      return app.request("https://app.matrix-os.com/vm/main-computer" + path, {
+      return app.request(candidate + "/vm/main-computer/~runtime/primary" + path, {
         method: "POST", body: JSON.stringify(body),
-        headers: { host: "app.matrix-os.com", authorization: "Bearer " + token, "content-type": "application/json",
+        headers: { "x-matrix-edge-secret": edgeSecret, "x-forwarded-host": "app.matrix-os.com", "x-forwarded-proto": "https",
+          authorization: "Bearer " + token, "content-type": "application/json",
           [MANAGED_TERMINAL_OWNER_GRANT_HEADER]: "caller_provided_forgery" },
       });
     };
-    expect((await browserRequest(turnPath, turn, false)).status).toBe(200);
+    expect((await browserRequest(turnPath, turn, false)).status).toBe(403);
+    expect(forwarded).toBeNull();
+    expect((await browserRequest("/api/chats/chat_other/turns", turn, true)).status).toBe(404);
+    expect(forwarded).toBeNull();
+    const foreignTarget = structuredClone(turn);
+    foreignTarget.parts[2]!.resource!.id = managedWorkspaceIdFor("unscoped-computer") + ":" + terminal.tabId;
+    expect((await browserRequest(turnPath, foreignTarget, true)).status).toBe(200);
     expect(forwarded).toBeNull();
     const response = await browserRequest(turnPath, turn, true);
     expect(response.status).toBe(200);
     expect(response.headers.has(MANAGED_TERMINAL_OWNER_GRANT_HEADER)).toBe(false);
     expect(forwarded).toMatch(/^[A-Za-z0-9_-]+\.[a-f0-9]{64}$/);
+    expect(verifyManagedTerminalOwnerProof(forwarded, { platformSecret })).toMatchObject({ expiresAt, activateBefore: expiresAt });
     const authority = { proof: forwarded!, clientRequestId, bodyDigest };
+    expect((await browserRequest("/api/chats/chat_other/runs/run_test/cancel", { clientRequestId: "req_other" }, true)).status).toBe(404);
+    expect(await db.executor.selectFrom("managed_terminal_grant_claims").select("run_hash").execute()).toEqual([]);
     const cancel = await browserRequest("/api/chats/chat_test/runs/run_test/cancel", { clientRequestId: "req_stop" }, true);
     expect(cancel.status).toBe(200);
     const denied = await request(app, { ...targetAction, authority }, { issuedAt: Date.now() }).response;

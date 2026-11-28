@@ -15,6 +15,7 @@ import { browserApprovalProofHeader } from './browser-chat-approval-proof.js';
 import { authenticatedPreviewDriveProxyProof } from './preview-drive-proxy-proof.js';
 import { PREVIEW_DRIVE_TURN_PROOF_HEADER } from './preview-drive-turn-proof.js';
 import { createManagedTerminalOwnerProxy } from './managed-terminal-owner-proxy.js';
+import { isVerifiedManagedTerminalCanaryBrowser, managedTerminalCanaryFromEnv, matchesManagedTerminalCanaryMachine } from './managed-terminal-canary.js';
 import { parseChatShareRoute, proxyChatShare } from './chat-share-proxy.js';
 import { fetchRuntimeProxy, shouldReleaseRuntimeProxyTimeout } from "./runtime-proxy-fetch.js";
 export { fetchRuntimeProxy } from "./runtime-proxy-fetch.js";
@@ -427,6 +428,8 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
   }
 
   return async (c, next) => {
+    const terminalCanary = managedTerminalCanaryFromEnv(appEnv, Date.now());
+    if (terminalCanary === null) return c.json({ error: 'unavailable' }, 404);
     const host = getTrustedSessionRouteHost(
       c.req.header('host'),
       c.req.header('x-forwarded-host'),
@@ -639,6 +642,10 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       requestedHandle: requestedRouteHandle,
       runtimeSlot: requestRuntimeSlot,
     });
+    if (terminalCanary && (!explicitVmRoute || !isVerifiedManagedTerminalCanaryBrowser(identity, terminalCanary, Date.now()))) {
+      applyNoStoreHeaders(c);
+      return c.json({ error: identity ? 'forbidden' : 'unauthorized' }, identity ? 403 : 401);
+    }
     if (!identity && isAppDomain) {
       const mobileSessionHandle =
         readMobileAppSessionRoutingHandle(path, c.req.url) ??
@@ -749,7 +756,12 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         ),
       );
       if (!machine || !canRouteMachineOnPreviewHost(host, machine)
-        || (identity.userId && !canClerkUserAccessMachine(machine, identity.userId))) {
+        || (identity.userId && !canClerkUserAccessMachine(machine, identity.userId))
+        || (terminalCanary && (machine.handle !== terminalCanary.sourceHandle
+          || !matchesManagedTerminalCanaryMachine(machine, terminalCanary.source)
+          || machine.status !== 'running' || machine.deletedAt !== null
+          || machine.activationState !== 'authorized' || machine.accessClerkUserIds.length !== 0
+          || !isVerifiedManagedTerminalCanaryBrowser(identity, terminalCanary, Date.now())))) {
         applyNoStoreHeaders(c);
         return c.text('Matrix OS computer unavailable', 404);
       }
@@ -760,6 +772,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         machine.runtimeSlot,
         machine.provisioningClass,
       );
+      if (terminalCanary && !entitlement.runtimeProxyAllowed) return c.json({ error: 'forbidden' }, 403);
       if (!entitlement.runtimeProxyAllowed) {
         const recovery = await maybeServeBillingRecoveryShell(
           c,
@@ -782,10 +795,12 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         return c.json({ error: 'Paid beta access required' }, 402);
       }
       const explicitWakeJson = prefersJsonWakeResponse(c.req.header('accept'), isAppDomainGatewayPath(explicitVmRoute.upstreamPath));
-      const explicitWake = await prepareOnDemandUpstream({ c, db, substrates, machine, identity, applyNoStoreHeaders,
-        respondWithJson: explicitWakeJson });
-      if (explicitWake.kind === 'respond') return explicitWake.response;
-      machine = explicitWake.machine;
+      if (!terminalCanary) {
+        const explicitWake = await prepareOnDemandUpstream({ c, db, substrates, machine, identity, applyNoStoreHeaders,
+          respondWithJson: explicitWakeJson });
+        if (explicitWake.kind === 'respond') return explicitWake.response;
+        machine = explicitWake.machine;
+      }
       const qs = buildForwardedQueryString(c.req.url, APP_ASSET_ROUTE_OMITTED_QUERY_PARAMS);
       const resolution = substrates.resolveUpstream(machine, { path: explicitVmRoute.upstreamPath, queryString: qs });
       if (resolution.kind === 'substrate_unavailable') {
@@ -859,7 +874,10 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
 
       try {
         const explicitBody = ['GET', 'HEAD'].includes(c.req.method) ? undefined : await c.req.blob();
-        const sent = await sendWithAsleepRetry({ db, substrates, machine, identity, send: () => fetchRuntimeProxy(targetUrl, {
+        if (terminalCanary && !isVerifiedManagedTerminalCanaryBrowser(identity, terminalCanary, Date.now())) {
+          return c.json({ error: 'forbidden' }, 403);
+        }
+        const send = () => fetchRuntimeProxy(targetUrl, {
           signal: c.req.raw.signal,
           method: c.req.method,
           headers,
@@ -867,7 +885,10 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
           body: explicitBody,
           dispatcher: dispatcherForUpstream(resolution.upstream, customerVpsProxyDispatcher),
         } as RequestInit & { dispatcher: Agent }, proxyTimeoutMs,
-        shouldReleaseRuntimeProxyTimeout(c.req.method, explicitVmRoute.upstreamPath)) });
+        shouldReleaseRuntimeProxyTimeout(c.req.method, explicitVmRoute.upstreamPath));
+        const sent = terminalCanary
+          ? { kind: 'response' as const, response: await send() }
+          : await sendWithAsleepRetry({ db, substrates, machine, identity, send });
         if (sent.kind === 'refuse') return wakeRefusalResponse(c, sent.decision, explicitWakeJson, applyNoStoreHeaders);
         const upstream = sent.response;
         if (upstream.status >= 500) logAppDomainUpstreamFailure('runtime', c, upstream.status, machine.handle);

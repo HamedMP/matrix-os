@@ -1,0 +1,14 @@
+name = "matrix-terminal-control-canary"
+main = "src/terminal-canary-worker.ts"
+compatibility_date = "2026-06-08"
+workers_dev = false
+preview_urls = false
+
+# Attach routes only in the operator's limited-time deployment. A tracked file
+# must never contain a real owner, Chat, tag, expiry, or edge secret.
+[[services]]
+binding = "DEFAULT_EDGE_ROUTER"
+service = "matrix-edge-router"
+
+[vars]
+PLATFORM_ORIGIN = "https://matrix-platform-jqxkjdhtkq-ey.a.run.app"

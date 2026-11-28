@@ -28,6 +28,7 @@ import { HerdrSessionListSchema } from "@matrix-os/contracts/herdr-terminals";
 import { getAccountDeletionAdmission } from "./account-deletion/admission.js";
 import { getUserMachine, type PlatformDB, type UserMachineRecord } from "./db.js";
 import { mapUserMachine } from "./database/user-machine-records.js";
+import { managedTerminalCanaryFromEnv, matchesManagedTerminalCanaryMachine, sameManagedTerminalRuntime, type ManagedTerminalCanary } from "./managed-terminal-canary.js";
 import { createManagedTerminalGrantClaims } from "./managed-terminal-grant-claims.js";
 import { verifyManagedTerminalOwnerProof } from "./managed-terminal-owner-proof.js";
 import { buildPlatformSyncVerificationToken } from "./platform-token.js";
@@ -79,14 +80,16 @@ export function createManagedTerminalControlRoutes(options: ManagedTerminalContr
     return access.runtimeProxyAllowed;
   }
 
-  async function readComputers(source: UserMachineRecord, signal: AbortSignal) {
-    const rows = await db.executor.selectFrom("user_machines").selectAll()
+  async function readComputers(source: UserMachineRecord, signal: AbortSignal, canary?: ManagedTerminalCanary) {
+    let query = db.executor.selectFrom("user_machines").selectAll()
       .where("clerk_user_id", "=", source.clerkUserId)
       .where("provisioning_class", "=", source.provisioningClass)
       .where("status", "=", "running")
       .where("activation_state", "=", "authorized")
       .where("machine_id", "!=", source.machineId)
-      .where("deleted_at", "is", null)
+      .where("deleted_at", "is", null);
+    if (canary) query = query.where("machine_id", "=", canary.target.machineId).where("runtime_slot", "=", canary.target.runtimeSlot);
+    const rows = await query
       .orderBy("handle", "asc").orderBy("runtime_slot", "asc").orderBy("machine_id", "asc")
       .limit(MANAGED_TERMINAL_MAX_COMPUTERS + 1).execute();
     const computers = [];
@@ -117,6 +120,7 @@ export function createManagedTerminalControlRoutes(options: ManagedTerminalContr
     request: Extract<ManagedTerminalBrokerRequest["request"], { kind: "action" }>,
     source: UserMachineRecord,
     target: UserMachineRecord,
+    canary?: ManagedTerminalCanary,
   ) {
     const { authority, ...action } = request;
     const grant = verifyManagedTerminalOwnerProof(authority.proof, { platformSecret, now: now() });
@@ -126,7 +130,8 @@ export function createManagedTerminalControlRoutes(options: ManagedTerminalContr
       || grant.bodyDigest !== authority.bodyDigest
       || grant.worktreeId !== request.worktreeId
       || grant.workspaceId !== managedWorkspaceIdFor(target.machineId)
-      || grant.tabId !== request.ref.tabId || grant.revision !== request.revision) return null;
+      || grant.tabId !== request.ref.tabId || grant.revision !== request.revision
+      || (canary && (grant.chatId !== canary.chatId || grant.expiresAt > canary.expiresAt || canary.expiresAt <= now()))) return null;
     return await grants.claim({ ...grant, runId: request.runId }) ? action : null;
   }
 
@@ -134,7 +139,8 @@ export function createManagedTerminalControlRoutes(options: ManagedTerminalContr
     maxSize: MAX_MANAGED_TERMINAL_BODY_BYTES, onError: c => c.json({ error: "request_too_large" }, 413),
   }), async c => {
     c.header("Cache-Control", "no-store");
-    if (env.MATRIX_MANAGED_TERMINAL_CONTROL_ENABLED !== "1" || !platformSecret) {
+    const canary = managedTerminalCanaryFromEnv(env, now());
+    if (env.MATRIX_MANAGED_TERMINAL_CONTROL_ENABLED !== "1" || !platformSecret || canary === null) {
       return c.json({ error: "unavailable" }, 404);
     }
     if (new URL(c.req.url).search || c.req.header("content-type")?.split(";")[0]?.trim() !== "application/json") {
@@ -157,28 +163,36 @@ export function createManagedTerminalControlRoutes(options: ManagedTerminalContr
       return c.json({ error: "unauthorized" }, 401);
     }
     const { source: claimed, request } = input.data;
+    if (canary && !sameManagedTerminalRuntime(claimed, canary.source)) return c.json({ error: "forbidden" }, 403);
+    const canaryExpired = () => canary !== undefined && canary.expiresAt <= now();
     try {
       const source = await getUserMachine(db, claimed.machineId);
-      if (!source || source.clerkUserId !== claimed.ownerId || source.runtimeSlot !== claimed.runtimeSlot) {
+      if (!source || source.clerkUserId !== claimed.ownerId || source.runtimeSlot !== claimed.runtimeSlot
+        || (canary && (source.handle !== canary.sourceHandle || !matchesManagedTerminalCanaryMachine(source, canary.source)))) {
         return c.json({ error: "unauthorized" }, 401);
       }
       const proof = verify(c.req.raw, key(source), raw);
       if (!proof) return c.json({ error: "unauthorized" }, 401);
-      const signal = AbortSignal.any([proof, c.req.raw.signal]);
+      if (canaryExpired()) return c.json({ error: "unavailable" }, 404);
+      const signals = [proof, c.req.raw.signal];
+      if (canary) signals.push(AbortSignal.timeout(Math.max(0, canary.expiresAt - now())));
+      const signal = AbortSignal.any(signals);
       if (!(await getAccountDeletionAdmission(db, source.clerkUserId, env, new Date(now()))).newWorkAllowed
         || !await eligible(source) || signal.aborted) {
         return c.json({ error: "forbidden" }, 403);
       }
       if (request.kind === "computers") {
-        const listed = await readComputers(source, signal);
-        if (!unchanged(await getUserMachine(db, source.machineId), source) || signal.aborted) {
+        const listed = await readComputers(source, signal, canary);
+        if (!unchanged(await getUserMachine(db, source.machineId), source) || signal.aborted || canaryExpired()) {
           return c.json({ error: "unavailable" }, 503);
         }
         return c.json(listed);
       }
+      if (canary && request.targetMachineId !== canary.target.machineId) return c.json({ error: "unavailable" }, 404);
       const target = await getUserMachine(db, request.targetMachineId);
       if (!target || target.machineId === source.machineId
         || target.clerkUserId !== source.clerkUserId || target.provisioningClass !== source.provisioningClass
+        || (canary && !matchesManagedTerminalCanaryMachine(target, canary.target))
         || !await eligible(target)) {
         return c.json({ error: "unavailable" }, 404);
       }
@@ -193,8 +207,8 @@ export function createManagedTerminalControlRoutes(options: ManagedTerminalContr
       const resolution = resolve(targetNow);
       if (resolution.kind !== "upstream" || signal.aborted) return c.json({ error: "unavailable" }, 503);
       const { upstream } = resolution;
-      const targetRequest = request.kind === "action" ? await authorizeAction(request, sourceNow, targetNow) : request;
-      if (!targetRequest || signal.aborted) return c.json({ error: "forbidden" }, 403);
+      const targetRequest = request.kind === "action" ? await authorizeAction(request, sourceNow, targetNow, canary) : request;
+      if (!targetRequest || signal.aborted || canaryExpired()) return c.json({ error: "forbidden" }, 403);
       // Preserve the original freshness and unique operation identity across
       // Platform replicas. The target consumes the same nonce on every relay.
       const targetKey = key(targetNow);
@@ -209,12 +223,12 @@ export function createManagedTerminalControlRoutes(options: ManagedTerminalContr
         signal: AbortSignal.any([signal, AbortSignal.timeout(TARGET_TIMEOUT_MS)]),
         ...(dispatcher ? { dispatcher: dispatcherForUpstream(upstream, dispatcher) } : {}),
       } as RequestInit);
-      if ((!response.ok && response.status !== 409) || signal.aborted) {
+      if ((!response.ok && response.status !== 409) || signal.aborted || canaryExpired()) {
         await response.body?.cancel();
         return c.json({ error: "unavailable" }, 409);
       }
       const reply = await readManagedTerminalResponseText(response, MAX_MANAGED_TERMINAL_WIRE_BYTES);
-      if (signal.aborted) return c.json({ error: "unavailable" }, 409);
+      if (signal.aborted || canaryExpired()) return c.json({ error: "unavailable" }, 409);
       if (!verifyManagedTerminalReply(targetKey, response, reply, issuedAt, nonce)) {
         return c.json({ error: "unavailable" }, 502);
       }

@@ -79,6 +79,7 @@ import {
 import type { CustomerVpsObjectStore } from './customer-vps-r2.js';
 import { deriveSiteEmailReadiness, registerSiteRoutesIfConfigured } from './sites/registration.js';
 import { createManagedTerminalControlRoutes } from './managed-terminal-control-routes.js';
+import { managedTerminalCanaryIngress } from './managed-terminal-canary.js';
 import { recordPlatformHttpRequest } from './metrics.js';
 import {
   createLaunchReadinessService,
@@ -330,6 +331,7 @@ export function createApp(deps: {
       internalContainerClerkUserId: string;
     };
   }>() as PlatformApp;
+  if (appEnv.MATRIX_MANAGED_TERMINAL_CONTROL_CANARY_V1 !== undefined) app.use('*', managedTerminalCanaryIngress(appEnv));
   const posthogErrorTracker = installPostHogHonoErrorTracking(app, {
     service: 'matrix-platform',
   });

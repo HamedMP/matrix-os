@@ -16,18 +16,24 @@ import type { HerdrChatTarget } from "./herdr-chat-target.js";
 import { TerminalAgentVerbError } from "../terminal-agent/verbs.js";
 
 const TIMEOUT_MS = 11_000;
+const MAX_CANARY_MS = 2 * 60 * 60_000;
+const canaryOriginPattern = /^https:\/\/tc-[a-f0-9]{7,12}---matrix-platform-[a-z0-9-]+\.(?:[a-z0-9-]+\.)?run\.app$/;
 const tokenPattern = /^[0-9a-f]{64}$/;
 
 export function createManagedTerminalBroker(options: {
   origin: string; identity: ManagedTerminalRuntime; token: string; fetch?: typeof globalThis.fetch;
+  canary?: { expiresAt: number; now: () => number };
 }) {
   const { identity } = options;
   const url = new URL(MANAGED_TERMINAL_BROKER_PATH, options.origin);
   const fetcher = options.fetch ?? globalThis.fetch;
   async function request(action: ManagedTerminalBrokerRequest["request"], signal?: AbortSignal) {
+    const { canary } = options;
+    const remaining = canary ? canary.expiresAt - canary.now() : TIMEOUT_MS;
+    if (remaining <= 0) throw new Error("Managed terminal candidate expired");
     const body = JSON.stringify(ManagedTerminalBrokerRequestSchema.parse({ source: identity, request: action }));
     signal?.throwIfAborted();
-    const deadline = AbortSignal.timeout(TIMEOUT_MS);
+    const deadline = AbortSignal.timeout(Math.min(TIMEOUT_MS, remaining));
     const response = await fetcher(url, {
       method: "POST", body, headers: createManagedTerminalHeaders(options.token, "source", body),
       signal: signal ? AbortSignal.any([deadline, signal]) : deadline, redirect: "error",
@@ -45,6 +51,7 @@ export function createManagedTerminalBroker(options: {
     }
     const result = await readManagedTerminalResponse(response, MAX_MANAGED_TERMINAL_RESPONSE_BYTES);
     signal?.throwIfAborted();
+    if (canary && canary.now() >= canary.expiresAt) throw new Error("Managed terminal candidate expired");
     return result;
   }
   async function computers(signal?: AbortSignal) {
@@ -82,7 +89,9 @@ export function createManagedTerminalBroker(options: {
 }
 export type ManagedTerminalBroker = ReturnType<typeof createManagedTerminalBroker>;
 
-export function managedTerminalBrokerFromEnv(env: NodeJS.ProcessEnv = process.env): ManagedTerminalBroker | null {
+export function managedTerminalBrokerFromEnv(
+  env: NodeJS.ProcessEnv = process.env, options: { now?: () => number; fetch?: typeof globalThis.fetch } = {},
+): ManagedTerminalBroker | null {
   if (env.MATRIX_MANAGED_TERMINAL_CONTROL_ENABLED !== "1" || env.MATRIX_SELF_HOSTED === "1") return null;
   const identity = ManagedTerminalRuntimeSchema.safeParse({
     ownerId: env.MATRIX_CLERK_USER_ID, machineId: env.MATRIX_MACHINE_ID, runtimeSlot: env.MATRIX_RUNTIME_SLOT,
@@ -94,7 +103,19 @@ export function managedTerminalBrokerFromEnv(env: NodeJS.ProcessEnv = process.en
   if (isHerdrPreviewRuntime(env) && privatePreviewHerdrOwner(env) !== identity.data.ownerId) return null;
   const origin = new URL(platform);
   if (origin.protocol !== "https:" || origin.origin !== platform) return null;
-  return createManagedTerminalBroker({ origin: platform, identity: identity.data, token });
+  const canaryOrigin = env.MATRIX_MANAGED_TERMINAL_CONTROL_CANARY_ORIGIN;
+  const expiry = env.MATRIX_MANAGED_TERMINAL_CONTROL_CANARY_EXPIRES_AT;
+  if (canaryOrigin === undefined && expiry === undefined) {
+    return createManagedTerminalBroker({ origin: platform, identity: identity.data, token, fetch: options.fetch });
+  }
+  const now = options.now ?? Date.now;
+  const expiresAt = Number(expiry);
+  const remaining = expiresAt - now();
+  if (identity.data.runtimeSlot !== "primary" || !canaryOrigin || !canaryOriginPattern.test(canaryOrigin) ||
+      !/^\d{13}$/.test(expiry ?? "") || remaining <= 0 || remaining > MAX_CANARY_MS) return null;
+  return createManagedTerminalBroker({
+    origin: canaryOrigin, identity: identity.data, token, fetch: options.fetch, canary: { expiresAt, now },
+  });
 }
 
 export function createManagedTerminalPickerRoutes(options: {
