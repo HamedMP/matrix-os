@@ -77,10 +77,22 @@ describe('canonical assistant delta copy writer foundation', () => {
     await expect(repository.appendAssistantDelta(owner, delta(' Must not append'))).rejects.toThrow();
     expect(await copy()).toBeNull();
   });
-  it('never certifies a preexisting ordinary copy written through an uninstalled path', async () => {
+  it('never certifies a preexisting uninstalled-path copy once its chat is Google-tainted', async () => {
     await new ChatRepository(repository.kysely).appendAssistantDelta(owner, delta('Unproven old content'));
+    await mark();
     await expect(repository.appendAssistantDelta(owner, delta(' Must not certify'))).rejects.toThrow();
     expect((await sql`SELECT 1 FROM google_ordinary_copy_receipts`.execute(repository.kysely)).rows).toEqual([]);
+    expect(await copy()).toBeNull();
+  });
+  it('re-issues an expired or missing ordinary message receipt while the chat is untainted', async () => {
+    const live = sql<{ live: boolean }>`SELECT expires_at>clock_timestamp()+interval '29 days' AS live FROM google_ordinary_copy_receipts`;
+    await repository.appendAssistantDelta(owner, delta('Ordinary'));
+    await sql`UPDATE google_ordinary_copy_receipts SET expires_at=clock_timestamp()-interval '1 second'`.execute(repository.kysely);
+    await repository.appendAssistantDelta(owner, delta(' resumed'));
+    expect((await live.execute(repository.kysely)).rows).toEqual([{ live: true }]);
+    await sql`DELETE FROM google_ordinary_copy_receipts`.execute(repository.kysely);
+    await repository.finishRun(owner, { chatId: key.chatId, runId: key.runId, outcome: 'completed', completedAt: new Date().toISOString() });
+    expect((await live.execute(repository.kysely)).rows).toEqual([{ live: true }]);
   });
   it('rolls the ordinary proof back with its actual content transaction', async () => {
     await expect(repository.withTransaction(async tx => {
@@ -90,13 +102,21 @@ describe('canonical assistant delta copy writer foundation', () => {
     expect((await sql`SELECT 1 FROM google_ordinary_copy_receipts`.execute(repository.kysely)).rows).toEqual([]);
     expect(await repository.kysely.selectFrom('chat_messages').select('id').where('id', '=', key.messageId).execute()).toEqual([]);
   });
-  it('refuses a new receipt at the owner cap without evicting live proof or writing content', async () => {
+  it('writes ordinary content without a new receipt at the owner cap and keeps live proof', async () => {
     await sql`INSERT INTO google_ordinary_copy_receipts(owner_id,chat_id,kind,entity_ref,content_hash,expires_at)
       SELECT ${owner.ownerId},${key.chatId},'derived','synthetic_'||n,repeat('a',64),clock_timestamp()+interval '1 day'
-      FROM generate_series(1,10000) n`.execute(repository.kysely);
-    await expect(repository.appendAssistantDelta(owner, delta('Must not persist'))).rejects.toThrow();
-    expect((await sql`SELECT count(*)::int AS n FROM google_ordinary_copy_receipts`.execute(repository.kysely)).rows).toEqual([{ n: 10000 }]);
-    expect(await repository.kysely.selectFrom('chat_messages').select('id').where('id', '=', key.messageId).execute()).toEqual([]);
+      FROM generate_series(1,100000) n`.execute(repository.kysely);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      await repository.appendAssistantDelta(owner, delta('Ordinary content still persists'));
+      await repository.appendAssistantDelta(owner, delta(' and keeps streaming'));
+    } finally { warn.mockRestore(); }
+    expect((await sql`SELECT count(*)::int AS n FROM google_ordinary_copy_receipts`.execute(repository.kysely)).rows).toEqual([{ n: 100000 }]);
+    expect((await repository.kysely.selectFrom('chat_messages').select('parts').where('id', '=', key.messageId).executeTakeFirstOrThrow()).parts)
+      .toEqual([{ type: 'text', text: 'Ordinary content still persists and keeps streaming' }]);
+    // The unreceipted copy is simply unprovable: a later first Gmail collection fails closed for it.
+    await mark();
+    await expect(repository.appendAssistantDelta(owner, delta(' Gmail summary'))).rejects.toThrow();
   });
   it('cleans at most 100 expired receipts during a trusted write', async () => {
     await sql`INSERT INTO google_ordinary_copy_receipts(owner_id,chat_id,kind,entity_ref,content_hash,expires_at)
@@ -109,7 +129,11 @@ describe('canonical assistant delta copy writer foundation', () => {
     await repository.appendAssistantDelta(owner, delta('Fresh ordinary content'));
     await sql`DELETE FROM google_model_history_births WHERE chat_id=${key.chatId}`.execute(repository.kysely);
     expect((await sql`SELECT 1 FROM google_ordinary_copy_receipts`.execute(repository.kysely)).rows).toEqual([]);
-    await expect(repository.appendAssistantDelta(owner, delta(' Must not revive'))).rejects.toThrow();
+    // The now-unknown, untainted chat keeps pre-pilot writes but its receipt is never revived.
+    await repository.appendAssistantDelta(owner, delta(' Must not revive'));
+    expect((await sql`SELECT 1 FROM google_ordinary_copy_receipts`.execute(repository.kysely)).rows).toEqual([]);
+    await mark();
+    await expect(repository.appendAssistantDelta(owner, delta(' Gmail summary'))).rejects.toThrow();
   });
   it('withholds acknowledgement when ordinary proof expires during actual COMMIT return', async () => {
     await repository.appendAssistantDelta(owner, delta('Ordinary before collection'));
@@ -220,6 +244,52 @@ describe('canonical assistant delta copy writer foundation', () => {
       VALUES('10000000-0000-4000-8000-000000000099','personal',${owner.ownerId},'chat',${key.chatId},'direct','shared','runtime_test')`.execute(repository.kysely);
     await expect(repository.appendAssistantDelta(owner, delta())).rejects.toThrow();
     expect(await copy()).toBeNull();
+  });
+  it('keeps assistant output working in untainted unknown, shared and organization chats', async () => {
+    await admit(new ChatRepository(repository.kysely), 'legacy');
+    const legacy = { chatId: 'chat_legacy', runId: 'run_legacy', messageId: 'msg_assistant_legacy', createdAt: new Date().toISOString() };
+    await repository.appendAssistantDelta(owner, { ...legacy, delta: 'pre-deploy reply' });
+    await repository.finishRun(owner, { chatId: legacy.chatId, runId: legacy.runId, outcome: 'completed', completedAt: new Date().toISOString() });
+    expect((await repository.kysely.selectFrom('chat_runs').select('status').where('id', '=', legacy.runId).executeTakeFirstOrThrow()).status).toBe('completed');
+    await sql`INSERT INTO collaboration_scopes(id,owner_type,owner_id,kind,resource_id,membership_mode,lifecycle,authority_runtime_id)
+      VALUES('10000000-0000-4000-8000-000000000098','personal',${owner.ownerId},'chat',${key.chatId},'direct','shared','runtime_test')`.execute(repository.kysely);
+    await repository.appendAssistantDelta(owner, delta('shared reply'));
+    const organization = { type: 'organization' as const, ownerId: 'org_one' };
+    await admit(repository, 'org', organization);
+    await repository.appendAssistantDelta(organization, { chatId: 'chat_org', runId: 'run_org', messageId: 'msg_assistant_org', delta: 'org reply', createdAt: new Date().toISOString() });
+    expect(await provenance.inspect(owner.ownerId, 'derived', canonicalMessageEntityRef('msg_assistant_legacy'))).toBeNull();
+  });
+  it('does not write assistant output for an aborted call in an untainted unknown chat', async () => {
+    await admit(new ChatRepository(repository.kysely), 'legacy');
+    const controller = new AbortController();
+    controller.abort();
+    await expect(repository.appendAssistantDelta(owner, { chatId: 'chat_legacy', runId: 'run_legacy', messageId: 'msg_assistant_legacy',
+      delta: 'cancelled reply', createdAt: new Date().toISOString() }, controller.signal)).rejects.toThrow();
+    expect(await repository.kysely.selectFrom('chat_messages').select('id').where('id', '=', 'msg_assistant_legacy').executeTakeFirst()).toBeUndefined();
+  });
+  it('keeps the untainted passthrough write bounded while the context fence is held', async () => {
+    await admit(new ChatRepository(repository.kysely), 'legacy');
+    const hook = createGoogleCanonicalMessageWriteHook();
+    const seen = await hook.write({ owner, chatId: 'chat_legacy', runId: 'run_legacy', messageId: 'msg_assistant_legacy' },
+      // The caller transaction has no query timeouts (PostgreSQL's default).
+      work => repository.kysely.transaction().execute(async tx => {
+        await sql`SET LOCAL statement_timeout = 0`.execute(tx);
+        await sql`SET LOCAL lock_timeout = 0`.execute(tx);
+        const result = await work(tx);
+        expect((await sql<{ statement: string }>`SELECT current_setting('statement_timeout') AS statement`.execute(tx)).rows[0]!.statement).toBe('0');
+        return result;
+      }),
+      async tx => (await sql<{ statement: string }>`SELECT current_setting('statement_timeout') AS statement`.execute(tx)).rows[0]!.statement);
+    expect(seen).toBe('5s');
+  });
+  it('still refuses assistant output in a Google-tainted unknown chat', async () => {
+    await admit(new ChatRepository(repository.kysely), 'legacy');
+    await contexts.mark({ ownerId: owner.ownerId, chatId: 'chat_legacy', googleAccountId: account, consentId: 'consent_one', profileId: 'managed',
+      profileRevision: 1, purposeId: 'assistant', expiresAt: future(), retentionDeadline: future() });
+    await expect(repository.appendAssistantDelta(owner, { chatId: 'chat_legacy', runId: 'run_legacy', messageId: 'msg_assistant_legacy',
+      delta: 'mail summary', createdAt: new Date().toISOString() })).rejects.toThrow();
+    await expect(repository.finishRun(owner, { chatId: 'chat_legacy', runId: 'run_legacy', outcome: 'completed', completedAt: new Date().toISOString() })).rejects.toThrow();
+    expect(await repository.kysely.selectFrom('chat_messages').select('id').where('id', '=', 'msg_assistant_legacy').executeTakeFirst()).toBeUndefined();
   });
   it('preserves normal uninstalled writes and installs no registry copy for an ordinary born chat', async () => {
     await repository.appendAssistantDelta(owner, delta('ordinary'));

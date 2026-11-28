@@ -17,6 +17,7 @@ import { createGoogleCollectionClient, GoogleCollectionClientError, type GoogleC
 import { createGoogleOwnerConsentClient } from '../google-data/runtime/owner-consent-client.js';
 import { createGoogleToolEgressGuard } from '../google-data/runtime/tool-egress.js';
 import { googleCollectionActionKinds } from '../google-data/runtime/collection-action-kinds.js';
+import { assertGoogleCollectionChat } from './google-context-admission.js';
 
 /** Owner database composition only. Missing platform transport denies classified
  * Google work. No profiles, consent or classification are invented at startup;
@@ -53,7 +54,8 @@ export async function createGoogleBrokerRuntime<DB>(options: {
   }
   const collectionContexts = {
     inspect: (...args: Parameters<typeof contexts.inspect>) => trackedDatabase(() => contexts.inspect(...args)),
-    mark: (input: Parameters<typeof contexts.mark>[0]) => trackedDatabase(() => contexts.mark(input)),
+    mark: (input: Parameters<typeof contexts.mark>[0]) => trackedDatabase(() => contexts.mark(input,
+      options.pilotAdmission?.enabled ? assertGoogleCollectionChat : undefined)),
   };
   const collectionPins = {
     get: (...args: Parameters<typeof pins.get>) => trackedDatabase(() => pins.get(...args)),

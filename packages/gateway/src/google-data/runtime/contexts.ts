@@ -57,6 +57,12 @@ async function erasePublicChatSnapshots<DB>(tx: Transaction<DB>, ownerId: string
       AND c.id IN (${eligible})`.execute(tx);
 }
 
+/** Shared predicate for discovering and admitting expiration of marker m. */
+export const googleContextRetentionExpired = sql`(m.retention_deadline<=clock_timestamp() OR EXISTS (
+  SELECT 1 FROM google_context_origins o JOIN google_context_sources s ON s.origin_id=o.origin_id
+  WHERE o.context_id=m.id AND s.owner_id=m.owner_id AND s.expires_at<=clock_timestamp()
+))`;
+
 /** Trusted metadata composition only: marking is classification, never P1 approval.
  * Revalidate current P1 after waits and before collection/context assembly/egress.
  * Unknown references require host handling; null means never classified, not proof of non-Google content. */
@@ -120,12 +126,14 @@ export function createGoogleContextStore<DB>(db: Kysely<DB>, options: GoogleCont
       contextOpaque.parse(ownerId); contextOpaque.parse(chatId);
       return boundedProvenanceTransaction(db, async tx => { const row = await read(tx, ownerId, chatId); return row ? project(row) : null; });
     },
-    async mark(value: GoogleContextMark): Promise<GoogleContext> {
+    async mark(value: GoogleContextMark, admit?: (tx: Transaction<DB>, ownerId: string, chatId: string) => Promise<void>): Promise<GoogleContext> {
       const input = contextMarkSchema.parse(value);
       if (!validDeadline(input.expiresAt) || !validDeadline(input.retentionDeadline)
         || new Date(input.retentionDeadline).getTime() > now().getTime() + 30 * 86_400_000) contextDeny();
       return boundedProvenanceTransaction(db, async tx => {
         await lockGoogleContexts(tx);
+        // Admission and the first marker share the fence and the commit boundary.
+        await admit?.(tx, input.ownerId, input.chatId);
         if (!validDeadline(input.expiresAt) || !validDeadline(input.retentionDeadline)) contextDeny();
         const originId = googleContextOriginId(input.ownerId, input.googleAccountId, input.consentId);
         const existing = (await sql<{ profile_id: string; profile_revision: number; purpose_id: string; state: string }>`SELECT profile_id,profile_revision,purpose_id,state
@@ -172,27 +180,44 @@ export function createGoogleContextStore<DB>(db: Kysely<DB>, options: GoogleCont
         FROM google_context_sources s WHERE owner_id=${ownerId} AND google_account_id=${account} ORDER BY origin_id`.execute(tx)).rows
         .map(row => ({ ...row.source, expiresAt: new Date(row.source.expiresAt).toISOString() })));
     },
-    /** Group every known consent generation of the stable actual account UUID. Host must revoke current P1
-     * before calling and recheck it before admitting any fresh generation. This method does not approve a renewal. */
-    async beginPurge(ownerId: string, googleAccountId: string) {
+    /** Delivered consent commands restrict erasure to their immutable origin. */
+    async beginPurge(ownerId: string, googleAccountId: string, originId?: string) {
       contextOpaque.parse(ownerId); const account = accountId.parse(googleAccountId);
+      if (originId !== undefined && !/^[0-9a-f]{64}$/.test(originId)) contextDeny();
       return boundedProvenanceTransaction(db, async tx => {
         await lockGoogleContexts(tx);
         const origins = (await sql<{ origin_id: string }>`UPDATE google_context_sources SET state='purging'
-          WHERE owner_id=${ownerId} AND google_account_id=${account} RETURNING origin_id`.execute(tx)).rows;
+          WHERE owner_id=${ownerId} AND google_account_id=${account}
+            AND (${originId ?? null}::text IS NULL OR origin_id=${originId ?? null}) RETURNING origin_id`.execute(tx)).rows;
         const contexts = (await sql<{ chat_id: string; revision: number }>`UPDATE google_context_markers m SET
           state='purging',revision=CASE WHEN m.state='active' THEN m.revision+1 ELSE m.revision END
           WHERE m.owner_id=${ownerId} AND m.state<>'deleted' AND EXISTS(
             SELECT 1 FROM google_context_origins o JOIN google_context_sources s ON s.origin_id=o.origin_id
-            WHERE o.context_id=m.id AND s.owner_id=${ownerId} AND s.google_account_id=${account})
+            WHERE o.context_id=m.id AND s.owner_id=${ownerId} AND s.google_account_id=${account}
+              AND (${originId ?? null}::text IS NULL OR s.origin_id=${originId ?? null}))
           RETURNING chat_id,revision`.execute(tx)).rows;
         const chatIds = contexts.map(context => context.chat_id);
         await eraseSideChatAnswers(tx, ownerId, chatIds);
         await erasePublicChatSnapshots(tx, ownerId, chatIds);
         const revisions: Record<string, number> = Object.create(null);
         for (const context of contexts) revisions[context.chat_id] = context.revision;
-        return { originIds: origins.map(row => row.origin_id), chatIds, revisions,
+        return { originIds: originId ? [originId] : origins.map(row => row.origin_id), chatIds, revisions,
           coverage: "registered-contexts-only" as const };
+      });
+    },
+    /** Expiration belongs to the Chat. Explicit account revocation owns source tombstones. */
+    async beginExpiredChatPurge(ownerId: string, chatId: string) {
+      contextOpaque.parse(ownerId); contextOpaque.parse(chatId);
+      return boundedProvenanceTransaction(db, async tx => {
+        await lockGoogleContexts(tx);
+        const row = (await sql<{ revision: number }>`UPDATE google_context_markers m
+          SET state='purging',revision=CASE WHEN m.state='active' THEN m.revision+1 ELSE m.revision END
+          WHERE m.owner_id=${ownerId} AND m.chat_id=${chatId} AND m.state<>'deleted'
+            AND ${googleContextRetentionExpired} RETURNING revision`.execute(tx)).rows[0];
+        if (!row) return null;
+        await eraseSideChatAnswers(tx, ownerId, [chatId]);
+        await erasePublicChatSnapshots(tx, ownerId, [chatId]);
+        return row.revision;
       });
     },
     /** Repair legacy copies whose markers already entered purge, including closed markers with no account links. */

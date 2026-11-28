@@ -9,6 +9,7 @@ import { createGoogleModelHistoryStore, type GoogleModelHistory } from '../runti
 import { originKey, validateOpaque, GoogleProvenanceUnavailable, type GoogleCopy, type GoogleOrigin, type PurgeHandlers } from './contracts.js';
 import { createGoogleProvenanceStore } from './store.js';
 import { boundedProvenanceTransaction } from './transaction.js';
+import { untaintedOutsideGoogleProvenance } from './google-taint.js';
 import { matchingOrdinaryCopyReceipt, recordOrdinaryCopyReceipt, retireOrdinaryCopyReceipt } from './ordinary-copy-receipts.js';
 
 const MAX_HASH_BYTES = BOT_SESSION_MAX_BYTES * 2 + 32_768;
@@ -78,6 +79,10 @@ export function createGoogleManagedPiCopyHooks(options: { now?: () => Date } = {
     };
     live();
     const result = await boundedProvenanceTransaction<OwnerBotDatabase, T>(executor, async tx => {
+      // An untainted unknown (pre-deploy) chat keeps its pre-pilot session behavior; taint keeps the strict path.
+      if (await untaintedOutsideGoogleProvenance<OwnerBotDatabase>(tx, owner, key.chatId, now, { sharing: false })) {
+        check(signal); const written = await content(tx); check(signal); return written;
+      }
       const history = createGoogleModelHistoryStore<OwnerBotDatabase>(tx, { now });
       const inspect = async () => {
         check(signal);
@@ -99,7 +104,9 @@ export function createGoogleManagedPiCopyHooks(options: { now?: () => Date } = {
       const previous = await lockedSession<OwnerBotDatabase>(tx, key);
       const context = await inspect();
       if (copy) match(copy, context, previous, now());
-      else if (previous) {
+      else if (previous && context.classification === 'google') {
+        // Proof is needed only to adopt an ordinary cache at first taint. An untainted (ordinary) chat holds
+        // ordinary content by construction; its missing/expired receipt is re-issued below, on load too.
         const proof = await matchingOrdinaryCopyReceipt(tx, receiptKey, hash(previous));
         if (!proof) deny();
         captureDeadline(proof); live();
@@ -125,7 +132,7 @@ export function createGoogleManagedPiCopyHooks(options: { now?: () => Date } = {
         await retireOrdinaryCopyReceipt(tx, receiptKey);
         check(signal);
         await inspect();
-      } else if (mode === 'save' && current.classification === 'ordinary') {
+      } else if (current.classification === 'ordinary' && (mode === 'save' || previous)) {
         const saved = await lockedSession<OwnerBotDatabase>(tx, key);
         if (!saved) deny();
         await recordOrdinaryCopyReceipt(tx, receiptKey, hash(saved));

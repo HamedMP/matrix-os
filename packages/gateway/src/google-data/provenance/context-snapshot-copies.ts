@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { ChatRunContextSchema, CanonicalOwnerScopeSchema, CanonicalChatIdSchema, CanonicalChatRunIdSchema, CanonicalChatQueuedTurnIdSchema } from '@matrix-os/contracts';
-import { sql, type Kysely } from 'kysely';
+import { sql, type Kysely , type Transaction } from 'kysely';
 import { z } from 'zod/v4';
 import type { ChatDatabase } from '../../chat/database.js';
 import type { ChatOwner } from '../../chat/records.js';
@@ -8,7 +8,8 @@ import type { AssistantDeltaExecutor, AssistantDeltaTransact } from '../../chat/
 import type { ChatContextWriteKey } from '../../chat/context-write-hook.js';
 import { createGoogleModelHistoryStore, type GoogleModelHistory } from '../runtime/model-history.js';
 import { createGoogleProvenanceStore } from './store.js';
-import { boundedProvenanceTransaction } from './transaction.js';
+import { boundedProvenanceSavepoint, boundedProvenanceTransaction } from './transaction.js';
+import { untaintedOutsideGoogleProvenance } from './google-taint.js';
 import { GoogleProvenanceUnavailable, originKey, type GoogleCopy, type PurgeHandlers } from './contracts.js';
 import type { GoogleActivityQuiescenceAuthority } from './activity-copies.js';
 import { matchingOrdinaryCopyReceipt, recordOrdinaryCopyReceipts, retireOrdinaryCopyReceipt } from './ordinary-copy-receipts.js';
@@ -73,12 +74,21 @@ export function createGoogleContextSnapshotAdapter(db: Kysely<ChatDatabase>, opt
     const owner = Object.freeze(CanonicalOwnerScopeSchema.parse(input.owner)); const chatId = CanonicalChatIdSchema.parse(input.chatId);
     const runIds = z.array(CanonicalChatRunIdSchema).max(2).parse(input.runIds ?? []); const queueIds = z.array(CanonicalChatQueuedTurnIdSchema).max(20).parse(input.queueIds ?? []);
     const discoverQueued = input.discoverQueued === true; const requestId = z.string().min(1).max(200).optional().parse(input.requestId);
-    if (owner.type !== 'personal') deny(); let deadline: number | undefined; let ordinaryProofDeadline: number | undefined;
+    let deadline: number | undefined; let ordinaryProofDeadline: number | undefined;
     const capture = (value: string) => { const time = Date.parse(value); if (!Number.isFinite(time)) deny(); deadline = Math.min(deadline ?? time, time); };
     const live = () => { check(signal); const time = now().getTime(); if (!Number.isFinite(time) || (deadline !== undefined && time >= deadline)
       || (ordinaryProofDeadline !== undefined && time >= ordinaryProofDeadline)) deny(); check(signal); };
-    live();
-    const result = await transact(tx => boundedProvenanceTransaction<ChatDatabase, T>(tx, async current => {
+    let passthrough = false;
+    const result = await transact(async tx => {
+      // Untainted unknown/shared/organization chats keep their pre-pilot writes; taint keeps the strict path.
+      if (await untaintedOutsideGoogleProvenance<ChatDatabase>(tx, owner, chatId, now)) {
+        // Skipping Google checks never skips cancellation: an aborted call must not write or release.
+        passthrough = true; check(signal); // The context fence is held until commit, so the ordinary write stays bounded too; caller timeouts are restored after.
+        const written = await boundedProvenanceSavepoint(tx as Transaction<ChatDatabase>, current => content(current)); check(signal); return written;
+      }
+      if (owner.type !== 'personal') deny();
+      live();
+      return boundedProvenanceTransaction<ChatDatabase, T>(tx, async current => {
       const history = createGoogleModelHistoryStore<ChatDatabase>(current, { now });
       const inspect = async () => { const result = available(await history.inspect(owner, chatId));
         if (result.classification === 'google') { capture(result.googleContext.retentionDeadline); result.googleContext.sources.forEach(source => capture(source.expiresAt)); } live(); return result; };
@@ -109,7 +119,8 @@ export function createGoogleContextSnapshotAdapter(db: Kysely<ChatDatabase>, opt
         const row = await load(current, key); live(); const copy = copies.get(ref(key));
         if (row?.redacted_hash || row?.collaboration_scope_id) deny();
         if (copy && (context.classification !== 'google' || copy.state !== 'active' || copy.contentHash !== row?.hash)) deny();
-        if (!copy && row?.hash) {
+        // Proof is needed only to adopt an ordinary snapshot at first taint; an untainted chat re-issues it below.
+        if (!copy && row?.hash && context.classification === 'google') {
           const proof = await matchingOrdinaryCopyReceipt(current, { ownerId: owner.ownerId, chatId, kind: 'derived', entityRef: ref(key) }, row.hash);
           if (!proof) deny(); ordinaryProofDeadline = Math.min(ordinaryProofDeadline ?? Infinity, Date.parse(proof)); live();
         }
@@ -133,8 +144,9 @@ export function createGoogleContextSnapshotAdapter(db: Kysely<ChatDatabase>, opt
       }
       if (receipts.length) await recordOrdinaryCopyReceipts(current, receipts);
       live(); return result;
-    }), () => { live(); return true; });
-    live(); return result;
+    });
+    }, () => { if (passthrough) check(signal); else live(); return true; });
+    if (passthrough) check(signal); else live(); return result;
   };
   const deletion: NonNullable<PurgeHandlers['derived']> = async input => {
     check(input.signal); const key = fromRef(input.ownerId, input.entityRef); if (!key) return { status: 'unavailable' };

@@ -1,12 +1,13 @@
 import { createHash } from 'node:crypto';
 import { CanonicalChatIdSchema, CanonicalChatRunIdSchema, CanonicalChatRunActivitySchema, CanonicalOwnerScopeSchema } from '@matrix-os/contracts';
-import { sql, type Kysely } from 'kysely';
+import { sql, type Kysely , type Transaction } from 'kysely';
 import { z } from 'zod/v4';
 import type { ChatDatabase } from '../../chat/database.js';
 import type { ChatActivityWriteKey } from '../../chat/activity-write-hook.js';
 import type { AssistantDeltaExecutor, AssistantDeltaTransact } from '../../chat/assistant-delta-repository.js';
 import { createGoogleModelHistoryStore, type GoogleModelHistory } from '../runtime/model-history.js';
-import { boundedProvenanceTransaction } from './transaction.js';
+import { boundedProvenanceSavepoint, boundedProvenanceTransaction } from './transaction.js';
+import { untaintedOutsideGoogleProvenance } from './google-taint.js';
 import { createGoogleProvenanceStore } from './store.js';
 import { GoogleProvenanceUnavailable, originKey, type PurgeHandlers } from './contracts.js';
 import { recordOrdinaryCopyReceipts } from './ordinary-copy-receipts.js';
@@ -55,14 +56,22 @@ export function createGoogleActivityCopyAdapter(db: Kysely<ChatDatabase>, option
     const key = Object.freeze({ owner: Object.freeze(CanonicalOwnerScopeSchema.parse(input.owner)),
       chatId: CanonicalChatIdSchema.parse(input.chatId), runId: CanonicalChatRunIdSchema.parse(input.runId) });
     const requested = z.array(activityId).max(100).parse(input.activityIds);
-    if (key.owner.type !== 'personal') deny();
     let deadline: number | undefined;
     let ordinaryProofDeadline: number | undefined;
     const capture = (value: string) => { const time = Date.parse(value); if (!Number.isFinite(time)) deny(); deadline = Math.min(deadline ?? time, time); };
     const live = () => { check(signal); const time = now().getTime(); if (!Number.isFinite(time) || (deadline !== undefined && time >= deadline)
       || (ordinaryProofDeadline !== undefined && time >= ordinaryProofDeadline)) deny(); check(signal); };
-    live();
-    const result = await transact(tx => boundedProvenanceTransaction<ChatDatabase, T>(tx, async current => {
+    let passthrough = false;
+    const result = await transact(async tx => {
+      // Untainted unknown/shared/organization chats keep their pre-pilot writes; taint keeps the strict path.
+      if (await untaintedOutsideGoogleProvenance<ChatDatabase>(tx, key.owner, key.chatId, now)) {
+        // Skipping Google checks never skips cancellation: an aborted call must not write or release.
+        passthrough = true; check(signal); // The context fence is held until commit, so the ordinary write stays bounded too; caller timeouts are restored after.
+        const written = await boundedProvenanceSavepoint(tx as Transaction<ChatDatabase>, current => content(current)); check(signal); return written;
+      }
+      if (key.owner.type !== 'personal') deny();
+      live();
+      return boundedProvenanceTransaction<ChatDatabase, T>(tx, async current => {
       const history = createGoogleModelHistoryStore<ChatDatabase>(current, { now });
       const inspect = async () => {
         const context = available(await history.inspect(key.owner, key.chatId));
@@ -91,14 +100,16 @@ export function createGoogleActivityCopyAdapter(db: Kysely<ChatDatabase>, option
       const run = await current.selectFrom('chat_runs').select('id').where('id', '=', key.runId).where('chat_id', '=', key.chatId).forUpdate().executeTakeFirst();
       if (!run || JSON.stringify(await discover()) !== JSON.stringify(observed)) deny();
       const before = await payloads(current, key); const context = await inspect();
-      const proofs = await activityReceiptProofs<ChatDatabase>(current, key.owner.ownerId, key.chatId, before
-        .filter(row => !copies.has(googleActivityEntityRef(row.id))).map(row => ({ ref: googleActivityEntityRef(row.id), hash: row.hash })));
+      // Proof is needed only to adopt ordinary activity at first taint; an untainted chat re-issues receipts below.
+      const proofs = context.classification !== 'google' ? new Map<string, string>() : await activityReceiptProofs<ChatDatabase>(current,
+        key.owner.ownerId, key.chatId, before.filter(row => !copies.has(googleActivityEntityRef(row.id))).map(row => ({ ref: googleActivityEntityRef(row.id), hash: row.hash })));
       live();
       for (const row of before) {
         live();
         if (row.redacted_hash) deny();
         const copy = copies.get(googleActivityEntityRef(row.id));
         if (!copy) {
+          if (context.classification !== 'google') continue;
           const proof = proofs.get(googleActivityEntityRef(row.id));
           if (!proof || Date.parse(proof) <= now().getTime()) deny();
           ordinaryProofDeadline = Math.min(ordinaryProofDeadline ?? Infinity, Date.parse(proof)); live();
@@ -149,8 +160,9 @@ export function createGoogleActivityCopyAdapter(db: Kysely<ChatDatabase>, option
         key: { ownerId: key.owner.ownerId, chatId: key.chatId, kind: 'derived', entityRef: googleActivityEntityRef(row.id) }, hash: row.hash,
       })));
       await inspect(); live(); return result;
-    }), () => { live(); return true; });
-    live(); return result;
+    });
+    }, () => { if (passthrough) check(signal); else live(); return true; });
+    if (passthrough) check(signal); else live(); return result;
   };
   const deletion: NonNullable<PurgeHandlers['derived']> = async input => {
     check(input.signal);

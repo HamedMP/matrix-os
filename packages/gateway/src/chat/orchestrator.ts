@@ -288,14 +288,19 @@ export class CanonicalChatOrchestrator {
     return this.pendingDispatch.size + this.queueDispatches.size + this.sharedExecution.pendingCount;
   }
 
-  private atCapacity(reservedRunId?: string): boolean {
-    if (this.options.executionAdmissionFence?.blocked) return true;
+  private admissionBlocked(chatId?: string): boolean {
+    const fence = this.options.executionAdmissionFence;
+    return Boolean(fence && (chatId ? fence.isChatBlocked(chatId) : fence.blocked));
+  }
+
+  private atCapacity(reservedRunId?: string, chatId?: string): boolean {
+    if (this.admissionBlocked(chatId)) return true;
     const ownReservation = reservedRunId && this.reservedDispatch.has(reservedRunId) ? 1 : 0;
     return this.active.size + this.reservedDispatch.size - ownReservation >= MAX_ACTIVE_RUNS_GLOBAL;
   }
 
-  private assertOpen(): void {
-    if (this.options.executionAdmissionFence?.blocked) {
+  private assertOpen(chatId?: string): void {
+    if (this.admissionBlocked(chatId)) {
       throw new CanonicalChatOrchestrationError(
         safeError("run_unavailable", "Chat execution is temporarily unavailable.", true, ["retry"]),
         503,
@@ -322,9 +327,9 @@ export class CanonicalChatOrchestrator {
     }
   }
 
-  private reserveDispatchSlot(runId: string): void {
-    this.assertOpen();
-    if (this.atCapacity(runId)) {
+  private reserveDispatchSlot(runId: string, chatId?: string): void {
+    this.assertOpen(chatId);
+    if (this.atCapacity(runId, chatId)) {
       throw new CanonicalChatOrchestrationError(
         safeError("run_unavailable", "Chat execution is temporarily busy.", true, ["retry"]),
         503,
@@ -333,8 +338,8 @@ export class CanonicalChatOrchestrator {
     this.reservedDispatch.add(runId);
   }
 
-  private reservePendingDispatch(runId: string): void {
-    this.reserveDispatchSlot(runId);
+  private reservePendingDispatch(runId: string, chatId?: string): void {
+    this.reserveDispatchSlot(runId, chatId);
     this.pendingDispatch.add(runId);
   }
 
@@ -351,12 +356,12 @@ export class CanonicalChatOrchestrator {
     assertRoutineDirectAdmission(principal, owner, chatId, inputValue.clientRequestId, provenance?.[ROUTINE_DIRECT_DISPATCH]);
     return admitCanonicalTurn({
       ...this.options,
-      assertOpen: () => this.assertOpen(),
+      assertOpen: () => this.assertOpen(chatId),
       assertPersonalExecutionAllowed: (scope, id) => this.assertPersonalExecutionAllowed(scope, id),
       reconcileActiveRuns: (scope) => this.reconcileActiveRuns(scope),
-      reservePendingDispatch: (id) => this.reservePendingDispatch(id),
+      reservePendingDispatch: (id) => this.reservePendingDispatch(id, chatId),
       releasePendingDispatch: (id) => this.releasePendingDispatch(id),
-      atCapacity: (_owner, runId) => this.atCapacity(runId),
+      atCapacity: (_owner, runId) => this.atCapacity(runId, chatId),
       hasStoppingExecution: (scope, id, admissionKey) => hasStoppingChatExecution(this.active.values(), scope, id, admissionKey),
       startDispatch: (...args) => this.startDispatch(...args),
     }, principal, owner, chatId, inputValue, provenance);
@@ -365,14 +370,14 @@ export class CanonicalChatOrchestrator {
   /** Host callback for one held native occurrence; not a public Chat admission route. */
   async admitNativeScheduledPhase(requestValue: NativeScheduledPhaseRequest): Promise<void> {
     const request = parseNativeScheduledPhaseRequest(requestValue);
-    this.assertOpen();
+    this.assertOpen(request.chatId);
     const origin = this.active.get(request.sourceRunId);
     if (origin && origin.owner.type === request.owner.type && origin.owner.ownerId === request.owner.ownerId
       && origin.chatId === request.chatId && origin.adapter.driverKind === "claude_code") {
       // A native result can precede its canonical commit. Await that exact dispatch only;
       // the due prompt is still held, so no inference or database mutation is replayed.
       await boundedOperation(() => origin.completion, 5_000, origin.controller.signal);
-      this.assertOpen();
+      this.assertOpen(request.chatId);
     }
     const repository = this.options.repository;
     if (!repository.getNativeScheduledSource || !repository.admitNativeScheduledTurn) {
@@ -382,11 +387,11 @@ export class CanonicalChatOrchestrator {
       getNativeScheduledSource: repository.getNativeScheduledSource.bind(repository),
       admitNativeScheduledTurn: repository.admitNativeScheduledTurn.bind(repository),
       findTurnAdmission: repository.findTurnAdmission.bind(repository), finishRun: repository.finishRun.bind(repository),
-    }, assertOpen: () => this.assertOpen(),
+    }, assertOpen: () => this.assertOpen(request.chatId),
       assertPersonalExecutionAllowed: (owner, chatId) => this.assertPersonalExecutionAllowed(owner, chatId),
-      atCapacity: (_owner, runId) => this.atCapacity(runId),
+      atCapacity: (_owner, runId) => this.atCapacity(runId, request.chatId),
       hasStoppingExecution: (owner, chatId) => hasStoppingChatExecution(this.active.values(), owner, chatId),
-      reservePendingDispatch: runId => this.reservePendingDispatch(runId),
+      reservePendingDispatch: runId => this.reservePendingDispatch(runId, request.chatId),
       releasePendingDispatch: runId => this.releasePendingDispatch(runId),
       registerDispatch: (owner, message, run, adapter, root, state, identity) => {
         void this.startDispatch(owner, message, run, adapter, root, state, undefined, undefined, undefined, undefined, identity);
@@ -403,7 +408,7 @@ export class CanonicalChatOrchestrator {
     provenance?: import("./turn-admission.js").CanonicalTurnProvenance,
   ): Promise<CanonicalChatQueueAdmissionResponse> {
     assertRoutineDirectAdmission(principal, owner, chatId, inputValue.clientRequestId, provenance?.[ROUTINE_DIRECT_DISPATCH]);
-    this.assertOpen();
+    this.assertOpen(chatId);
     await this.assertPersonalExecutionAllowed(owner, chatId);
     try {
       return await enqueueCanonicalQueuedTurn({
@@ -434,12 +439,12 @@ export class CanonicalChatOrchestrator {
     if (isRoutineDirectChatId(chatId)) return mapRepositoryError(new ChatNotFoundError(chatId));
     return admitCanonicalRetry({
       ...this.options,
-      assertOpen: () => this.assertOpen(),
+      assertOpen: () => this.assertOpen(chatId),
       assertPersonalExecutionAllowed: (owner, chatId) => this.assertPersonalExecutionAllowed(owner, chatId),
       reconcileActiveRuns: (owner) => this.reconcileActiveRuns(owner),
-      reservePendingDispatch: (runId) => this.reservePendingDispatch(runId),
+      reservePendingDispatch: (runId) => this.reservePendingDispatch(runId, chatId),
       releasePendingDispatch: (runId) => this.releasePendingDispatch(runId),
-      atCapacity: (_owner, runId) => this.atCapacity(runId),
+      atCapacity: (_owner, runId) => this.atCapacity(runId, chatId),
       hasStoppingExecution: (owner, chatId, admissionKey) => hasStoppingChatExecution(this.active.values(), owner, chatId, admissionKey),
       startDispatch: (...args) => this.startDispatch(...args),
     }, principal, owner, chatId, turnId, inputValue);
@@ -458,8 +463,8 @@ export class CanonicalChatOrchestrator {
     onComplete?: () => Promise<void>,
     nativeScheduled?: NativeScheduledPhaseIdentity,
   ): Promise<void> {
-    this.assertOpen();
-    this.reserveDispatchSlot(run.id);
+    this.assertOpen(run.chatId);
+    this.reserveDispatchSlot(run.id, run.chatId);
     if (this.dispatchesInFlight === 0) {
       this.dispatchDrain = new Promise<void>(resolve => { this.resolveDispatchDrain = resolve; });
     }
@@ -514,12 +519,12 @@ export class CanonicalChatOrchestrator {
     scopeId: string,
     createAdapter: Parameters<SharedChatExecutionCoordinator["dispatchNextQueued"]>[3],
   ): Promise<void> {
-    this.assertOpen();
+    this.assertOpen(chatId);
     await this.sharedExecution.dispatchNextQueued(owner, chatId, scopeId, createAdapter);
   }
 
   private async dispatchNextQueued(owner: ChatOwner, chatId: string): Promise<void> {
-    if (this.closing || this.atCapacity()) return;
+    if (this.closing || this.atCapacity(undefined, chatId)) return;
     try {
       await this.assertPersonalExecutionAllowed(owner, chatId);
     } catch (error: unknown) {
@@ -534,9 +539,9 @@ export class CanonicalChatOrchestrator {
     if (this.queueDispatches.has(key) || this.queueDispatches.size >= MAX_ACTIVE_RUNS_GLOBAL) return;
     this.queueDispatches.add(key);
     try {
-      for (let offset = 0; offset < 20 && !this.closing && !this.atCapacity(); offset += 1) {
+      for (let offset = 0; offset < 20 && !this.closing && !this.atCapacity(undefined, chatId); offset += 1) {
         const runId = id("run_");
-        this.reserveDispatchSlot(runId);
+        this.reserveDispatchSlot(runId, chatId);
         try {
           try {
             await this.options.agentContext?.revalidate(owner, chatId);
@@ -989,7 +994,7 @@ export class CanonicalChatOrchestrator {
   ): Promise<CanonicalChatRunSteeringResponse> {
     owner = structuredClone(owner);
     await this.assertPersonalExecutionAllowed(owner, chatId);
-    this.assertOpen();
+    this.assertOpen(chatId);
     const input = CanonicalSteerChatRunRequestSchema.parse(inputValue);
     const active = this.active.get(runId);
     if (!active || active.chatId !== chatId || active.owner.type !== owner.type
@@ -1087,7 +1092,7 @@ export class CanonicalChatOrchestrator {
   ): Promise<CanonicalChatRunSteeringResponse> {
     owner = structuredClone(owner);
     await this.assertPersonalExecutionAllowed(owner, chatId);
-    this.assertOpen();
+    this.assertOpen(chatId);
     const input = CanonicalSteerQueuedChatTurnRequestSchema.parse(inputValue);
     const active = this.active.get(runId);
     if (!active || active.chatId !== chatId || active.owner.type !== owner.type

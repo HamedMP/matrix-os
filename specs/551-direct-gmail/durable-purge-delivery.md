@@ -19,7 +19,15 @@ These fixed paths run under the existing internal integration prefix. Body limit
 
 The registry lock serializes queue capacity and authority writes: 100,000 commands globally, 1,000 per owner, 10,000 operator runtime pins. Queue insertion is batched, not one roundtrip per generation. Cleanup queues at most1,000 generations, locks candidate profiles before consent rows, deletes at most1,000 aged consent/profile records and200 ACKs across two bounded passes. Eligible ACKs are reaped before capacity admission and after consent erasure. Full owners retain invalid rows for retry while other owners can advance; capacity exhaustion does not roll back cleanup or prevent schema startup. PostgreSQL statement/lock limits are5s/2s. The host still owns its shared pool.
 
-Polling leases at most20 commands for60s. A persisted last-polled timestamp rotates unresolved batches fairly; one failed command does not abort other commands unless the cycle is cancelled. SQL uses the database clock; stale/foreign ACKs fail. Exact identical ACK retries are idempotent. A complete receipt means registered-copies-only, pending0/unresolved0 and bounded UUID request IDs. It never certifies unknown imports, arbitrary filesystem copies or processor-side erasure. Account-wide pilot purge conservatively closes all known generations of the requested account; owner-authored intent stays intact.
+Polling leases at most20 commands for60s. A persisted last-polled timestamp rotates unresolved batches fairly; one failed command does not abort other commands unless the cycle is cancelled. SQL uses the database clock; stale/foreign ACKs fail. Exact identical ACK retries are idempotent. A complete receipt means registered-copies-only, pending0/unresolved0 and bounded UUID request IDs. It never certifies unknown imports, arbitrary filesystem copies or processor-side erasure. Platform commands carry one immutable consent origin. Revocation queues each invalidated origin, and renewal queues only its predecessor. The runtime verifies the command origin against the owner, account, and consent ID before erasing copies.
+
+The Gateway holds the global admission fence while taking a stable snapshot and
+settling erasure. While waiting for a tracked runtime to stop, it holds only
+that Chat’s admission fence. Before erasure or retry-state updates it reacquires
+global admission, drains pending claims, and verifies durable stop proof.
+The background retry checks the linked jobs for due work before taking admission.
+
+A missing stop receipt defers the affected copy. A live Chat that cannot be stopped defers its copies while verified copies from other Chats can be erased. A later stop timeout preserves erasures and retry scheduling already committed in the same pass. The gateway resumes incomplete commands and can reopen older activity and snapshot jobs after proof arrives. Account purge also erases legacy Side Chat assistant answers and public snapshots from its marked Chats. Scheduled maintenance repairs those rows for already-closed markers. Retention expiry seals only the expired Chat and queues its registered copies, including Chats without registered copies. Copies with their own expired deadlines can be erased independently. Expiry creates no account command or origin tombstone, so other Chats retain their current consent.
 
 The runtime poller has one cycle, a60s cancellation budget and30s interval. Its client permits at most four actual transports, a10s signal deadline,64KiB/256-chunk replies and fixed paths. Actual fetch/body cancellation remains tracked after a prompt abort refusal; close waits for real transport and local purge settlement before storage/runtime teardown. A transport must honor cancellation; noncooperative work stays capped and cannot be relabelled drained.
 
@@ -28,3 +36,10 @@ Whole-account deletion erases Google metadata only after the existing verified r
 ## Validation and remaining gates
 
 Tests reproduce revocation rollback on failed queue persistence; replacement/profile/expiry/owner erasure handoffs; owner/machine/lease isolation; stale ACK and exact replay; unknown target refusal; concurrent snapshot/cleanup lock order; real native/Pipedream grant mutation composition; incomplete-receipt refusal and deferred transport/body cancellation shutdown. Production runtime pin selection, actual OAuth/provider calls, Linux stop proof, full final CI and five-surface captures remain separate qualification gates.
+
+The expiry sweep pages expired Chat markers before checking for due copy work.
+Closed markers with no remaining bound copies still qualify for finalization.
+Copies waiting in retry backoff leave execution admission open until a later
+sweep can process them. Account and Chat discovery failures are retried on a
+later sweep, while independently expired copies can still be erased in the
+current pass.

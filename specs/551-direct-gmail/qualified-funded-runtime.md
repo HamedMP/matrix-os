@@ -150,7 +150,9 @@ shutdown cancels active inference, drains the actual poll transport, then closes
 copy driver before runtime/registry/database teardown. Missing operator runtime pin or
 current machine admission remains a central denial; startup never creates that pin.
 Hashed activity references resolve through their persisted exact mapping before whole-chat
-run admission, including unknown/nonmanaged terminal runs that cannot supply stop proof.
+run admission. Chat quiescence stops only active (non-terminal) runs, at most 100 per chat;
+finished runs of any driver and long histories never block a purge, while an active
+nonmanaged run that cannot supply stop proof still refuses it.
 
 ### Final source qualification composition
 

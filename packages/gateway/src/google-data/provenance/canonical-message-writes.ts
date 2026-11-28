@@ -1,12 +1,13 @@
 import { createHash } from 'node:crypto';
 import { CanonicalChatIdSchema, CanonicalChatMessageIdSchema, CanonicalChatRunIdSchema, CanonicalOwnerScopeSchema } from '@matrix-os/contracts';
-import { sql } from 'kysely';
+import { sql , type Transaction } from 'kysely';
 import type { ChatDatabase } from '../../chat/database.js';
 import type { AssistantDeltaExecutor, AssistantDeltaTransact, AssistantDeltaWriteHook, AssistantDeltaWriteKey, AssistantRunWriteKey } from '../../chat/assistant-delta-repository.js';
 import { createGoogleModelHistoryStore, type GoogleModelHistory } from '../runtime/model-history.js';
 import { GoogleProvenanceUnavailable, originKey, type GoogleCopy, type GoogleOrigin } from './contracts.js';
 import { createGoogleProvenanceStore } from './store.js';
-import { boundedProvenanceTransaction } from './transaction.js';
+import { boundedProvenanceSavepoint, boundedProvenanceTransaction } from './transaction.js';
+import { untaintedOutsideGoogleProvenance } from './google-taint.js';
 import { matchingOrdinaryCopyReceipt, recordOrdinaryCopyReceipts, retireOrdinaryCopyReceipt } from './ordinary-copy-receipts.js';
 
 const MAX_HASH_BYTES = 512 * 1024;
@@ -59,14 +60,22 @@ export function createGoogleCanonicalMessageWriteHook(options: { now?: () => Dat
     key = Object.freeze({ owner: Object.freeze(CanonicalOwnerScopeSchema.parse(key.owner)), chatId: CanonicalChatIdSchema.parse(key.chatId),
       runId: CanonicalChatRunIdSchema.parse(key.runId) });
     const requestedIds = requested.map(id => CanonicalChatMessageIdSchema.parse(id));
-    if (key.owner.type !== 'personal') deny();
     let deadline: number | undefined;
     let ordinaryProofDeadline: number | undefined;
     const capture = (value: string) => { const parsed = Date.parse(value); if (!Number.isFinite(parsed)) deny(); deadline = Math.min(deadline ?? parsed, parsed); };
     const live = () => { check(signal); const clock = now().getTime(); if (!Number.isFinite(clock) || (deadline !== undefined && deadline <= clock)
       || (ordinaryProofDeadline !== undefined && ordinaryProofDeadline <= clock)) deny(); check(signal); };
-    live();
-    const result = await transact(tx => boundedProvenanceTransaction<ChatDatabase, T>(tx, async current => {
+    let passthrough = false;
+    const result = await transact(async tx => {
+      // Untainted unknown/shared/organization chats keep their pre-pilot writes; taint keeps the strict path.
+      if (await untaintedOutsideGoogleProvenance<ChatDatabase>(tx, key.owner, key.chatId, now)) {
+        // Skipping Google checks never skips cancellation: an aborted call must not write or release.
+        passthrough = true; check(signal); // The context fence is held until commit, so the ordinary write stays bounded too; caller timeouts are restored after.
+        const written = await boundedProvenanceSavepoint(tx as Transaction<ChatDatabase>, current => content(current)); check(signal); return written;
+      }
+      if (key.owner.type !== 'personal') deny();
+      live();
+      return boundedProvenanceTransaction<ChatDatabase, T>(tx, async current => {
       const history = createGoogleModelHistoryStore<ChatDatabase>(current, { now });
       const inspect = async () => {
         check(signal);
@@ -117,7 +126,9 @@ export function createGoogleCanonicalMessageWriteHook(options: { now?: () => Dat
         live();
         const copy = copies.get(id);
         if (copy) match(copy, context, before, now().getTime());
-        else if (before) {
+        else if (before && context.classification === 'google') {
+          // Proof is needed only to adopt ordinary content at first taint. An untainted (ordinary) chat holds
+          // ordinary content by construction; its missing/expired receipt is re-issued after the write.
           const proof = await matchingOrdinaryCopyReceipt(current, { ownerId: key.owner.ownerId, chatId: key.chatId,
             kind: 'derived', entityRef: canonicalMessageEntityRef(id) }, before);
           if (!proof || Date.parse(proof) <= now().getTime()) deny();
@@ -158,8 +169,9 @@ export function createGoogleCanonicalMessageWriteHook(options: { now?: () => Dat
       }
       live();
       return result;
-    }), () => { live(); return true; });
-    live();
+    });
+    }, () => { if (passthrough) check(signal); else live(); return true; });
+    if (passthrough) check(signal); else live();
     return result;
   };
   return {

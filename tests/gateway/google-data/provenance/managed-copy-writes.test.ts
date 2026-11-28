@@ -74,6 +74,25 @@ describe('atomic Google-derived managed Pi copies', () => {
     expect(await inspectCopy()).toBeNull();
     expect((await sql`SELECT 1 FROM google_ordinary_copy_receipts`.execute(db)).rows).toHaveLength(1);
   });
+  it('resumes an untainted chat whose ordinary receipt expired or is missing and refreshes it', async () => {
+    await sessions.save({ ...request(), messages: [{ role: 'user', content: 'Ordinary' }] });
+    await sql`UPDATE google_ordinary_copy_receipts SET expires_at=clock_timestamp()-interval '1 second'`.execute(db);
+    expect((await sessions.load(key)).revision).toBe(1);
+    const live = sql<{ live: boolean }>`SELECT expires_at>clock_timestamp()+interval '29 days' AS live FROM google_ordinary_copy_receipts`;
+    expect((await live.execute(db)).rows).toEqual([{ live: true }]);
+    await sql`DELETE FROM google_ordinary_copy_receipts`.execute(db);
+    expect((await sessions.save(request(1))).revision).toBe(2);
+    expect((await live.execute(db)).rows).toEqual([{ live: true }]);
+    expect(await inspectCopy()).toBeNull();
+  });
+  it('still refuses a Google-tainted chat whose saved session has no live receipt', async () => {
+    await sessions.save({ ...request(), messages: [{ role: 'user', content: 'Ordinary' }] });
+    await sql`UPDATE google_ordinary_copy_receipts SET expires_at=clock_timestamp()-interval '1 second'`.execute(db);
+    await mark();
+    await expect(sessions.load(key)).rejects.toThrow();
+    await expect(sessions.save(request(1))).rejects.toThrow();
+    expect(await inspectCopy()).toBeNull();
+  });
   it('refuses an ordinary cache modified outside the receipt-bearing writer before collection', async () => {
     await sessions.save({ ...request(), messages: [{ role: 'user', content: 'Ordinary' }] });
     await sql`UPDATE managed_pi_sessions SET messages='[{"role":"user","content":"unproven modification"}]'::jsonb WHERE chat_id=${key.chatId}`.execute(db);
@@ -187,7 +206,20 @@ describe('atomic Google-derived managed Pi copies', () => {
     await expect(sessions.load(key)).rejects.toThrow();
     await expect(sessions.save(request(1))).rejects.toThrow();
     await new ChatRepository(db).create(owner, { id: 'chat_unknown', clientRequestId: 'req_unknown', title: 'Legacy' });
+    await createManagedPiSessionsRepository(db).save({ ...request(), chatId: 'chat_unknown' });
+    await contexts.mark({ ...key, chatId: 'chat_unknown', googleAccountId: account, consentId: 'consent_one', profileId: 'managed', profileRevision: 1,
+      purposeId: 'assistant', expiresAt: future(), retentionDeadline: future() });
     await expect(sessions.load({ ...key, chatId: 'chat_unknown' })).rejects.toThrow();
+    await expect(sessions.save({ ...request(1), chatId: 'chat_unknown' })).rejects.toThrow();
+  });
+  it('keeps managed sessions working in an untainted pre-deploy (unknown) chat', async () => {
+    await new ChatRepository(db).create(owner, { id: 'chat_legacy', clientRequestId: 'req_legacy', title: 'Legacy' });
+    const legacy = { ...key, chatId: 'chat_legacy' };
+    expect((await sessions.load(legacy)).revision).toBe(0);
+    expect((await sessions.save({ ...request(), chatId: legacy.chatId })).revision).toBe(1);
+    expect((await sessions.load(legacy)).revision).toBe(1);
+    expect(await provenance.inspect(key.ownerId, 'session', managedPiSessionEntityRef(legacy.chatId))).toBeNull();
+    expect((await sql`SELECT 1 FROM google_ordinary_copy_receipts`.execute(db)).rows).toEqual([]);
   });
   it('leaves ordinary born chats and uninstalled repository behavior unchanged', async () => {
     await sessions.save({ ...request(), messages: [{ role: 'user', content: 'ordinary' }] });

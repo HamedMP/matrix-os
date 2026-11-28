@@ -137,6 +137,17 @@ export function createGoogleProvenanceStore<DB>(db: Kysely<DB>, options: Partial
       return { id: requestId, ...result, complete: result.pending === 0 && result.unresolved === 0,
         coverage: "registered-copies-only" as const };
     },
+    /** Queue exact copies selected by the host without revoking their account origins. */
+    async queueCopies(ownerId: string, copyIds: readonly string[]) {
+      validateOpaque(ownerId);
+      if (copyIds.length < 1 || copyIds.length > 500 || copyIds.some(id => !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/.test(id))) unavailable();
+      await boundedProvenanceTransaction(db, async tx => {
+        await lock(tx);
+        const rows = (await sql<CopyRow>`SELECT * FROM google_copy_registry
+          WHERE owner_id=${ownerId} AND id=ANY(${copyIds}::uuid[]) AND state='active' FOR UPDATE`.execute(tx)).rows;
+        await enqueue(tx, rows);
+      });
+    },
     /** Host must call on a recurring bounded schedule. Expired data is unreadable even before scheduling. */
     async queueExpired(batchSize = 100) {
       if (!Number.isInteger(batchSize) || batchSize < 1 || batchSize > 500) unavailable();
