@@ -11,9 +11,9 @@ import { parseManifest } from "../../packages/gateway/src/app-runtime/manifest-s
 const REPO_ROOT = join(__dirname, "..", "..");
 const APPS_DIR = join(REPO_ROOT, "home", "apps");
 const ICONS_DIR = join(REPO_ROOT, "home", "system", "icons");
-const OFFICE_APPS = ["docs"] as const;
+const OFFICE_APPS = ["docs", "sheets"] as const;
 /** Apps that edit owner files. */
-const FILE_APPS = new Set<string>(["docs"]);
+const FILE_APPS = new Set<string>(["docs", "sheets"]);
 
 interface Manifest {
   name?: string;

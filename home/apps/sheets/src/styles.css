@@ -1,0 +1,133 @@
+/* Sheets app styles. Shared components come from ../../_shared/office-ui. Tokens only. */
+html, body, #root { height: 100%; margin: 0; }
+body { background: var(--app-bg); color: var(--app-fg); }
+
+.sheets-sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* ---------------------------------------------------------------- frame */
+
+.sheets-app .oui-frame__main { overflow: hidden; display: flex; flex-direction: column; min-width: 0; }
+/*
+ * The grid keeps a readable width when the right panel opens: in a wide
+ * window it never shrinks below 480px (the body scrolls sideways instead),
+ * and in a narrow one the panel lies over the grid rather than squeezing it.
+ */
+.sheets-app .oui-frame__body { position: relative; overflow-x: auto; }
+.sheets-app.has-right .oui-frame__body { grid-template-columns: minmax(480px, 1fr) minmax(280px, 360px); }
+@media (max-width: 900px) {
+  .sheets-app.has-right .oui-frame__body { grid-template-columns: minmax(0, 1fr); overflow-x: hidden; }
+  .sheets-app .oui-frame__panel {
+    display: block; position: absolute; top: 0; right: 0; bottom: 0; z-index: 5;
+    width: min(360px, 100%); box-shadow: -8px 0 24px color-mix(in srgb, var(--app-fg) 18%, transparent);
+  }
+}
+
+.sheets-main { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.sheets-grid-host { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.sheets-grid-host > .sheet-grid,
+.sheets-grid-host > :first-child { flex: 1; min-height: 0; }
+/* The name box covers the grid's address box, which knows addresses only. */
+.sheets-grid-host .sg-bar__name { visibility: hidden; }
+.sheets-namebox {
+  position: absolute; top: 0; left: 0; z-index: 2;
+  box-sizing: border-box; width: 96px; height: 30px; padding: 0 8px;
+  border: 0; border-right: 1px solid var(--app-border); border-bottom: 1px solid var(--app-border);
+  background: var(--app-card); color: var(--app-fg); font: inherit; font-size: 13px;
+}
+.sheets-namebox:focus-visible { outline: 2px solid var(--oui-accent-ink, var(--identity-accent, var(--app-primary))); outline-offset: -2px; }
+
+/* ---------------------------------------------------------------- ribbon and backstage */
+
+.sheets-backstage-info { max-width: 640px; padding: 24px 32px; }
+.sheets-backstage-info h2 { margin: 0 0 16px; font-size: 20px; font-weight: 650; overflow-wrap: anywhere; }
+.sheets-backstage-info dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 8px 16px; margin: 0; font-size: 13px; }
+.sheets-backstage-info dt { color: var(--app-muted-fg); }
+.sheets-backstage-info dd { margin: 0; overflow-wrap: anywhere; }
+
+.sheets-functions { display: flex; flex-direction: column; gap: 10px; }
+.sheets-functions__list { list-style: none; margin: 0; padding: 4px; max-height: 50vh; overflow: auto; border: 1px solid var(--app-border); border-radius: var(--app-radius, 6px); }
+.sheets-functions__item {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%; padding: 6px 8px;
+  border: 0; border-radius: var(--app-radius, 6px); background: transparent; color: var(--app-fg); font: inherit; text-align: left; cursor: pointer;
+}
+.sheets-functions__item:hover { background: var(--app-muted); }
+.sheets-functions__item:focus-visible { outline: 2px solid var(--oui-accent-ink, var(--identity-accent, var(--app-primary))); outline-offset: -2px; }
+.sheets-functions__name { font-family: var(--app-font-mono, ui-monospace, monospace); font-size: 12px; font-weight: 600; overflow-wrap: anywhere; }
+.sheets-functions__summary, .sheets-functions__empty { font-size: 12px; color: var(--app-muted-fg); }
+
+/* View options: gridlines off; without the formula bar the name box goes too. */
+.sheets-grid-host.is-gridless .sg-lines { display: none; }
+.sheets-grid-host.is-gridless .sg-cell.is-merged { box-shadow: none; }
+
+.sheets-icon-btn {
+  display: inline-grid; place-items: center; width: 28px; height: 28px; padding: 0;
+  border: 0; border-radius: var(--app-radius, 6px); background: transparent; color: inherit; cursor: pointer;
+}
+.sheets-icon-btn:hover { background: var(--app-muted); }
+.sheets-icon-btn:focus-visible { outline: 2px solid var(--oui-accent-ink, var(--identity-accent, var(--app-primary))); outline-offset: 1px; }
+
+/* ---------------------------------------------------------------- banners */
+
+.sheets-banner { display: flex; align-items: center; gap: 10px; padding: 6px 12px; font-size: 13px; color: var(--app-fg); }
+.sheets-banner > svg { color: var(--app-warning); flex: none; }
+.sheets-banner__text { flex: 1; min-width: 0; }
+
+/* ---------------------------------------------------------------- find */
+
+.sheets-find { display: flex; flex-direction: column; gap: 4px; padding: 6px 10px; border-bottom: 1px solid var(--app-border); background: var(--app-card); }
+.sheets-find__row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.sheets-find__input {
+  flex: 1 1 200px; max-width: 320px; height: 28px; padding: 0 8px;
+  border: 1px solid var(--app-border); border-radius: var(--app-radius, 6px);
+  background: var(--app-bg); color: var(--app-fg); font: inherit; font-size: 13px;
+}
+.sheets-find__input:focus-visible { outline: 2px solid var(--oui-accent-ink, var(--identity-accent, var(--app-primary))); outline-offset: 0; }
+.sheets-find__count { min-width: 8ch; font-size: 12px; color: var(--app-muted-fg); }
+
+/* ---------------------------------------------------------------- tabs */
+
+.sheets-tabs { display: flex; align-items: stretch; gap: 4px; min-height: 32px; padding: 0 6px; border-top: 1px solid var(--app-border); background: var(--app-card); }
+.sheets-tabs__list { display: flex; align-items: stretch; gap: 2px; min-width: 0; overflow-x: auto; scrollbar-width: thin; }
+.sheets-tabs__tab { position: relative; display: flex; align-items: center; border-bottom: 3px solid transparent; }
+.sheets-tabs__tab.is-selected { background: var(--app-bg); border-bottom-color: var(--oui-accent-ink, var(--identity-accent, var(--app-primary))); }
+.sheets-tabs__tab::before { content: ""; position: absolute; left: 4px; right: 4px; top: 0; height: 3px; border-radius: 0 0 2px 2px; background: var(--sheets-tab-color, transparent); }
+.sheets-tabs__button {
+  display: inline-flex; align-items: center; gap: 6px; height: 100%; padding: 0 12px;
+  border: 0; background: transparent; color: var(--app-fg); font: inherit; font-size: 13px; cursor: pointer; white-space: nowrap;
+}
+.sheets-tabs__tab:not(.is-selected) .sheets-tabs__button { color: var(--app-muted-fg); }
+.sheets-tabs__button:focus-visible { outline: 2px solid var(--oui-accent-ink, var(--identity-accent, var(--app-primary))); outline-offset: -2px; }
+.sheets-tabs__pending { width: 6px; height: 6px; border-radius: 50%; background: var(--app-warning); }
+.sheets-tabs__menu { align-self: center; }
+/* The tabs sit at the bottom of the window, so their menu opens upwards. */
+.sheets-tabs__menu .oui-menu { top: auto; bottom: calc(100% + 4px); max-height: 60vh; overflow: auto; }
+.sheets-tabs__rename { width: 14ch; margin: 3px 0; padding: 0 6px; border: 1px solid var(--oui-accent-ink, var(--identity-accent, var(--app-primary))); border-radius: 4px; background: var(--app-bg); color: var(--app-fg); font: inherit; font-size: 13px; }
+.sheets-tabs__add { align-self: center; }
+
+/* Tab colours are owner data; they read well on both themes. */
+.sheets-tab-color--red { --sheets-tab-color: #d64545; }
+.sheets-tab-color--orange { --sheets-tab-color: #e07b24; }
+.sheets-tab-color--yellow { --sheets-tab-color: #d9b21c; }
+.sheets-tab-color--green { --sheets-tab-color: #2f9e5b; }
+.sheets-tab-color--teal { --sheets-tab-color: #1f9a9a; }
+.sheets-tab-color--blue { --sheets-tab-color: #3b73d9; }
+.sheets-tab-color--purple { --sheets-tab-color: #8a55c9; }
+.sheets-tab-color--gray { --sheets-tab-color: #8a8f96; }
+
+/* ---------------------------------------------------------------- status */
+
+.sheets-status { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; }
+.sheets-status__left, .sheets-status__stats { display: flex; gap: 14px; align-items: center; }
+.sheets-status__warn { color: var(--app-warning); }
+
+/* ---------------------------------------------------------------- start */
+
+/* The start screen itself comes from the office kit. */
+
+.sheets-opening, .sheets-open-error { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; flex: 1; padding: 32px; color: var(--app-muted-fg); }
+
+/* ---------------------------------------------------------------- picker and forms */
+
+.sheets-form { display: flex; flex-direction: column; gap: 12px; }
+
+.sheets-panel-fallback, .sheets-panel-loading { display: flex; align-items: center; justify-content: center; height: 100%; padding: 16px; }

@@ -1,0 +1,45 @@
+{
+  "name": "Sheets",
+  "description": "Edit .xlsx and .csv spreadsheets with formulas and agent cell changes you review",
+  "category": "productivity",
+  "icon": "v3-sheets",
+  "author": "system",
+  "version": "0.1.0",
+  "storage": {
+    "tables": {
+      "recent_files": {
+        "columns": {
+          "slot": "text",
+          "payload": "jsonb"
+        },
+        "uniqueIndexes": [
+          "slot"
+        ]
+      }
+    }
+  },
+  "slug": "sheets",
+  "runtime": "vite",
+  "runtimeVersion": "^1.0.0",
+  "scope": "personal",
+  "permissions": [
+    "files"
+  ],
+  "build": {
+    "install": "pnpm install --ignore-workspace --prefer-offline",
+    "command": "pnpm build",
+    "output": "dist",
+    "timeout": 180,
+    "sourceGlobs": [
+      "src/**",
+      "../_shared/**",
+      "../../system/icons/v3-*.png",
+      "index.html",
+      "matrix.json",
+      "package.json",
+      "tsconfig.json",
+      "vite.config.ts"
+    ]
+  },
+  "listingTrust": "first_party"
+}

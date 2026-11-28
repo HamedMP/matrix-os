@@ -1,0 +1,136 @@
+import type { ReactNode } from "react";
+import type { AgentResult } from "../../../../_shared/office-ui";
+import type { AnswerResult, AssistantResult, Finding, FindingsResult, ProposalResult, SheetsAssistant } from "../../agent";
+
+/**
+ * Runs a card button's action on the assistant. The panel gives cards this
+ * instead of the assistant itself, so that every button commits the cell
+ * editor first and does nothing when the editor refused its text.
+ */
+export type RunAction = (action: (assistant: SheetsAssistant) => unknown) => void;
+
+const KIND_LABEL: Record<Finding["kind"], string> = {
+  hardcoded: "Typed-in value",
+  "total-mismatch": "Total disagrees",
+  "sum-gap": "Sum leaves cells out",
+};
+
+function ProposalActions({ result, run }: { result: ProposalResult; run: RunAction }) {
+  return (
+    <div className="sheets-agent__actions">
+      {result.pending < result.changeCount && result.pending > 0 && <span className="sheets-agent__note">{result.pending} still pending</span>}
+      <button type="button" className="oui-button oui-button--success" onClick={() => run((assistant) => assistant.acceptResult(result.id))}>
+        Accept all
+      </button>
+      <button type="button" className="oui-button oui-button--danger" onClick={() => run((assistant) => assistant.rejectResult(result.id))}>
+        Reject all
+      </button>
+      <button type="button" className="oui-button oui-button--ghost" onClick={() => run((assistant) => assistant.reviewResult(result.id))}>
+        Review
+      </button>
+    </div>
+  );
+}
+
+function Answer({ result, run }: { result: AnswerResult; run: RunAction }) {
+  const seen = new Map<string, number>();
+  const paragraphs = result.text
+    .split(/\n+/)
+    .filter((line) => line.trim() !== "")
+    .map((text) => {
+      const count = (seen.get(text) ?? 0) + 1;
+      seen.set(text, count);
+      return { text, key: `${count}:${text}` };
+    });
+  return (
+    <div className="sheets-agent__answer">
+      {paragraphs.map((paragraph) => (
+        <p key={paragraph.key}>{paragraph.text}</p>
+      ))}
+      <button type="button" className="oui-button oui-button--ghost" onClick={() => run((assistant) => assistant.clearHighlights())}>
+        Clear highlights
+      </button>
+    </div>
+  );
+}
+
+/** Sheet names listed in full before the rest are counted. */
+const MAX_SKIPPED_NAMED = 5;
+
+/** What the check could not look at. Null when it read every cell. */
+function Incomplete({ result }: { result: FindingsResult }) {
+  if (result.skipped.length === 0 && !result.capped) return null;
+  const named = result.skipped.slice(0, MAX_SKIPPED_NAMED).join(", ");
+  const more = result.skipped.length - MAX_SKIPPED_NAMED;
+  return (
+    <div className="sheets-agent__note">
+      {result.skipped.length > 0 && (
+        <p>
+          Not checked, too large to read: {named}
+          {more > 0 ? ` and ${more} more` : ""}.
+        </p>
+      )}
+      {result.capped && <p>The check stopped after {result.findings.length} findings; later cells were not checked.</p>}
+    </div>
+  );
+}
+
+function Findings({ result, run }: { result: FindingsResult; run: RunAction }) {
+  if (result.findings.length === 0) {
+    // An all-clear only when every sheet was read.
+    if (result.skipped.length > 0) return <Incomplete result={result} />;
+    return <p className="sheets-agent__note">Every total adds up and no typed-in number sits among formulas.</p>;
+  }
+  return (
+    <>
+      <Incomplete result={result} />
+      <ul className="sheets-agent__findings">
+        {result.findings.map((finding) => (
+          <li key={`${finding.kind}|${finding.location}`} className={`sheets-agent__finding is-${finding.kind}`}>
+            <span className="sheets-agent__finding-kind">{KIND_LABEL[finding.kind]}</span>
+            <span className="sheets-agent__finding-text">{finding.message}</span>
+            <span className="sheets-agent__actions">
+              <button type="button" className="oui-button oui-button--ghost" onClick={() => run((assistant) => assistant.showFinding(finding))} aria-label={`Go to ${finding.location}`}>
+                Go to
+              </button>
+              {finding.kind === "total-mismatch" && finding.related !== undefined && (
+                <button type="button" className="oui-button oui-button--primary" onClick={() => run((assistant) => assistant.fix(finding))} aria-label={`Link ${finding.location} to its calculation`}>
+                  Link to calculation
+                </button>
+              )}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </>
+  );
+}
+
+function body(result: AssistantResult, run: RunAction): ReactNode {
+  switch (result.kind) {
+    case "proposal":
+      return result.status === "proposed" ? <ProposalActions result={result} run={run} /> : undefined;
+    case "answer":
+      return <Answer result={result} run={run} />;
+    case "findings":
+      return <Findings result={result} run={run} />;
+  }
+}
+
+/** An assistant result as an office-ui result card. Proposals carry Accept all, Reject all and Review. */
+export function toAgentResult(result: AssistantResult, run: RunAction): AgentResult {
+  const meta =
+    result.kind === "proposal"
+      ? `${result.changeCount === 1 ? "1 change" : `${result.changeCount} changes`} · Matrix Assistant`
+      : result.kind === "findings"
+        ? "Checked in the app, without the model"
+        : undefined;
+  return {
+    id: result.id,
+    title: result.title,
+    summary: result.summary === "" ? undefined : result.summary,
+    body: body(result, run),
+    status: result.kind === "proposal" ? result.status : "proposed",
+    meta,
+  };
+}
