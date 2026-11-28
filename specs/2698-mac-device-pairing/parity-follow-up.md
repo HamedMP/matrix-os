@@ -1,5 +1,7 @@
 # Mac connectivity and Herdr parity follow-up
 
+> **Note (2026-11-25).** The existing-terminal, interactive-input and connectivity rows below are delivered by the [2716](../2716-desktop-link/spec.md) desktop link, the transport half of this spec.
+
 ## Existing implementation and gaps
 
 | Area | Existing code | Smallest remaining acceptance |

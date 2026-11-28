@@ -1,5 +1,7 @@
 # Mac pairing validation
 
+> **Note (2026-11-25).** Step 4's background checks (#3460) are retired in a follow-up stack in favour of the [2716](../2716-desktop-link/spec.md) desktop link.
+
 ## Reproduction
 
 1. Run the Gateway on an isolated primary test Computer. Enable `MATRIX_DESKTOP_PAIRING_ENABLED=1` with the existing owner database, immutable `MATRIX_MACHINE_ID`, `MATRIX_HANDLE`, and owner identity. Keep the default off elsewhere.

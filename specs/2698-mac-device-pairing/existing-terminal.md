@@ -1,5 +1,7 @@
 # Read an existing Mac Terminal from Chat
 
+> **Superseded (2026-11-25).** [2716](../2716-desktop-link/spec.md) reaches every desktop terminal over the desktop link, with this file's consent rule. A follow-up stack retires this read path; it keeps working until then.
+
 Tracking ENG-495. In an eligible worktree Chat, open `@ → Read an existing Mac terminal`. Matrix Electron opens a local picker listing live terminals from **This Computer**. Select a terminal and review a bounded snapshot in a native dialog. Choose **Use in Chat** to place that snapshot in the original Chat composer. The user can inspect, edit, or send the draft. The read runs once and has no background grant.
 
 ## Trust boundaries

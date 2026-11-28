@@ -1,5 +1,7 @@
 # Watch an existing Mac Terminal from Chat
 
+> **Superseded (2026-11-25).** [2716](../2716-desktop-link/spec.md) attaches to desktop terminals live over the desktop link. A follow-up stack retires this watch path; it keeps working until then.
+
 Tracking ENG-495. In an eligible private worktree Chat on the paired Mac, choose **Watch an existing Mac terminal** from the `@` menu. Select a live Terminal in the local picker. The native **Watch locally** approval identifies the Terminal, Chat and worktree. The original Chat shows the latest visible screen in a local panel with **Stop watching**. The panel stays separate from the draft and transcript.
 
 | Local IPC | Authority and input |
