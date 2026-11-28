@@ -1,0 +1,56 @@
+{
+  "name": "Calendar",
+  "description": "Google Calendar with free-busy overlays and agent proposals you approve",
+  "category": "productivity",
+  "icon": "v3-calendar",
+  "author": "system",
+  "version": "0.1.0",
+  "slug": "calendar",
+  "runtime": "vite",
+  "runtimeVersion": "^1.0.0",
+  "scope": "personal",
+  "build": {
+    "install": "pnpm install --ignore-workspace --prefer-offline",
+    "command": "pnpm build",
+    "output": "dist",
+    "timeout": 180,
+    "sourceGlobs": [
+      "src/**",
+      "../_shared/**",
+      "../../system/icons/v3-*.png",
+      "index.html",
+      "matrix.json",
+      "package.json",
+      "tsconfig.json",
+      "vite.config.ts"
+    ]
+  },
+  "listingTrust": "first_party",
+  "storage": {
+    "tables": {
+      "calendar_preferences": {
+        "columns": {
+          "slot": "text",
+          "payload": "jsonb"
+        },
+        "uniqueIndexes": [
+          "slot"
+        ]
+      },
+      "calendar_proposals": {
+        "columns": {
+          "start_at": "text",
+          "end_at": "text",
+          "title": "text",
+          "attendees": "jsonb",
+          "note": "text",
+          "calendar_id": "text",
+          "time_zone": "text"
+        },
+        "indexes": [
+          "start_at"
+        ]
+      }
+    }
+  }
+}

@@ -1,0 +1,72 @@
+/* Calendar assistant answer bodies. Uses only the shared --app-* tokens. */
+.cal-agent__answer {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cal-agent__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.cal-agent__chip {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  max-width: 100%;
+  text-align: left;
+}
+
+.cal-agent__chip[aria-pressed="true"] {
+  outline: 2px solid var(--app-primary, currentColor);
+  outline-offset: 1px;
+}
+
+.cal-agent__chip-title {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 220px;
+}
+
+.cal-agent__chip-time {
+  font-variant-numeric: tabular-nums;
+}
+
+.cal-agent__slots {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.cal-agent__slot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.cal-agent__open {
+  flex: none;
+}
+
+.cal-agent__draft {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.cal-agent__notes {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--app-muted-fg, inherit);
+  font-size: 0.85em;
+}

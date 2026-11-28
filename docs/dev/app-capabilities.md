@@ -92,9 +92,9 @@ retain their exact model and previous kernel credential path; app-selected route
 are rejected until an explicit owner policy migration. A fixed policy `route` is
 also binding. No fallback to another paid route.
 
-While no `system/app-ai.json` exists, the shipped first-party `docs` and `sheets`
-apps may use app AI on the owner's default route, so their assistants work in a
-fresh install. Only the visible, non-imported, first-party personal copy qualifies;
+While no `system/app-ai.json` exists, the shipped first-party `calendar`, `docs`
+and `sheets` apps may use app AI on the owner's default route, so their assistants
+work in a fresh install. Only the visible, non-imported, first-party personal copy qualifies;
 an imported or community app with the same name does not. Once the owner writes
 `system/app-ai.json` it is authoritative: list those apps to keep AI, or omit them
 (for example `{"apps": []}`) to revoke it.
