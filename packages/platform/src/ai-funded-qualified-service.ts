@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { AiFundedPolicyError } from './ai-funded-policy-errors.js';
 import { createFundedAuthorize } from './ai-funded-authorization.js';
 import { admitQualifiedFundedRoute } from './ai-funded-qualified-admission.js';
 import { sql } from 'kysely';
@@ -28,7 +29,7 @@ export function createQualifiedFundedService(options: { runner: QualifiedFundedT
     const deadline = Date.now() + 10000; const timer = setTimeout(() => controller.abort(), 10000); timer.unref?.();
     const signal = AbortSignal.any([parent, controller.signal]);
     try { assertQualifiedLive(signal, deadline); const value = await work(signal, deadline); assertQualifiedLive(signal, deadline); return value; }
-    catch (error) { if (error instanceof QualifiedFundedError) throw error; console.warn('[qualified-funded] Operation:', error instanceof Error ? error.name : 'UnknownError'); throw new QualifiedFundedError(); }
+    catch (error) { if (error instanceof QualifiedFundedError) throw error; console.warn('[qualified-funded] Operation unavailable'); throw new QualifiedFundedError(); }
     finally { clearTimeout(timer); active.delete(controller); if (!active.size) { finish?.(); finish = undefined; } }
   }
   async function resolve(selector: ManagedGoogleRouteResolveRequest, signal: AbortSignal, deadline: number) {
@@ -99,7 +100,7 @@ export function createQualifiedFundedService(options: { runner: QualifiedFundedT
       const initial = await options.runner.run(signal, deadline, tx => admitQualifiedFundedRoute(tx, selector,
         { hashSecret: options.credentialHashSecret, now, env: options.env }));
       const actual = await resolve(request, signal, deadline); if (actual.digest !== initial.binding.digest) throw new QualifiedFundedError();
-      return options.runner.run(signal, deadline, async tx => {
+      const outcome = await options.runner.run(signal, deadline, async tx => {
         const current = await admitQualifiedFundedRoute(tx, selector, { hashSecret: options.credentialHashSecret, now, env: options.env });
         if (JSON.stringify(initial.binding) !== JSON.stringify(current.binding)) throw new QualifiedFundedError();
         const authorize = createFundedAuthorize({ db: tx, now, hashCredential: token => qualifiedTokenHash(token, options.credentialHashSecret),
@@ -108,13 +109,29 @@ export function createQualifiedFundedService(options: { runner: QualifiedFundedT
             return { tokenId, routeDigest: current.binding.digest, request: { credential: request.credential, requestId: request.requestId,
               modelId: current.binding.canonicalModelId, maxCostMicrousd: request.maxCostMicrousd, billingMode: request.billingMode,
               ...(request.claimKey ? { claimKey: request.claimKey } : {}) } }; } } });
-        const authorization = await authorize({ credential: request.credential, requestId: request.requestId,
-          modelId: request.canonicalModelId, maxCostMicrousd: request.maxCostMicrousd, billingMode: request.billingMode });
+        let authorization: Awaited<ReturnType<typeof authorize>> | undefined;
+        let rejection: AiFundedPolicyError | undefined;
+        try {
+          authorization = await authorize({ credential: request.credential, requestId: request.requestId,
+            modelId: request.canonicalModelId, maxCostMicrousd: request.maxCostMicrousd, billingMode: request.billingMode });
+        } catch (error: unknown) {
+          // The nested authorizer may have persisted a waiting claim. Only its
+          // typed priority refusal may cross this outer transaction as a value.
+          if (error instanceof AiFundedPolicyError && error.code === 'rate_limited'
+            && ['slot_busy', 'priority_queue', 'priority_hold', 'priority_full'].includes(error.reason ?? '')) rejection = error;
+          else throw error;
+        }
         assertQualifiedLive(signal, deadline);
         const final = await admitQualifiedFundedRoute(tx, selector, { hashSecret: options.credentialHashSecret, now, env: options.env });
         if (JSON.stringify(final.binding) !== JSON.stringify(current.binding)) throw new QualifiedFundedError();
-        return GoogleQualifiedFundedAuthorizationResponseSchema.parse({ protocol: GOOGLE_QUALIFIED_FUNDED_PROTOCOL, authorization, binding: current.binding });
+        if (rejection) return { kind: 'priority-rejected' as const, rejection };
+        if (!authorization) throw new QualifiedFundedError();
+        return { kind: 'authorized' as const, response: GoogleQualifiedFundedAuthorizationResponseSchema.parse({ protocol: GOOGLE_QUALIFIED_FUNDED_PROTOCOL, authorization, binding: current.binding }) };
       });
+      // Commit the claim before reporting refusal; database/admission failures
+      // still throw inside the transaction and roll all related writes back.
+      if (outcome.kind === 'priority-rejected') throw outcome.rejection;
+      return outcome.response;
     }); },
     async close() { closed = true; for (const operation of active) operation.abort(); await drained; },
   };

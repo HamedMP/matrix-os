@@ -87,10 +87,10 @@ refuse admission. All pilot managed artifact writes are unavailable, including o
 runs before first Gmail collection. The qualified credential manager is distinct from the
 legacy cache, closes after broker drain and uses the actual funded runtime identity.
 
-This startup unit does not yet install durable stop receipts, queue/source purge admission
-or a recurring copy-deletion driver. Those lifecycle integrations and the platform fixed
-managed-route resolver remain separate required units; these source checks alone do not
-qualify a deployed pilot or implicit Cloudflare Anthropic routing.
+The storage/admission constructor alone does not provide stop or remote revocation
+proof. The platform and local lifecycle compositions below supply separate controls;
+these source checks alone do not qualify a deployed pilot or implicit Cloudflare
+Anthropic routing.
 
 ### Opt-in platform host composition
 
@@ -108,3 +108,38 @@ policy grant, consent or managed processor approval is created by this compositi
 Proxy-side exact config/review opt-in remains independently required. An absent, stale or
 implicit Anthropic review refuses qualified work. This is source installation, not a live
 provider-account qualification or approval to enable the pilot.
+
+### Local registered-copy cleanup lifecycle
+
+Pilot startup now installs an awaited `onStopped` sink from the real managed Pi runtime.
+It records immutable owner/chat/run + exact handle/generation metadata after the actual
+worker/tool cleanup and verified native stop ACK. A terminal canonical status is never
+stop proof. Unknown, nonmanaged, changed-generation or expired proofs refuse deletion;
+Linux/systemd live qualification remains a separate gate. Receipts expire after 35 days
+(longer than maximum 30-day Google retention), have a 10k cap and bounded recurring cleanup.
+The owner database/pool remains host-owned throughout.
+
+`purgeGoogleAccount(command, signal?)` accepts a server-authenticated exact host-owner,
+account UUID and command UUID/revision. It persists an immutable dedup tuple before work;
+completed replay never purges a later consent. New command IDs revision 1 are independent.
+A command conservatively closes all known generations of its exact account. The actual
+execution admission fence blocks new runs/queue claims; pending preparation drains before
+source purge, real stop qualification, metadata cancellation and exact-hash deletion.
+Each pass quiesces and claims at most 500 exact owner/copy IDs. Unknown adapters remain
+unresolved. Up to 32 account-origin generations and 100 runs per affected chat are supported;
+exhausted caps fail closed and require operator review, never report completion.
+
+The 30-second recurring pass targets actual source/copy expiry, not closed markers alone.
+It drains actual handler settlement before releasing its fence or closing. ACK covers only
+this account's registered copy receipts (`complete`, pending 0, unresolved 0), preserving
+owner-written content and unrelated accounts. Mixed contexts stay unavailable while any
+other-origin registered content remains; no whole-context erasure is attested in that case.
+Local dedup metadata is non-expiring and capped 4096 rather than evicting replay protection.
+Platform remote revocation delivery/ACK still requires the separate authenticated poller;
+local expiry cannot substitute for delivery of a disconnect or owner deletion command.
+
+Pilot owner-database construction explicitly sets the actual shared PostgreSQL pool's
+connection/acquisition timeout to 2000 ms; ordinary callers retain their previous defaults.
+This bounds stalled handshakes and queued borrowing, not every SQL operation or process
+stop. Operation cancellation checks and actual transaction/handler settlement drain remain
+separate requirements; the driver never destroys the shared pool to simulate cancellation.

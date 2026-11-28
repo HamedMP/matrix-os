@@ -3,16 +3,19 @@ import { randomUUID } from "node:crypto";
 import { sql, type Kysely } from "kysely";
 import { GoogleProvenanceUnavailable, validateOpaque, type GoogleEntityKind, type ProvenanceLimits, type PurgeClaim, type PurgeHandlers, type PurgeOutcome } from "./contracts.js";
 
-export async function claimPurgeJob<DB>(db: Kysely<DB>, cap: ProvenanceLimits, workerId: string, input: { leaseMs?: number } = {}): Promise<PurgeClaim | null> {
+export async function claimPurgeJob<DB>(db: Kysely<DB>, cap: ProvenanceLimits, workerId: string, input: { leaseMs?: number; ownerId?: string; copyIds?: readonly string[] } = {}): Promise<PurgeClaim | null> {
   validateOpaque(workerId);
+  if (input.ownerId !== undefined) validateOpaque(input.ownerId);
+  if (input.copyIds && (input.copyIds.length < 1 || input.copyIds.length > 500 || input.copyIds.some(id => !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/.test(id)))) throw new GoogleProvenanceUnavailable();
+  const eligible = sql`(${input.ownerId ?? null}::text IS NULL OR owner_id=${input.ownerId ?? null}) AND (${input.copyIds ?? null}::uuid[] IS NULL OR copy_id=ANY(${input.copyIds ?? null}::uuid[]))`;
   const leaseMs = input.leaseMs ?? 60_000;
   if (!Number.isInteger(leaseMs) || leaseMs < 1 || leaseMs > 300_000) throw new GoogleProvenanceUnavailable();
   return boundedProvenanceTransaction(db, async tx => {
     // Crashed workers consume an attempt too; lease churn cannot create infinite retries.
     await sql`UPDATE google_copy_purge_jobs SET state='unresolved',reason='retry_exhausted',revision=revision+1,updated_at=now()
-      WHERE (state='pending' OR (state='leased' AND lease_until <= now())) AND attempts >= ${cap.maxAttempts}`.execute(tx);
+      WHERE ${eligible} AND (state='pending' OR (state='leased' AND lease_until <= now())) AND attempts >= ${cap.maxAttempts}`.execute(tx);
     const row = (await sql<{ id: string; owner_id: string }>`SELECT id,owner_id FROM google_copy_purge_jobs
-      WHERE attempts < ${cap.maxAttempts} AND ((state='pending' AND next_attempt <= now()) OR (state='leased' AND lease_until <= now()))
+      WHERE ${eligible} AND attempts < ${cap.maxAttempts} AND ((state='pending' AND next_attempt <= now()) OR (state='leased' AND lease_until <= now()))
       ORDER BY next_attempt,id LIMIT 1 FOR UPDATE SKIP LOCKED`.execute(tx)).rows[0];
     if (!row) return null;
     const token = randomUUID();

@@ -6,7 +6,9 @@ import { createRoutineDirectChatContexts } from "../bots/routine-direct-chat-con
 import {createBotRoutineApprovals} from "../bots/routine-approval.js";
 import {createBotRoutineExecution,type BotRoutineExecution} from "../bots/routine-execution.js";
 import {BotStateError} from "../bots/repositories/shared.js";
-import { createGooglePilotArtifactWriteFence } from '../google-data/runtime/pilot-artifact-writes.js';
+import { createGooglePilotCopyLifecycle, type GooglePilotPurgeCommand, type GooglePilotPurgeReceipt } from './google-pilot-copy-lifecycle.js';
+import type { ExecutionAdmissionFence } from '../execution-admission-fence.js';
+import { createGooglePilotArtifactAdmission } from './google-pilot-artifact-admission.js';
 import { createGoogleContextAdmission } from './google-context-admission.js';
 import type { GooglePilotStorage } from './google-pilot-storage.js';
 import type { GoogleDataPilotConfig } from '../google-data/runtime/pilot-config.js';
@@ -144,6 +146,7 @@ export interface BotServices extends RoutineOriginStartup {
   routineCli?: RoutineCliRuntime;
   routineDestination?: ReturnType<typeof createRoutineCliDestinationService>;
   routines?: BotRoutineExecution;
+  purgeGoogleAccount?(command: GooglePilotPurgeCommand, signal?: AbortSignal): Promise<GooglePilotPurgeReceipt>;
   providerConnections?: BotProviderConnectionsService;
   chatgptPlanPeers?: ChatGptPlanPeers;
   cancelAnthropicInference?(): void;
@@ -176,12 +179,14 @@ export async function startBots(options: {
   configuredOwnerIds?: readonly string[];
   googlePilot?: GoogleDataPilotConfig;
   googleCopies?: GooglePilotStorage;
+  executionAdmissionFence?: ExecutionAdmissionFence;
+  pendingExecutionCount?: () => number;
   qualifiedFundedConfig?: FundedAiRuntimeConfig;
   computerId?: string | null;
   nativeProfileGuard?: NativeProviderProfileGuard;
   matrixAnthropic?: import("../bots/matrix-anthropic-api.js").MatrixAnthropicAuthority;
   homePath: string;
-  repository: Pick<ChatRepository, "kysely" | "withTransaction" | "withContextTransaction" | "get" | "getTurnRunContext" | "getDetailPage" | "findTurnAdmission" | "findQueuedAdmission" | "appendRoutineReceipt">;
+  repository: Pick<ChatRepository, "kysely" | "withTransaction" | "withContextTransaction" | "publishCommittedExternalOutbox" | "get" | "getTurnRunContext" | "getDetailPage" | "findTurnAdmission" | "findQueuedAdmission" | "appendRoutineReceipt">;
   agents: ChatAgentStore;
   executionRoots: Pick<ChatExecutionRootResolver, "resolve">;
   providers: { getSnapshot(): Promise<AiProviderSnapshotV3> };
@@ -199,7 +204,7 @@ export async function startBots(options: {
   checkpointReconcile?: { passes?: number; intervalMs?: number };
 }): Promise<BotServices | undefined> {
   const pilot = options.googlePilot ?? { enabled: false as const };
-  if (pilot.enabled && (pilot.ownerId !== options.runtimeOwnerId || !options.googleCopies || !options.host?.available)) throw new Error('Google pilot unavailable');
+  if (pilot.enabled && (pilot.ownerId !== options.runtimeOwnerId || !options.googleCopies || !options.host?.available || !options.executionAdmissionFence || !options.pendingExecutionCount)) throw new Error('Google pilot unavailable');
   const now = () => options.now?.() ?? new Date();
   const lifetime = new AbortController();
   const db = ownerBotExecutor(options.repository.kysely);
@@ -396,6 +401,9 @@ export async function startBots(options: {
     ...(options.googleCopies ? { admitContext: createGoogleContextAdmission({ registry, repository: options.repository, adapter: options.googleCopies.context }) } : {}),
     ...(options.matrixAnthropic ? { credentials: options.matrixAnthropic } : {}),
     ...(options.integrations ? { transport: options.integrations } : {}) }).catch(async (error: unknown) => { await qualifiedCredentials?.close(); throw error; });
+  const copyLifecycle = pilot.enabled ? await createGooglePilotCopyLifecycle({ database: options.repository.kysely,
+    ownerId: pilot.ownerId, storage: options.googleCopies!, repository: options.repository, registry,
+    fence: options.executionAdmissionFence!, pendingCount: options.pendingExecutionCount! }) : undefined;
   let brokerTool: import('../bots/broker-actions.js').BotBrokerActions['callTool'] = async () => { throw new Error('Bot broker not registered'); };
   const jevTools = options.jev ? createBotJevTools({ agents: options.agents, recipes, workflow: options.jev,
     signalFor: binding => registry.inferenceSignal(binding) ?? undefined,
@@ -468,10 +476,11 @@ export async function startBots(options: {
   });
   const nativeTasks = options.nativeProfileGuard ? createNativeBotTasks({ homePath: options.homePath, connections: providerConnections,
     registry, ...(routineCli && options.routineCliTransport ? { routineCli: { runtime: routineCli, ...options.routineCliTransport }, publishRoutineAction: orchestrator.publishRoutineAction } : {}), profileGuard: options.nativeProfileGuard, lifetime: lifetime.signal, callTool: (binding, request, signal) => brokerTool(binding, request, signal) }) : undefined;
-  const managed = createManagedPiRuntime({ routineCli: managedRoutineCli, routineSignal: binding => registry.inferenceSignal(binding), toolOutputKey: options.toolOutputKey, personality: { homePath: options.homePath, runtimeOwnerId: options.runtimeOwnerId }, inputHistory, homePath: options.homePath, expectedOwnerId: options.runtimeOwnerId, assertSource: revalidateSource, ...(isolatedChat ? { isolatedChat } : {}), ...(options.matrixAnthropic ? { matrixAnthropic: options.matrixAnthropic } : {}), ...(chatgptPlanPeers ? { chatgptPlan: chatgptPlanPeers } : {}), ownerTools, admission: managedAdmission, host, providers: options.providers, lifetime: lifetime.signal,
+  const managed = createManagedPiRuntime({ ...(copyLifecycle ? { quiescence: { onStopped: copyLifecycle.onStopped } } : {}), routineCli: managedRoutineCli, routineSignal: binding => registry.inferenceSignal(binding), toolOutputKey: options.toolOutputKey, personality: { homePath: options.homePath, runtimeOwnerId: options.runtimeOwnerId }, inputHistory, homePath: options.homePath, expectedOwnerId: options.runtimeOwnerId, assertSource: revalidateSource, ...(isolatedChat ? { isolatedChat } : {}), ...(options.matrixAnthropic ? { matrixAnthropic: options.matrixAnthropic } : {}), ...(chatgptPlanPeers ? { chatgptPlan: chatgptPlanPeers } : {}), ownerTools, admission: managedAdmission, host, providers: options.providers, lifetime: lifetime.signal,
     forgetRun: (runId) => forgetRun(runId), cancelInference: (binding) => registry.cancelInference(binding) });
+  copyLifecycle?.bindManaged(managed);
   const tools = createBotToolDispatcher({
-    ...(pilot.enabled ? { artifactWrites: createGooglePilotArtifactWriteFence(registry) } : {}),
+    ...(pilot.enabled ? { artifactWrites: createGooglePilotArtifactAdmission(registry) } : {}),
     homePath: options.homePath, githubDeveloper, managedRoutine: { execute: managed.executeRoutine }, routines, ...(jevTools ? { jev: jevTools } : {}), managedTools: ownerTools, managedWorkspace: managedAdmission.workspace, interactions, memory,
     assertSource: revalidateSource,
     submittedArtifact: (binding, args) => isManagedPiBinding(binding) ? managed.readSubmittedArtifact(binding, args) : orchestrator.readSubmittedArtifact(binding, args),
@@ -530,6 +539,7 @@ export async function startBots(options: {
   forgetRun = (runId) => { githubDeveloper.closeRun(runId); actions.forgetRun(runId); };
   const unregister = registerBotBroker(host, actions);
   googleData.start();
+  copyLifecycle?.start();
   const adapter = createMatrixBotChatProviderAdapter({
     orchestrator, routines, proposals: routineCli?.proposals,
     stopRuntime: (runtimeHandle) => admission.release(runtimeHandle),
@@ -537,6 +547,7 @@ export async function startBots(options: {
   routineOriginRuntime.routineOrigin?.start();
   return {
     ...routineOriginRuntime, routineCli, routineDestination,
+    ...(copyLifecycle ? { purgeGoogleAccount: copyLifecycle.purgeAccount } : {}),
     recipes,
     routines,
     instantiation,
@@ -556,6 +567,7 @@ export async function startBots(options: {
     async close() {
       await routineOriginRuntime.routineOrigin?.close();
       await routines.stop();
+      await copyLifecycle?.close();
       chatgptPlanPeers?.close();
       await routineCli?.close();
       lifetime.abort();

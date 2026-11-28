@@ -27,4 +27,32 @@ describe('bounded qualified response release batches', () => {
     const cancel = vi.fn(); const reader = coalesceQualifiedResponse(new ReadableStream({ pull: () => new Promise(() => undefined), cancel })).getReader();
     await reader.cancel(); expect(cancel).toHaveBeenCalledOnce();
   });
+  it('reports actual source end before the final batch is handed to its usage observer', async () => {
+    const ended = vi.fn();
+    const reader = coalesceQualifiedResponse(new ReadableStream({ start(c) { c.enqueue(encode('whole')); c.close(); } }), { onComplete: ended }).getReader();
+    expect(ended).not.toHaveBeenCalled();
+    expect(new TextDecoder().decode((await reader.read()).value)).toBe('whole');
+    expect(ended).toHaveBeenCalledExactlyOnceWith(5);
+    expect((await reader.read()).done).toBe(true); expect(ended).toHaveBeenCalledOnce();
+  });
+  it('does not report source end while a large chunk still has an unobserved carry batch', async () => {
+    const ended = vi.fn();
+    const reader = coalesceQualifiedResponse(new ReadableStream({ start(c) { c.enqueue(new Uint8Array(65537)); c.close(); } }), { onComplete: ended }).getReader();
+    expect((await reader.read()).value?.length).toBe(65536); expect(ended).not.toHaveBeenCalled();
+    expect((await reader.read()).value?.length).toBe(1); expect(ended).toHaveBeenCalledOnce();
+  });
+  it('never reports source end for a cancelled partial response', async () => {
+    const ended = vi.fn();
+    const reader = coalesceQualifiedResponse(new ReadableStream({ start(c) { c.enqueue(encode('partial')); } }), { windowMs: 1, onComplete: ended }).getReader();
+    expect(new TextDecoder().decode((await reader.read()).value)).toBe('partial');
+    await reader.cancel(); expect(ended).not.toHaveBeenCalled();
+  });
+
+  it('does not mistake cancellation of an outstanding read for actual source EOF', async () => {
+    const ended = vi.fn(); const pulled = vi.fn();
+    const reader = coalesceQualifiedResponse(new ReadableStream({ pull() { pulled(); } }), { onComplete: ended }).getReader();
+    const waiting = reader.read(); await vi.waitFor(() => expect(pulled).toHaveBeenCalled());
+    await reader.cancel(); expect((await waiting).done).toBe(true); expect(ended).not.toHaveBeenCalled();
+  });
+
 });

@@ -660,8 +660,12 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
         state.resourceLease = null;
         return new Response(null, { status: upstream.status, headers: safeUpstreamHeaders(upstream) });
       }
+      let completedSourceBytes: number | undefined;
+      const responseSource = qualified ? coalesceQualifiedResponse(upstream.body, {
+        onComplete: bytes => { completedSourceBytes = bytes; },
+      }) : upstream.body;
       const responseBody = boundedBody(
-        qualified ? coalesceQualifiedResponse(upstream.body) : upstream.body,
+        responseSource,
         config.maxResponseBytes,
         resourceLease,
         (reason) => state.controller.abort(reason),
@@ -674,10 +678,15 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
             pricingVersion: estimate.pricingVersion,
             maxCaptureBytes: config.maxResponseBytes,
           });
+          let trackedBytes = 0;
           return {
-            push: (chunk: Uint8Array) => tracker.push(chunk),
+            push: (chunk: Uint8Array) => { tracker.push(chunk); trackedBytes += chunk.byteLength; },
             complete: () => enqueueFinalization(tracker.complete()),
-            ambiguous: () => enqueueFinalization({ mode: "conservative" }, "cancelled"),
+            // Only source EOF and every observed byte permit exact usage.
+            // Refusing output must not erase already-known provider usage.
+            ambiguous: () => qualified && completedSourceBytes !== undefined && trackedBytes === completedSourceBytes
+              ? enqueueFinalization(tracker.complete())
+              : enqueueFinalization({ mode: "conservative" }, "cancelled"),
             unconfirmed: () => { if (closing) terminalComplete = false; },
           };
         })(),
