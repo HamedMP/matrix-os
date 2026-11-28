@@ -75,7 +75,7 @@ export function createGoogleRuntimeInferenceAuthority(deps: Dependencies): Googl
           { googleAccountId: source.googleAccountId, purposeId: source.purposeId }])).entries()].sort(([a], [b]) => a.localeCompare(b)).map(([, pair]) => pair);
         if (pairs.length < 1 || pairs.length > 32 || context.sources.some(s => s.state !== 'active' || Date.parse(s.expiresAt) <= now().getTime())) deny();
         const policyBinding = { runId: binding.runId, runtimeHandle: binding.runtimeHandle,
-          executionGeneration: binding.executionGeneration, accessSourceId: binding.accessSourceId };
+          executionGeneration: binding.executionGeneration, accessSourceId: binding.accessSourceId, requestClass: binding.requestClass };
         const requestFor = (pair: { googleAccountId: string; purposeId: string }) => ({ binding: policyBinding, ...pair, dataKinds: ['google-derived-context'], identity });
         const sameContext = async () => {
           const current = await checked(() => deps.contexts.inspect(binding.ownerId, binding.chatId));

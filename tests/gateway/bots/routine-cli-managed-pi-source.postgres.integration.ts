@@ -31,6 +31,8 @@ it("actual registered managed Pi worker/broker invokes published CLI and real ca
   expect(source.source_context).toMatchObject({ harness: "pi", identity: { kind: "chat_run", route: "managed", chatId, runId: admitted.run.id } });
   expect(source.revoked_at).toBeNull(); expect(f.httpCalls()).toBe(1);
   f.finish(); await f.f.canonical.drain();
+  expect(f.stopReceipts).toEqual([{ runtimeHandle: f.bindings[0]!.runtimeHandle,
+    executionGeneration: f.bindings[0]!.executionGeneration, state: "stopped" }]);
   expect((await f.data.db.selectFrom("routine_cli_sources").select("revoked_at").executeTakeFirstOrThrow()).revoked_at).not.toBeNull();
 }, 15000);
 

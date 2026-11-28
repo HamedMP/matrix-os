@@ -12,9 +12,13 @@ export interface GoogleInferenceIdentity {
   modelId: string;
   harnessVersion: string;
   credential: { kind: "api_key" | "auth_token"; fingerprint: string; generation: string | null };
+  /** Stable downstream descriptor from authenticated control, never a temporary relay credential. */
+  managed?: import('@matrix-os/contracts').GoogleQualifiedFundedBinding;
 }
 export type GoogleInferenceDecision = { allowed: false } | { allowed: true; googleOrigin: boolean };
 export interface GoogleDataInferenceAuthority {
+  /** Trusted registry/context classifier plus exact managed lease source, never model-selected. */
+  managed?: import('../managed/broker.js').GoogleManagedBrokerTransport;
   authorize(input: { phase: "dispatch" | "release"; binding: PiRuntimeBinding;
     identity: GoogleInferenceIdentity | null; signal: AbortSignal }): Promise<GoogleInferenceDecision>;
 }

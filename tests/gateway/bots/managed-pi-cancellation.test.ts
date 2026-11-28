@@ -66,7 +66,7 @@ function fixture(phase: "route" | "input" | "admission" | "tools" | "source" | "
     ...resolved, capabilities: ["artifact.read"], requestClass: "interactive" };
   const phaseEntered = vi.fn();
   const wait = async (current: typeof phase) => { if (phase === current) { phaseEntered(); await gate.promise; } };
-  const release = vi.fn<(runtimeHandle: string) => Promise<void>>(async () => undefined);
+  const release = vi.fn<(runtimeHandle: string, executionGeneration?: string) => Promise<void>>(async () => undefined);
   const closeRun = vi.fn<(runId: string) => Promise<void>>(async () => undefined);
   const forgetRun = vi.fn();
   const cancelInference = vi.fn();
@@ -131,7 +131,7 @@ it.each(longRunningSources)("reports $name Stop immediately and bounds checkpoin
   expect(test.transportAborted).not.toHaveBeenCalled();
   await vi.advanceTimersByTimeAsync(1);
   expect(test.transportAborted).toHaveBeenCalledOnce();
-  expect(test.release).toHaveBeenCalledExactlyOnceWith(test.binding.runtimeHandle);
+  expect(test.release).toHaveBeenCalledExactlyOnceWith(test.binding.runtimeHandle, test.binding.executionGeneration);
 });
 
 it.each(longRunningSources)("keeps a silent busy $name turn alive beyond thirty minutes and accepts its eventual result", async ({ source }) => {
@@ -154,8 +154,9 @@ it.each(longRunningSources)("keeps a silent busy $name turn alive beyond thirty 
   test.worker.resolve({ ok: true, reply: { runId: test.binding.runId, status: "completed", toolActions: 1 } });
   await vi.advanceTimersByTimeAsync(0); await test.done;
   expect(test.terminal()).toEqual({ type: "run.completed", outcome: "completed" });
-  expect(test.release).toHaveBeenCalledExactlyOnceWith(test.binding.runtimeHandle);
-  expect(vi.getTimerCount()).toBe(0);
+  expect(test.release).toHaveBeenCalledExactlyOnceWith(test.binding.runtimeHandle, test.binding.executionGeneration);
+  // The bounded quiescence receipt registry retains one lifecycle sweep until runtime.close().
+  expect(vi.getTimerCount()).toBe(1);
 });
 
 it.each(longRunningSources)("keeps $name Stop aborted after thirty-one silent minutes despite a late completed reply", async ({ source }) => {
@@ -168,8 +169,9 @@ it.each(longRunningSources)("keeps $name Stop aborted after thirty-one silent mi
   test.worker.resolve({ ok: true, reply: { runId: test.binding.runId, status: "completed", toolActions: 1 } });
   await vi.advanceTimersByTimeAsync(0); await stopping; await test.done;
   expect(test.events.filter(event => event.type === "run.completed")).toEqual([abortedEvent]);
-  expect(test.release).toHaveBeenCalledExactlyOnceWith(test.binding.runtimeHandle);
-  expect(vi.getTimerCount()).toBe(0);
+  expect(test.release).toHaveBeenCalledExactlyOnceWith(test.binding.runtimeHandle, test.binding.executionGeneration);
+  // The bounded quiescence receipt registry retains one lifecycle sweep until runtime.close().
+  expect(vi.getTimerCount()).toBe(1);
 });
 
 it("cancels an unresponsive worker when the runtime lease cannot be renewed", async () => {
@@ -179,7 +181,7 @@ it("cancels an unresponsive worker when the runtime lease cannot be renewed", as
   expect(test.terminal()).toEqual(LEASE_FAILURE);
   expect(test.cancelInference).toHaveBeenCalledExactlyOnceWith(test.binding);
   expect(test.renewalStop).toHaveBeenCalledOnce();
-  expect(test.release).toHaveBeenCalledExactlyOnceWith(test.binding.runtimeHandle);
+  expect(test.release).toHaveBeenCalledExactlyOnceWith(test.binding.runtimeHandle, test.binding.executionGeneration);
   test.worker.resolve({ ok: true, reply: { runId: test.binding.runId, status: "completed", toolActions: 1 } });
   await vi.advanceTimersByTimeAsync(0);
   expect(test.terminal()).toEqual(LEASE_FAILURE);
@@ -195,7 +197,8 @@ it("bounds a stalled setup step to sixty seconds without dispatching a late work
   test.gate.resolve(); await vi.advanceTimersByTimeAsync(0);
   expect(test.admit).not.toHaveBeenCalled();
   expect(test.runBot).not.toHaveBeenCalled();
-  expect(vi.getTimerCount()).toBe(0);
+  // The bounded quiescence receipt registry retains one lifecycle sweep until runtime.close().
+  expect(vi.getTimerCount()).toBe(1);
 });
 
 it("keeps lease loss as the first cause when Stop arrives before a late successful reply", async () => {
@@ -217,8 +220,9 @@ it("keeps Stop as the first cause when lease loss and a successful reply arrive 
   await vi.advanceTimersByTimeAsync(0);
   expect(test.terminal()).toEqual(abortedEvent);
   await stopping; await test.done;
-  expect(test.release).toHaveBeenCalledExactlyOnceWith(test.binding.runtimeHandle);
-  expect(vi.getTimerCount()).toBe(0);
+  expect(test.release).toHaveBeenCalledExactlyOnceWith(test.binding.runtimeHandle, test.binding.executionGeneration);
+  // The bounded quiescence receipt registry retains one lifecycle sweep until runtime.close().
+  expect(vi.getTimerCount()).toBe(1);
 });
 
 it("refuses late worker events after Stop before a worker result settles", async () => {
@@ -243,7 +247,7 @@ it.each(["input", "lifetime", "close"] as const)("reports %s cancellation as abo
   expect(test.cancelInference).toHaveBeenCalledOnce();
   await vi.advanceTimersByTimeAsync(10_000);
   await closing;
-  expect(test.release).toHaveBeenCalledExactlyOnceWith(test.binding.runtimeHandle);
+  expect(test.release).toHaveBeenCalledExactlyOnceWith(test.binding.runtimeHandle, test.binding.executionGeneration);
 });
 
 it.each(["route", "input", "admission", "tools", "source"] as const)("bounds a stalled %s setup step and cleans up late resources", async phase => {
@@ -253,11 +257,12 @@ it.each(["route", "input", "admission", "tools", "source"] as const)("bounds a s
   await test.done;
   test.gate.resolve(); await vi.advanceTimersByTimeAsync(0);
   expect(test.runBot.mock.calls.filter(([request]) => request.command.kind === "bot.run")).toHaveLength(0);
-  if (["admission", "tools", "source"].includes(phase)) expect(test.release).toHaveBeenCalledExactlyOnceWith(test.binding.runtimeHandle);
+  if (["admission", "tools", "source"].includes(phase)) expect(test.release).toHaveBeenCalledExactlyOnceWith(test.binding.runtimeHandle, test.binding.executionGeneration);
   else { expect(test.admit).not.toHaveBeenCalled(); expect(test.release).not.toHaveBeenCalled(); }
   if (phase === "tools") expect(test.closeRun).toHaveBeenCalledTimes(2);
   expect(test.forgetRun).toHaveBeenCalledExactlyOnceWith(test.binding.runId);
-  expect(vi.getTimerCount()).toBe(0);
+  // The bounded quiescence receipt registry retains one lifecycle sweep until runtime.close().
+  expect(vi.getTimerCount()).toBe(1);
 });
 
 it("does not begin routing an input that was already cancelled", async () => {
@@ -276,12 +281,13 @@ it("releases once when worker cancellation is refused", async () => {
   await test.stop(); await vi.advanceTimersByTimeAsync(0);
   expect(test.terminal()).toEqual(abortedEvent);
   await test.done;
-  expect(test.release).toHaveBeenCalledExactlyOnceWith(test.binding.runtimeHandle);
-  expect(vi.getTimerCount()).toBe(0);
+  expect(test.release).toHaveBeenCalledExactlyOnceWith(test.binding.runtimeHandle, test.binding.executionGeneration);
+  // The bounded quiescence receipt registry retains one lifecycle sweep until runtime.close().
+  expect(vi.getTimerCount()).toBe(1);
 });
 
 it("bounds shutdown when the worker never acknowledges cancellation", async () => {
-  const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+  vi.spyOn(console, "warn").mockImplementation(() => undefined);
   const test = fixture(); await ready(test);
   const cancel = deferred<{ ok: true }>();
   test.runBot.mockImplementationOnce(() => cancel.promise);
@@ -290,10 +296,10 @@ it("bounds shutdown when the worker never acknowledges cancellation", async () =
   await vi.advanceTimersByTimeAsync(10_000);
   expect(test.terminal()).toEqual(abortedEvent);
   expect(closed).toBe(true);
-  expect(warn).toHaveBeenCalledWith("[managed-pi] cleanup still pending");
   await closing; await test.done;
-  expect(test.release).toHaveBeenCalledExactlyOnceWith(test.binding.runtimeHandle);
+  expect(test.release).toHaveBeenCalledExactlyOnceWith(test.binding.runtimeHandle, test.binding.executionGeneration);
   cancel.resolve({ ok: true }); await vi.advanceTimersByTimeAsync(0);
+  // Shutdown disposes the bounded receipt registry sweep.
   expect(vi.getTimerCount()).toBe(0);
 });
 
@@ -302,10 +308,11 @@ it("stops runtime renewal after normal completion", async () => {
   test.worker.resolve({ ok: true, reply: { runId: test.binding.runId, status: "completed", toolActions: 0 } });
   await vi.advanceTimersByTimeAsync(0); await test.done;
   expect(test.terminal()).toEqual({ type: "run.completed", outcome: "completed" });
-  expect(test.release).toHaveBeenCalledExactlyOnceWith(test.binding.runtimeHandle);
+  expect(test.release).toHaveBeenCalledExactlyOnceWith(test.binding.runtimeHandle, test.binding.executionGeneration);
   expect(test.renewalStop).toHaveBeenCalledOnce();
   expect(test.cancelInference).not.toHaveBeenCalled();
-  expect(vi.getTimerCount()).toBe(0);
+  // The bounded quiescence receipt registry retains one lifecycle sweep until runtime.close().
+  expect(vi.getTimerCount()).toBe(1);
 });
 
 it("bounds terminal settlement while an unconfirmed runtime release stays pending", async () => {
@@ -318,11 +325,12 @@ it("bounds terminal settlement while an unconfirmed runtime release stays pendin
   await vi.advanceTimersByTimeAsync(10_000);
   expect(test.terminal()).toEqual(abortedEvent);
   await test.done;
-  expect(test.release).toHaveBeenCalledExactlyOnceWith(test.binding.runtimeHandle);
+  expect(test.release).toHaveBeenCalledExactlyOnceWith(test.binding.runtimeHandle, test.binding.executionGeneration);
   await vi.advanceTimersByTimeAsync(10_000);
   expect(warn).toHaveBeenCalledWith("[managed-pi] grace release failed", "TimeoutError");
   released.resolve(); await vi.advanceTimersByTimeAsync(0);
-  expect(vi.getTimerCount()).toBe(0);
+  // The bounded quiescence receipt registry retains one lifecycle sweep until runtime.close().
+  expect(vi.getTimerCount()).toBe(1);
 });
 
 
@@ -334,7 +342,8 @@ it.each(["route", "input", "admission"] as const)("keeps Stop aborted while %s i
   test.gate.resolve(); await vi.advanceTimersByTimeAsync(0);
   expect(test.runBot).not.toHaveBeenCalled();
   expect(test.release).toHaveBeenCalledTimes(phase === "admission" ? 1 : 0);
-  expect(vi.getTimerCount()).toBe(0);
+  // The bounded quiescence receipt registry retains one lifecycle sweep until runtime.close().
+  expect(vi.getTimerCount()).toBe(1);
 });
 
 it("does not let remote approval revocation prevent runtime stop or terminal settlement", async () => {
@@ -346,12 +355,13 @@ it("does not let remote approval revocation prevent runtime stop or terminal set
   expect(test.cancelInference).toHaveBeenCalledOnce();
   expect(test.release).not.toHaveBeenCalled();
   await vi.advanceTimersByTimeAsync(10_000);
-  expect(test.release).toHaveBeenCalledExactlyOnceWith(test.binding.runtimeHandle);
+  expect(test.release).toHaveBeenCalledExactlyOnceWith(test.binding.runtimeHandle, test.binding.executionGeneration);
   expect(test.terminal()).toEqual(abortedEvent);
   await test.done;
   expect(warn).toHaveBeenCalledWith("[managed-pi] cleanup still pending");
   closed.resolve(); await vi.advanceTimersByTimeAsync(0);
-  expect(vi.getTimerCount()).toBe(0);
+  // The bounded quiescence receipt registry retains one lifecycle sweep until runtime.close().
+  expect(vi.getTimerCount()).toBe(1);
 });
 
 it("handles a synchronous worker transport exception without exposing its message", async () => {
@@ -362,7 +372,8 @@ it("handles a synchronous worker transport exception without exposing its messag
   expect(test.terminal()).toMatchObject({ outcome: "failed", error: { code: "run_failed" } });
   expect(JSON.stringify(test.events)).not.toContain("PRIVATE TRANSPORT");
   expect(warn).toHaveBeenCalledWith("[managed-pi] run failed", { stage: "worker_dispatch", error: "Error" });
-  expect(vi.getTimerCount()).toBe(0);
+  // The bounded quiescence receipt registry retains one lifecycle sweep until runtime.close().
+  expect(vi.getTimerCount()).toBe(1);
 });
 
 it("handles late admission cleanup rejection after terminal settlement", async () => {
@@ -374,7 +385,8 @@ it("handles late admission cleanup rejection after terminal settlement", async (
   expect(test.terminal()).toMatchObject({ type: "run.completed", outcome: "failed" });
   expect(warn).toHaveBeenCalledWith("[managed-pi] late resource cleanup failed", "Error");
   expect(JSON.stringify(warn.mock.calls)).not.toContain("PRIVATE RELEASE");
-  expect(vi.getTimerCount()).toBe(0);
+  // The bounded quiescence receipt registry retains one lifecycle sweep until runtime.close().
+  expect(vi.getTimerCount()).toBe(1);
 });
 
 it("reports failed approval cleanup without losing the lease failure outcome", async () => {

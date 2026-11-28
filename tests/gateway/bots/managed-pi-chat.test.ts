@@ -67,7 +67,7 @@ async function failedWorkerEvents(reply: unknown | (() => Promise<unknown>)) {
   } });
   expect(JSON.stringify(events)).not.toContain(privateMarker);
   expect(runBot).toHaveBeenCalledTimes(1);
-  expect(release).toHaveBeenCalledExactlyOnceWith(binding.runtimeHandle);
+  expect(release).toHaveBeenCalledExactlyOnceWith(binding.runtimeHandle, binding.executionGeneration);
   expect(forgetRun).toHaveBeenCalledExactlyOnceWith(binding.runId);
 }
 
@@ -169,7 +169,7 @@ it("passes the already prepared canonical Agent prompt to Pi exactly once", asyn
     turnId: "cturn_prompt", runId: binding.runId, prompt, context, parts: [{ type: "text", text: "Revise this sentence." }],
     selection, interactionMode: "default", permissionMode: "supervised", signal: new AbortController().signal })) events.push(event);
   expect(events.at(-1)).toMatchObject({ type: "run.completed", outcome: "completed" });
-  expect(release).toHaveBeenCalledExactlyOnceWith(binding.runtimeHandle);
+  expect(release).toHaveBeenCalledExactlyOnceWith(binding.runtimeHandle, binding.executionGeneration);
 });
 
 it.each(["Chat workspace", "Project workspace"])("runs an ordinary canonical Matrix Chat in a %s through the pinned Pi loop", async workspace => {
@@ -205,7 +205,7 @@ it.each(["Chat workspace", "Project workspace"])("runs an ordinary canonical Mat
   const specs: unknown[] = []; let serial = 0;
   const createRuntime = vi.fn(async (_input: Parameters<ScopeRuntimeHost["client"]["createRuntime"]>[0]) =>
     ({ runtimeHandle: `runtime_${(++serial).toString(16).padStart(32, "0")}`, executionGeneration: "1" }));
-  const stopRuntime = vi.fn(async () => undefined);
+  const stopRuntime = vi.fn(async ({ runtimeHandle }: { runtimeHandle: string }) => ({ runtimeHandle, executionGeneration: "1", state: "stopped" as const }));
   const host = { available: true, client: { createRuntime, stopRuntime, renewRuntime: async () => undefined, runBot: async (request: { runtimeHandle: string; executionGeneration: string; command: { kind: string; runId: string } }) => {
     const call = async (body: Record<string, unknown>) => {
       const reply = await actions.handleFrame({ version: 1, requestId: randomUUID(), runtimeHandle: request.runtimeHandle, executionGeneration: request.executionGeneration, runId: request.command.runId, ...body });
@@ -297,7 +297,7 @@ it("executes owner integration and Custom MCP tools through actual Pi loop/broke
   handle.setResponses([...requests.map(([name, args], index) => fauxAssistantMessage(fauxToolCall(name, args, { id: `call_owner_${index}` }), { stopReason: "toolUse" })), fauxAssistantMessage(fauxText("OWNER_TOOLS_QA_OK"))]);
   const specs: unknown[] = []; let serial = 0;
   const createRuntime = vi.fn(async () => ({ runtimeHandle: `runtime_${(++serial).toString(16).padStart(32, "0")}`, executionGeneration: "1" }));
-  const stopRuntime = vi.fn(async () => undefined);
+  const stopRuntime = vi.fn(async ({ runtimeHandle }: { runtimeHandle: string }) => ({ runtimeHandle, executionGeneration: "1", state: "stopped" as const }));
   const host = { available: true, client: { createRuntime, stopRuntime, renewRuntime: async () => undefined, runBot: async (request: { runtimeHandle: string; executionGeneration: string; command: { kind: string; runId: string } }) => {
     const call = async (body: Record<string, unknown>) => {
       const reply = await actions.handleFrame({ version: 1, requestId: randomUUID(), runtimeHandle: request.runtimeHandle, executionGeneration: request.executionGeneration, runId: request.command.runId, ...body });
@@ -398,7 +398,7 @@ it.each([false, true])("preserves root admission/capabilities while composing is
   expect(admit).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ ownerId: OWNER, chatId: binding.chatId,
     runId: binding.runId, resolved: expect.objectContaining({ route: expect.objectContaining({ maxOutputTokens: enabled ? 256 : 8192 }) }) }));
   expect(claim).toHaveBeenCalledTimes(enabled ? 1 : 0); expect(open).toHaveBeenCalledTimes(enabled ? 0 : 1);
-  expect(release).toHaveBeenCalledExactlyOnceWith(binding.runtimeHandle);
+  expect(release).toHaveBeenCalledExactlyOnceWith(binding.runtimeHandle, binding.executionGeneration);
 });
 
 it("replays a stopped managed tool as stopped after canonical cancellation without accepting late provider output", async () => {

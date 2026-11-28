@@ -132,7 +132,7 @@ export interface ScopeRuntimeLauncher {
     command: ScopeRuntimeBotCommand;
     signal?: AbortSignal;
   }): Promise<ScopeRuntimeBotWorkerReply>;
-  stop(runtimeHandle: string): Promise<void>;
+  stop(runtimeHandle: string, expectedGeneration?: string): Promise<void>;
 }
 
 function newRuntimeHandle(): string {
@@ -218,9 +218,21 @@ export async function createScopeRuntimeController(options: {
   const operations = new Set<Promise<void>>();
   let reservedCreates = 0;
   let closed = false;
+  // Explicit Stop, lease expiry and shutdown share the full proof/removal operation.
+  // Bounded by runtime capacity; both successful and failed operations evict themselves.
+  const stopping = new Map<string, { runtime: LeasedRuntime; work: Promise<void> }>();
+  function stopOwnedRuntime(handle: string, runtime: LeasedRuntime): Promise<void> {
+    const pending = stopping.get(handle);
+    if (pending) return pending.runtime === runtime ? pending.work : Promise.reject(new Error("Runtime stop identity changed"));
+    if (stopping.size >= maxRuntimes) return Promise.reject(new Error("Runtime stop capacity unavailable"));
+    const work = Promise.resolve().then(() => options.launcher.stop(handle, runtime.executionGeneration))
+      .then(() => { if (runtimes.get(handle) === runtime) runtimes.delete(handle); })
+      .finally(() => { if (stopping.get(handle)?.work === work) stopping.delete(handle); });
+    stopping.set(handle, { runtime, work });
+    return work;
+  }
   const leases = createPiRuntimeLeases({ runtimes, async expire(handle, runtime) {
-    await options.launcher.stop(handle);
-    if (runtimes.get(handle) === runtime) runtimes.delete(handle);
+    await stopOwnedRuntime(handle, runtime);
   } });
 
   /**
@@ -300,7 +312,7 @@ export async function createScopeRuntimeController(options: {
       await operation;
       if (closed) {
         try {
-          await options.launcher.stop(runtimeHandle);
+          await options.launcher.stop(runtimeHandle, options.executionGeneration);
         } catch (error: unknown) {
           console.warn("[scope-runtime] post-close runtime cleanup failed:",
             error instanceof Error ? error.name : "UnknownError");
@@ -331,14 +343,14 @@ export async function createScopeRuntimeController(options: {
   async function stopRuntime(
     request: Extract<ScopeRuntimeRequest, { type: "runtime.stop" }>,
   ): Promise<ScopeRuntimeResponse> {
-    const executionGeneration = runtimes.get(request.runtimeHandle)?.executionGeneration;
-    if (executionGeneration === undefined) {
+    const runtime = runtimes.get(request.runtimeHandle);
+    if (runtime === undefined) {
       return runtimeFailure(request.requestId, "runtime_not_found");
     }
+    const executionGeneration = runtime.executionGeneration;
     leases.forget(request.runtimeHandle);
     try {
-      await options.launcher.stop(request.runtimeHandle);
-      runtimes.delete(request.runtimeHandle);
+      await stopOwnedRuntime(request.runtimeHandle, runtime);
       leases.changed();
       return ScopeRuntimeResponseSchema.parse({
         version: 1,
@@ -477,9 +489,9 @@ export async function createScopeRuntimeController(options: {
       closed = true;
       await leases.close();
       await Promise.allSettled([...operations]);
-      const stops = [...runtimes.keys()].map(async (runtimeHandle) => {
+      const stops = [...runtimes.entries()].map(async ([runtimeHandle, runtime]) => {
         try {
-          await options.launcher.stop(runtimeHandle);
+          await stopOwnedRuntime(runtimeHandle, runtime);
         } catch (error: unknown) {
           console.warn("[scope-runtime] shutdown stop failed:",
             error instanceof Error ? error.name : "UnknownError");
