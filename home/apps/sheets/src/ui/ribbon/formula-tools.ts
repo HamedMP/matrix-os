@@ -3,6 +3,7 @@
  * or that read it (drawn with the grid's decorations), and defined names.
  */
 import type { CellDecoration, SheetGridController } from "../../grid";
+import { MERGED_CELLS, coveredIn } from "../../grid/merge-guard";
 import { type CellRange, type SheetId, type Workbook, formatA1Range } from "../../session/engine";
 import type { SheetSession } from "../../session/session";
 import type { EditResult } from "../../session/types";
@@ -65,6 +66,9 @@ export function autoSum(controller: SheetGridController, fn: AutoSumFunction = "
       edits.push({ sheet, row: range.end.row + 1, col, input: `=${fn}(${formatA1Range(column)})` });
     }
   }
+  // A total written under a merged cell would be stored but never shown.
+  const covered = coveredIn(session.workbook.getSheet(sheet).mergedRanges, { start: { row: range.start.row, col: range.start.col }, end: { row: range.end.row + 1, col: range.end.col + 1 } });
+  if (edits.some((edit) => covered(edit.row, edit.col))) return { ok: false, code: "not_allowed", message: MERGED_CELLS };
   return session.applyEdits(edits, "AutoSum");
 }
 

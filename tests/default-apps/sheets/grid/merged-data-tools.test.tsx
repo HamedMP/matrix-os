@@ -2,7 +2,9 @@
 import { act, cleanup } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import type { Workbook } from "../../../../home/apps/_shared/office-engine/index";
+import { MERGED_CELLS } from "../../../../home/apps/sheets/src/grid/merge-guard";
 import { removeDuplicateRows, splitTextToColumns } from "../../../../home/apps/sheets/src/ui/ribbon/data-tools";
+import { autoSum } from "../../../../home/apps/sheets/src/ui/ribbon/formula-tools";
 import { type GridHarness, renderGrid } from "./harness";
 
 afterEach(cleanup);
@@ -104,6 +106,38 @@ describe("data tools refuse ranges with merged cells", () => {
     expect(result!.ok).toBe(false);
     expect(result!.message).toContain("merged");
     expect(grid(h, 2, 2)).toEqual([[null, null], ["x,y", null]]);
+    h.unmount();
+  });
+
+  it("AutoSum refuses to put a total under a merged cell and changes nothing", async () => {
+    // A1:B2 numbers; A3:B3 merged, so the total for column B would be hidden.
+    const h = await renderGrid((workbook: Workbook, sheet: string) => {
+      workbook.setRange(sheet, { row: 0, col: 0 }, [[1, 2], [3, 4]]);
+      workbook.mergeCells(sheet, { start: { row: 2, col: 0 }, end: { row: 2, col: 1 } });
+    });
+    act(() => h.controller.select({ start: { row: 0, col: 0 }, end: { row: 1, col: 1 } }));
+    let result: ReturnType<typeof autoSum> | null = null;
+    act(() => {
+      result = autoSum(h.controller);
+    });
+    expect(result).toMatchObject({ ok: false, message: MERGED_CELLS });
+    expect(h.session.workbook.getCell(h.sheet, { row: 2, col: 0 }).formula).toBeNull();
+    expect(h.session.workbook.getCell(h.sheet, { row: 2, col: 1 }).formula).toBeNull();
+    expect(h.session.getState().canUndo).toBe(false);
+    h.unmount();
+  });
+
+  it("AutoSum still totals into the first cell of a merge", async () => {
+    // A1:A2 numbers, the total lands on A3, the first cell of A3:B3.
+    const h = await renderGrid((workbook: Workbook, sheet: string) => {
+      workbook.setRange(sheet, { row: 0, col: 0 }, [[1], [3]]);
+      workbook.mergeCells(sheet, { start: { row: 2, col: 0 }, end: { row: 2, col: 1 } });
+    });
+    act(() => h.controller.select({ start: { row: 0, col: 0 }, end: { row: 1, col: 0 } }));
+    act(() => {
+      autoSum(h.controller);
+    });
+    expect(h.session.workbook.getCell(h.sheet, { row: 2, col: 0 }).formula).toBe("SUM(A1:A2)");
     h.unmount();
   });
 });
