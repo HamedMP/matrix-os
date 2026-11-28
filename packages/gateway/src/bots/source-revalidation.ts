@@ -9,6 +9,7 @@ export function createBotSourceRevalidator(deps: {
   lifetime: AbortSignal;
   revalidateDefinition(binding: BotRuntimeBinding,executor?:BotExecutor): Promise<void>;
   chatgptPlan?: Pick<ChatGptPlanAuthority, 'revalidate'>;
+  matrixOpenAi?: Pick<import("./matrix-openai-api.js").MatrixOpenAiAuthority, "revalidate">;
   matrixAnthropic?: Pick<MatrixAnthropicAuthority, 'revalidate'>;
 }) {
   return async (binding: PiRuntimeBinding, signal?: AbortSignal,executor?:BotExecutor): Promise<void> => {
@@ -18,6 +19,8 @@ export function createBotSourceRevalidator(deps: {
     if (!isManagedPiBinding(binding)) await (executor ? deps.revalidateDefinition(binding,executor) : deps.revalidateDefinition(binding));
     assertLive();
     if (binding.subscription && (!deps.chatgptPlan || !await deps.chatgptPlan.revalidate(binding, current))) throw new BotBrokerActionError('stale_generation');
+    assertLive();
+    if (binding.openaiApi && (!deps.matrixOpenAi || !await deps.matrixOpenAi.revalidate(binding, current))) throw new BotBrokerActionError("stale_generation");
     assertLive();
     if (binding.anthropicApi && (!deps.matrixAnthropic || !await deps.matrixAnthropic.revalidate(binding, current))) throw new BotBrokerActionError('stale_generation');
     assertLive();

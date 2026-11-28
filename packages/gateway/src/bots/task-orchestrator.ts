@@ -400,7 +400,7 @@ export function createBotTaskOrchestrator(deps: {
         resolved = await setup(() => input.backgroundTaskId ? deps.resolveRoute(requested, "routine") : deps.resolveRoute(requested));
         if (input.backgroundTaskId && (resolved.accessSourceId !== "matrix_chatgpt_plan" || !resolved.subscription)) throw new BotRouteError("model_unavailable");
         if (isolatedModel) {
-          if (resolved.accessSourceId !== "matrix_included" || resolved.subscription || resolved.anthropicApi
+          if (resolved.accessSourceId !== "matrix_included" || resolved.subscription || resolved.anthropicApi || resolved.openaiApi
             || !isolatedChatModelMatches(isolatedModel, resolved.route.modelId)) throw new BotRouteError("model_unavailable");
           resolved = { ...resolved, route: { ...resolved.route, maxOutputTokens: 256 } };
         }
@@ -468,7 +468,7 @@ export function createBotTaskOrchestrator(deps: {
         ownerId: input.ownerId, botId, chatId: input.chatId, taskId: task.taskId, runId: input.runId,
         ...(isolatedModel ? { recipeRef: agent.recipeRef } : {}),
         ...(isManagedCustomBot(agent) ? { managedDefinitionRevision: agent.revision } : {}),
-        route: resolved.route, accessSourceId: resolved.accessSourceId, ...(resolved.subscription ? { subscription: resolved.subscription } : {}), ...(resolved.anthropicApi ? { anthropicApi: resolved.anthropicApi } : {}), capabilities, requestClass: input.backgroundTaskId ? "background" : "interactive",
+        route: resolved.route, accessSourceId: resolved.accessSourceId, ...(resolved.subscription ? { subscription: resolved.subscription } : {}), ...(resolved.anthropicApi ? { anthropicApi: resolved.anthropicApi } : {}), ...(resolved.openaiApi ? { openaiApi: resolved.openaiApi } : {}), capabilities, requestClass: input.backgroundTaskId ? "background" : "interactive",
         ...(group ? { group, expectedRootFingerprint: group.executionRootFingerprint, signal: run.signal } : {}),
       }), (lateRuntime) => deps.admission.release(lateRuntime.runtimeHandle));
     } catch (error: unknown) {

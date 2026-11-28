@@ -158,6 +158,7 @@
     "#provider-workflows": "./src/provider-workflows.ts",
     "#matrix-anthropic-connection": "./src/matrix-anthropic-connection.ts",
     "#sites": "./src/sites.ts",
+    "#matrix-openai-connection": "./src/matrix-openai-connection.ts",
     "#app-capabilities": "./src/app-capabilities.ts",
     "#remote-browser": "./src/remote-browser.ts",
     "#shared-browser": "./src/shared-browser.ts",

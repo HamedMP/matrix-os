@@ -168,6 +168,25 @@ describe("Chat Agent HTTP boundary", () => {
     expect(saved.status).toBe(200); expect(await saved.json()).toMatchObject({ selection, revision: 2 });
   });
 
+  it("updates a recipe Bot to the exact OpenAI API route and validates resubmitted binding", async () => {
+    const selection = { instanceId: "matrix_openai_api", model: "gpt-4.1", options: [
+      { id: "connectionRevision", value: "3" }, { id: "credentialGeneration", value: "e16625fe-cad7-4983-a9db-e808bbf104cc" }, { id: "api", value: "openai-completions" },
+    ] };
+    catalog.instances.push({ ...catalog.instances[0]!, id: selection.instanceId, driverKind: "matrix_bot",
+      supports: { ...catalog.instances[0]!.supports, permissionModes: ["default"] },
+      models: [{ ...catalog.instances[0]!.models[0]!, id: selection.model }], defaultSelection: selection,
+      options: selection.options.map(o => ({ id: o.id, label: o.id, kind: "enum", values: [{ value: o.value, label: "Current connection" }], defaultValue: o.value, placement: "advanced" })) });
+    const bot = await agents.createRecipeBot(owner, { id: "bot_openaiedit", createHash: "f".repeat(64),
+      fields: { name: "Writing Bot", description: "", instructions: "Write", selection: { instanceId: "matrix_bot_default", model: "auto" } },
+      recipeRef: { recipeId: "writing-bot", version: "1" } });
+    const saved = await app.request(`/api/chat-agents/${bot.id}`, json("PATCH", { baseRevision: 1, selection }));
+    expect(saved.status).toBe(200); expect(await saved.json()).toMatchObject({ selection, revision: 2 });
+    const resubmitted = await app.request(`/api/chat-agents/${bot.id}`, json("PATCH", { baseRevision: 2, selection, description: "Updated" }));
+    expect(resubmitted.status).toBe(200);
+    const stale = { ...selection, options: selection.options.map(o => o.id === "connectionRevision" ? { ...o, value: "2" } : o) };
+    expect((await app.request(`/api/chat-agents/${bot.id}`, json("PATCH", { baseRevision: 3, selection: stale }))).status).toBe(400);
+  });
+
   it("saves a recipe bot managed model with revision checks and can restore Automatic", async () => {
     const selection = { instanceId: "matrix_pi_default", model: "claude-sonnet-5" };
     catalog.drivers.push({ kind: "matrix_pi", displayName: "Pi", adapterVersion: "1", capabilityClass: "system_agent" });

@@ -1,3 +1,4 @@
+import { matrixOpenAiSelectionBinding } from "@matrix-os/contracts";
 import { isManagedCustomBot, isAutomaticBotSelection, chatgptPlanSelectionBinding, matrixAnthropicSelectionBinding, type ChatAgent, type CanonicalChatModelSelection } from "@matrix-os/contracts";
 import type { ChatAgentStore } from "../chat/agent-store.js";
 import type { ChatAgentRecipeResolver } from "../chat/agent-recipe.js";
@@ -46,22 +47,27 @@ export function createBotProcedureResolver(deps: {
       // Automatic was explicitly saved by the owner. Admission chooses only a
       // qualified funded/key source; a personal subscription never participates.
       if (isAutomaticBotSelection(selected)) {
-        if (binding.subscription || binding.anthropicApi || !["matrix_included", "owner_anthropic_key"].includes(binding.accessSourceId)) throw new BotRouteError("model_unavailable");
+        if (binding.subscription || binding.anthropicApi || binding.openaiApi || !["matrix_included", "owner_anthropic_key"].includes(binding.accessSourceId)) throw new BotRouteError("model_unavailable");
         return;
       }
       if (selected.model !== binding.route.modelId) throw new BotRouteError("model_unavailable");
       if (selected.instanceId === "matrix_chatgpt_plan") {
         const source = chatgptPlanSelectionBinding(selected.options);
-        if (binding.accessSourceId !== "matrix_chatgpt_plan" || !binding.subscription || binding.anthropicApi
+        if (binding.accessSourceId !== "matrix_chatgpt_plan" || !binding.subscription || binding.anthropicApi || binding.openaiApi
           || !source || source.accountId !== binding.subscription.accountId
           || source.grantRevision !== String(binding.subscription.grantRevision)) throw new BotRouteError("model_unavailable");
+      } else if (selected.instanceId === "matrix_openai_api") {
+        const source = matrixOpenAiSelectionBinding(selected.options);
+        if (binding.accessSourceId !== "owner_openai_key" || binding.subscription || binding.anthropicApi || !binding.openaiApi
+          || !source || source.api !== binding.route.api || source.connectionRevision !== binding.openaiApi.connectionRevision
+          || source.credentialGeneration !== binding.openaiApi.credentialGeneration) throw new BotRouteError("model_unavailable");
       } else if (selected.instanceId === "matrix_anthropic_api") {
         const source = matrixAnthropicSelectionBinding(selected.options);
         if (binding.accessSourceId !== "owner_anthropic_key" || binding.subscription || !binding.anthropicApi
           || !source || source.connectionRevision !== binding.anthropicApi.connectionRevision
           || source.credentialGeneration !== binding.anthropicApi.credentialGeneration) throw new BotRouteError("model_unavailable");
       } else if (selected.instanceId !== "matrix_pi_default" || selected.options?.length
-        || binding.accessSourceId !== "matrix_included" || binding.subscription || binding.anthropicApi) throw new BotRouteError("model_unavailable");
+        || binding.accessSourceId !== "matrix_included" || binding.subscription || binding.anthropicApi || binding.openaiApi) throw new BotRouteError("model_unavailable");
     },
   };
 }

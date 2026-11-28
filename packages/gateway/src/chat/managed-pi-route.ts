@@ -1,6 +1,6 @@
 import { isDeepStrictEqual } from "node:util";
 import { MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID, MATRIX_CHATGPT_PLAN_INSTANCE_ID, MATRIX_PI_ANTHROPIC_API_INSTANCE_ID, matrixAnthropicSelectionBinding, chatgptPlanSelectionBinding,
-  type CanonicalChatModelSelection } from "@matrix-os/contracts";
+  matrixOpenAiSelectionBinding, type CanonicalChatModelSelection } from "@matrix-os/contracts";
 import type { ChatGptPlanAuthority } from "../bots/chatgpt-plan.js";
 import { BotRouteError, MANAGED_PI_INSTANCE_ID, resolveManagedPiRoute, type ResolvedBotRoute } from "../bots/route-resolver.js";
 import type { AiProviderSnapshotReader } from "../ai-providers/service.js";
@@ -19,7 +19,7 @@ export async function resolveManagedPiPlan(selection: CanonicalChatModelSelectio
 
 export function sameManagedPiRoute(left: ResolvedBotRoute, right: ResolvedBotRoute): boolean {
   return left.accessSourceId === right.accessSourceId && isDeepStrictEqual(left.route, right.route)
-    && isDeepStrictEqual(left.subscription, right.subscription) && isDeepStrictEqual(left.anthropicApi, right.anthropicApi);
+    && isDeepStrictEqual(left.openaiApi, right.openaiApi) && isDeepStrictEqual(left.subscription, right.subscription) && isDeepStrictEqual(left.anthropicApi, right.anthropicApi);
 }
 
 export async function resolveManagedPiAnthropic(selection: CanonicalChatModelSelection, ownerId: string,
@@ -32,8 +32,22 @@ export async function resolveManagedPiAnthropic(selection: CanonicalChatModelSel
   return resolved;
 }
 
+export async function resolveManagedPiOpenAi(selection: CanonicalChatModelSelection, ownerId: string,
+  authority?: Pick<import("../bots/matrix-openai-api.js").MatrixOpenAiAuthority, "resolve">): Promise<ResolvedBotRoute> {
+  const selected = matrixOpenAiSelectionBinding(selection.options);
+  if (selection.instanceId !== "matrix_pi_openai_api" || !selected || !authority) throw new BotRouteError("model_unavailable");
+  const resolved = await authority.resolve(selection, ownerId, "interactive");
+  const { api, ...source } = selected;
+  if (resolved.accessSourceId !== "owner_openai_key" || resolved.route.api !== api || resolved.route.modelId !== selection.model
+    || resolved.subscription || resolved.anthropicApi || !isDeepStrictEqual(resolved.openaiApi, source)) throw new BotRouteError("model_unavailable");
+  return resolved;
+}
+
 export async function resolveManagedPiSelection(selection: CanonicalChatModelSelection, ownerId: string,
-  deps: { providers: AiProviderSnapshotReader; chatgptPlan?: Pick<ChatGptPlanAuthority, "resolve">; matrixAnthropic?: Pick<import("../bots/matrix-anthropic-api.js").MatrixAnthropicAuthority, "resolve"> }): Promise<ResolvedBotRoute> {
+  deps: { matrixOpenAi?: import("../bots/matrix-openai-api.js").MatrixOpenAiAuthority; providers: AiProviderSnapshotReader; chatgptPlan?: Pick<ChatGptPlanAuthority, "resolve">; matrixAnthropic?: Pick<import("../bots/matrix-anthropic-api.js").MatrixAnthropicAuthority, "resolve"> }): Promise<ResolvedBotRoute> {
+  if (selection.instanceId === "matrix_pi_openai_api") {
+    return resolveManagedPiOpenAi(selection, ownerId, deps.matrixOpenAi);
+  }
   if (selection.instanceId === MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID) return resolveManagedPiPlan(selection, ownerId, deps.chatgptPlan);
   if (selection.instanceId === MATRIX_PI_ANTHROPIC_API_INSTANCE_ID) return resolveManagedPiAnthropic(selection, ownerId, deps.matrixAnthropic);
   if (selection.instanceId !== MANAGED_PI_INSTANCE_ID) throw new BotRouteError("model_unavailable");

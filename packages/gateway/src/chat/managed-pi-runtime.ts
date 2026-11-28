@@ -71,6 +71,7 @@ export function createManagedPiRuntime(deps: {
   routineSignal?(binding: ManagedPiRuntimeBinding): AbortSignal | null;
   homePath?: string; expectedOwnerId?: string | null; inputHistory?: BotInputHistoryReader;
   chatgptPlan?: import("../bots/chatgpt-plan.js").ChatGptPlanAuthority;
+  matrixOpenAi?: import("../bots/matrix-openai-api.js").MatrixOpenAiAuthority;
   matrixAnthropic?: import("../bots/matrix-anthropic-api.js").MatrixAnthropicAuthority;
   isolatedChat?: import("./isolated-chat-envelope.js").IsolatedChatAuthority;
   personality?: ManagedPiPersonalityConfig;
