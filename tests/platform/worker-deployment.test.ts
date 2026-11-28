@@ -132,6 +132,19 @@ describe("platform worker deployment", () => {
     expect(result.stderr).toContain("background workers disabled");
   });
 
+  it("keeps service-only ingress annotations off the worker revision template", () => {
+    // Cloud Run rejects `run.googleapis.com/ingress` on a Revision; a candidate revision can carry it.
+    const source = structuredClone(candidate);
+    source.metadata.annotations["run.googleapis.com/ingress"] = "all";
+    source.metadata.annotations["run.googleapis.com/ingress-status"] = "all";
+    const result = render(source);
+    expect(result.status).toBe(0);
+    const worker = JSON.parse(result.stdout);
+    expect(worker.spec.template.metadata.annotations).not.toHaveProperty("run.googleapis.com/ingress");
+    expect(worker.spec.template.metadata.annotations).not.toHaveProperty("run.googleapis.com/ingress-status");
+    expect(worker.metadata.annotations["run.googleapis.com/ingress"]).toBe("internal");
+  });
+
   it("allocates worker CPU independently of a request-throttled web candidate", () => {
     const source = structuredClone(candidate);
     source.metadata.annotations["run.googleapis.com/cpu-throttling"] = "true";
