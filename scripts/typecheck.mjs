@@ -14,6 +14,7 @@ const projects = [
   ['packages/pr-evidence-worker', 'tsconfig.json', false],
   ['desktop', 'tsconfig.json', false],
   ['desktop', 'tsconfig.node.json', false],
+  ['shell', 'tsconfig.e2e.json', false],
 ];
 
 // Use the alias directly: package-local tsc must remain TypeScript 5 for builds

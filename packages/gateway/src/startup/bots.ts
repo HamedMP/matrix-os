@@ -206,8 +206,13 @@ export async function startBots(options: {
 }): Promise<BotServices | undefined> {
   const pilot = options.googlePilot ?? { enabled: false as const };
   if (pilot.enabled && (pilot.ownerId !== options.runtimeOwnerId || !options.googleCopies || !options.host?.available || !options.executionAdmissionFence || !options.pendingExecutionCount || !options.integrations)) throw new Error('Google pilot unavailable');
+  if (pilot.enabled && options.qualifiedFundedConfig && options.qualifiedFundedConfig.identity.ownerId !== pilot.ownerId) throw new Error('Google pilot unavailable');
   const now = () => options.now?.() ?? new Date();
   const lifetime = new AbortController();
+  // Register each acquired resource immediately: any later startup failure must drain it.
+  const startupCleanup: Array<() => void | Promise<void>> = [];
+  const startupDrain: Array<() => void | Promise<void>> = [];
+  try {
   const db = ownerBotExecutor(options.repository.kysely);
   try {
     await bootstrapBotDatabase(db);
@@ -244,6 +249,7 @@ export async function startBots(options: {
         signal.throwIfAborted();
         return occurrence;
       } }) : undefined;
+  startupCleanup.push(() => { chatgptPlanPeers?.close(); });
   // Prepared tool work must recheck both definition and current native source consent.
   const revalidateNativeSource = createBotSourceRevalidator({ lifetime: lifetime.signal, revalidateDefinition: (binding,executor) => procedures.revalidate(binding,executor),
     ...(chatgptPlanPeers ? { chatgptPlan: chatgptPlanPeers } : {}), ...(options.matrixAnthropic ? { matrixAnthropic: options.matrixAnthropic } : {}) });
@@ -271,6 +277,7 @@ export async function startBots(options: {
     ensureWorkspace: botId => ensureBotWorkspace(options.homePath, botId),
     hasLiveRuntime: (ownerId, chatId) => recoveryRegistry?.hasChatRuntime(ownerId, chatId) ?? false });
   const reconciler = createBotOperationReconciler({ operations: createBotOperationsRepository(db), instantiation });
+  startupCleanup.push(() => reconciler.stop());
   await reconciler.start();
   const transact = createBotStateTransactions(options.repository);
   const routineApprovals=createBotRoutineApprovals({db,transact,source:chatgptPlanPeers,now:options.now,definitionRevision:async(ownerId,botId)=>{const agent=await options.agents.get({type:"personal",ownerId},botId);if(!agent?.recipeRef || agent.archived) throw new BotStateError("not_found");return agent.revision;}});
@@ -308,6 +315,7 @@ export async function startBots(options: {
     connectionTimer = undefined;
     await connecting;
   };
+  startupCleanup.push(stopConnections);
   const memory = createBotMemoryService({ transact });
   const grants = createBotGrantService({ transact });
   // Overdue questions are expired and announced; passes never overlap and stop on close.
@@ -322,6 +330,7 @@ export async function startBots(options: {
     clearInterval(sweep);
     await sweeping;
   };
+  startupCleanup.push(stopSweep);
   const botChats = createCustomBotChats({ chats: options.repository, agents: options.agents });
   const tasks: BotServices["tasks"] = async (ownerId, chatId) => {
     const botId = await botChats.directBot({ type: "personal", ownerId }, chatId);
@@ -334,7 +343,8 @@ export async function startBots(options: {
   };
   const host = options.host;
   if (!host?.available) {
-    routineOriginRuntime.routineOrigin?.start();
+    startupCleanup.push(async () => { await routineOriginRuntime.routineOrigin?.close(); });
+  routineOriginRuntime.routineOrigin?.start();
     return {
       ...routineOriginRuntime,
       recipes, instantiation, recovery, interactions, memory, grants, authority, botChats, tasks, routineDestination, startConnectionReconciler, providerConnections, chatgptPlanPeers, routines,
@@ -376,6 +386,7 @@ export async function startBots(options: {
       .finally(() => { reconciling = undefined; });
   }, interval) : undefined;
   checkpointTimer?.unref();
+  startupCleanup.push(async () => { if (checkpointTimer) clearInterval(checkpointTimer); await reconciling; });
   // Staged saves a stopped process left behind are removed at start and then periodically.
   let sweepingSaves: Promise<unknown> | undefined;
   const sweepSaves = () => {
@@ -386,6 +397,7 @@ export async function startBots(options: {
   sweepSaves();
   const saveSweepTimer = setInterval(sweepSaves, SAVE_SWEEP_INTERVAL_MS);
   saveSweepTimer.unref();
+  startupCleanup.push(async () => { clearInterval(saveSweepTimer); await sweepingSaves; });
 
   const registry = new BotRuntimeRegistry();
   const routineCli = options.routineActionPlatform && options.computerId && options.configuredOwnerIds?.length
@@ -395,25 +407,31 @@ export async function startBots(options: {
         ensureWorkspace: botId => ensureBotWorkspace(options.homePath, botId), now: options.now }),
       platform: options.routineActionPlatform, now: options.now }) : undefined;
   recoveryRegistry = registry;
+  startupCleanup.push(() => { registry.shutdown(); });
+  startupCleanup.push(async () => { await routineCli?.close(); });
   const qualifiedCredentials = pilot.enabled && options.qualifiedFundedConfig
     ? createGoogleQualifiedCredentialManager(options.qualifiedFundedConfig) : undefined;
-  if (qualifiedCredentials && pilot.enabled && qualifiedCredentials.identity.ownerId !== pilot.ownerId) { await qualifiedCredentials.close(); throw new Error('Google pilot unavailable'); }
+  startupCleanup.push(async () => { await qualifiedCredentials?.close(); });
   const googleData = await createGoogleBrokerRuntime({ database: options.repository.kysely, registry, pilotAdmission: pilot,
     ...(qualifiedCredentials ? { qualifiedCredentials } : {}),
     ...(options.googleCopies ? { admitContext: createGoogleContextAdmission({ registry, repository: options.repository, adapter: options.googleCopies.context }) } : {}),
     ...(options.matrixAnthropic ? { credentials: options.matrixAnthropic } : {}),
-    ...(options.integrations ? { transport: options.integrations } : {}) }).catch(async (error: unknown) => { await qualifiedCredentials?.close(); throw error; });
+    ...(options.integrations ? { transport: options.integrations } : {}) });
+  startupCleanup.push(() => googleData.close());
   const copyLifecycle = pilot.enabled ? await createGooglePilotCopyLifecycle({ database: options.repository.kysely,
     ownerId: pilot.ownerId, storage: options.googleCopies!, repository: options.repository, registry,
-    fence: options.executionAdmissionFence!, pendingCount: options.pendingExecutionCount! }).catch(async (error: unknown) => { await googleData.close(); await qualifiedCredentials?.close(); throw error; }) : undefined;
+    fence: options.executionAdmissionFence!, pendingCount: options.pendingExecutionCount! }) : undefined;
+  startupDrain.push(async () => { await copyLifecycle?.close(); });
   const purgeDelivery = copyLifecycle ? createGooglePurgeDeliveryPoller({ ownerId: options.runtimeOwnerId!,
     transport: options.integrations!, purgeAccount: copyLifecycle.purgeAccount, lifetime: lifetime.signal }) : undefined;
+  startupDrain.push(async () => { await purgeDelivery?.close(); });
   let brokerTool: import('../bots/broker-actions.js').BotBrokerActions['callTool'] = async () => { throw new Error('Bot broker not registered'); };
   const jevTools = options.jev ? createBotJevTools({ agents: options.agents, recipes, workflow: options.jev,
     signalFor: binding => registry.inferenceSignal(binding) ?? undefined,
     listGrants: (ownerId, botId) => createBotGrantsRepository(db).listLive({ ownerId, botId, audience: "direct", now: now().toISOString() }),
     ...(integrationTools ? { ensureAccess: (binding: import("../bots/runtime-registry.js").BotRuntimeBinding, signal: AbortSignal) => integrationTools.ensureAccess(binding, "gmail", ["read", "label"], signal) } : {}),
   }) : undefined;
+  startupCleanup.push(async () => { await jevTools?.close(); });
   const admission = createPrivateBotAdmission({ db, host, roots: options.executionRoots, registry, homePath: options.homePath,
     ...(options.group ? { authorizeGroup: options.group.authorizeGroup, getGroupRevocation: options.group.getGroupRevocation } : {}) });
   const managedRoutineCli = routineCli && options.routineCliTransport ? { runtime: routineCli, ...options.routineCliTransport } : undefined;
@@ -480,8 +498,10 @@ export async function startBots(options: {
   });
   const nativeTasks = options.nativeProfileGuard ? createNativeBotTasks({ homePath: options.homePath, connections: providerConnections,
     registry, ...(routineCli && options.routineCliTransport ? { routineCli: { runtime: routineCli, ...options.routineCliTransport }, publishRoutineAction: orchestrator.publishRoutineAction } : {}), profileGuard: options.nativeProfileGuard, lifetime: lifetime.signal, callTool: (binding, request, signal) => brokerTool(binding, request, signal) }) : undefined;
+  startupCleanup.push(async () => { await nativeTasks?.close(); });
   const managed = createManagedPiRuntime({ ...(copyLifecycle ? { quiescence: { onStopped: copyLifecycle.onStopped } } : {}), routineCli: managedRoutineCli, routineSignal: binding => registry.inferenceSignal(binding), toolOutputKey: options.toolOutputKey, personality: { homePath: options.homePath, runtimeOwnerId: options.runtimeOwnerId }, inputHistory, homePath: options.homePath, expectedOwnerId: options.runtimeOwnerId, assertSource: revalidateSource, ...(isolatedChat ? { isolatedChat } : {}), ...(options.matrixAnthropic ? { matrixAnthropic: options.matrixAnthropic } : {}), ...(chatgptPlanPeers ? { chatgptPlan: chatgptPlanPeers } : {}), ownerTools, admission: managedAdmission, host, providers: options.providers, lifetime: lifetime.signal,
     forgetRun: (runId) => forgetRun(runId), cancelInference: (binding) => registry.cancelInference(binding) });
+  startupCleanup.push(() => managed.close());
   copyLifecycle?.bindManaged(managed);
   const tools = createBotToolDispatcher({
     ...(pilot.enabled ? { artifactWrites: createGooglePilotArtifactAdmission(registry) } : {}),
@@ -542,6 +562,7 @@ export async function startBots(options: {
   brokerTool = actions.callTool;
   forgetRun = (runId) => { githubDeveloper.closeRun(runId); actions.forgetRun(runId); };
   const unregister = registerBotBroker(host, actions);
+  startupCleanup.push(unregister);
   googleData.start();
   copyLifecycle?.start();
   purgeDelivery?.start();
@@ -549,6 +570,7 @@ export async function startBots(options: {
     orchestrator, routines, proposals: routineCli?.proposals,
     stopRuntime: (runtimeHandle) => admission.release(runtimeHandle),
   });
+  startupCleanup.push(async () => { await routineOriginRuntime.routineOrigin?.close(); });
   routineOriginRuntime.routineOrigin?.start();
   return {
     ...routineOriginRuntime, routineCli, routineDestination,
@@ -594,4 +616,13 @@ export async function startBots(options: {
       await qualifiedCredentials?.close();
     },
   };
+  } catch (error: unknown) {
+    lifetime.abort();
+    // Keep draining even if an individual resource's cleanup fails.
+    for (const cleanup of [...startupDrain.reverse(), ...startupCleanup.reverse()]) {
+      try { await cleanup(); }
+      catch (cleanupError: unknown) { console.warn('[bots] Startup cleanup unavailable', { errorClass: cleanupError instanceof Error ? 'Error' : 'UnknownError' }); }
+    }
+    throw error;
+  }
 }

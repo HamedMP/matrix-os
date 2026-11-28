@@ -304,27 +304,46 @@ export async function createGooglePilotCopyLifecycle(options: {
             return result;
         }, signal);
     }
+    let expiryCursor = '';
     async function sweep() {
         if (closed || active)
             return;
         // Closed markers are not expiry. Only actual source/copy deadlines trigger account cleanup.
         // Already-deleted copies cannot create endless new expiry commands for a mixed closed context.
-        const accounts = await boundedProvenanceTransaction(db, tx => sql<{
-            account_id: string;
-        }> `SELECT DISTINCT s.google_account_id::text AS account_id
-      FROM google_context_sources s WHERE s.owner_id=${options.ownerId} AND EXISTS(SELECT 1 FROM google_copy_registry c
-        WHERE c.owner_id=s.owner_id AND c.state<>'deleted' AND c.origins @> jsonb_build_array(jsonb_build_object('connectionId',s.origin_id))
-        AND (s.expires_at<=clock_timestamp() OR c.retention_deadline<=clock_timestamp())) ORDER BY account_id LIMIT 10`.execute(tx));
-        for (const { account_id } of accounts.rows) {
-            check();
-            const existing = await boundedProvenanceTransaction(db, tx => sql<{
-                input: unknown;
-            }> `SELECT input FROM google_pilot_purge_commands WHERE owner_id=${options.ownerId} AND account_id=${account_id}::uuid AND NOT complete ORDER BY created_at LIMIT 1`.execute(tx));
-            const command = existing.rows[0];
-            await purge(command ? commandSchema.parse(command.input) : { ownerId: options.ownerId, googleAccountId: account_id, commandId: randomUUID(), revision: 1 });
+        try {
+            const accounts = await boundedProvenanceTransaction(db, tx => sql<{ account_id: string }>`SELECT account_id FROM (
+              SELECT DISTINCT s.google_account_id::text AS account_id FROM google_context_sources s
+              WHERE s.owner_id=${options.ownerId} AND EXISTS(SELECT 1 FROM google_copy_registry c
+                WHERE c.owner_id=s.owner_id AND c.state<>'deleted' AND c.origins @> jsonb_build_array(jsonb_build_object('connectionId',s.origin_id))
+                AND (s.expires_at<=clock_timestamp() OR c.retention_deadline<=clock_timestamp()))
+            ) expired ORDER BY (account_id>${expiryCursor}) DESC, account_id LIMIT 10`.execute(tx));
+            for (const { account_id } of accounts.rows) {
+                check();
+                // Advance before awaiting: an unavailable account must not monopolize every bounded pass.
+                expiryCursor = account_id;
+                try {
+                    const existing = await boundedProvenanceTransaction(db, tx => sql<{ input: unknown }>`SELECT input FROM google_pilot_purge_commands
+                      WHERE owner_id=${options.ownerId} AND account_id=${account_id}::uuid AND NOT complete ORDER BY created_at LIMIT 1`.execute(tx));
+                    check();
+                    const command = existing.rows[0];
+                    await purge(command ? commandSchema.parse(command.input) : { ownerId: options.ownerId, googleAccountId: account_id, commandId: randomUUID(), revision: 1 });
+                } catch (error: unknown) {
+                    check();
+                    console.warn('[google-data] Account copy cleanup unavailable', { errorClass: error instanceof Error ? 'Error' : 'UnknownError' });
+                }
+            }
+        } finally {
+            // Independent bounded maintenance still runs after account or lookup failures. A closed
+            // lifecycle starts no new work; close drains any maintenance already in progress.
+            if (!closed) {
+                try { await options.storage.provenance.cleanupDeleted(100); }
+                catch (error: unknown) { console.warn('[google-data] Deleted copy cleanup unavailable', { errorClass: error instanceof Error ? 'Error' : 'UnknownError' }); }
+                if (!closed) {
+                    try { await stops.cleanup(); }
+                    catch (error: unknown) { console.warn('[google-data] Stop receipt cleanup unavailable', { errorClass: error instanceof Error ? 'Error' : 'UnknownError' }); }
+                }
+            }
         }
-        await options.storage.provenance.cleanupDeleted(100);
-        await stops.cleanup();
     }
     let sweeping: Promise<void> | undefined;
     return Object.freeze({ onStopped: (receipt: ManagedPiStoppedRunReceipt) => stops.record(receipt), purgeAccount: purge,

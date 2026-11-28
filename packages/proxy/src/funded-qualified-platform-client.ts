@@ -1,4 +1,4 @@
-import { GoogleQualifiedFundedAuthorizationRequestSchema, GoogleQualifiedFundedAuthorizationResponseSchema,
+import { FundedAiSafeErrorSchema, GoogleQualifiedFundedAuthorizationRequestSchema, GoogleQualifiedFundedAuthorizationResponseSchema,
   GoogleQualifiedFundedDispatchCheckRequestSchema, GoogleQualifiedFundedDispatchCheckResponseSchema } from '@matrix-os/contracts';
 import type { z } from 'zod/v4';
 import { normalizeFundedPlatformOrigin, type FundedRelayConfig } from './funded-relay-config.js';
@@ -27,8 +27,20 @@ export function createQualifiedFundedPlatformClient(options: Pick<FundedRelayCon
       const bytes = new Uint8Array(cap); let size = 0; let count = 0;
       for (;;) { const part = await Promise.race([reader.read(), stopped]); if (part.done) break;
         if (++count > 256 || size + part.value.length > cap) throw new FundedControlPlaneError(503); bytes.set(part.value, size); size += part.value.length; }
-      signal.throwIfAborted(); if (!response.ok) throw new FundedControlPlaneError(response.status === 401 ? 401 : 503);
-      return schema.parse(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes.subarray(0, size))));
+      signal.throwIfAborted();
+      const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes.subarray(0, size));
+      if (!response.ok) {
+        // Only this authenticated authorization endpoint may report a safe
+        // pre-dispatch priority refusal. Other 429s never grant retries.
+        if (action === 'authorize' && response.status === 429) {
+          const safe = FundedAiSafeErrorSchema.safeParse(JSON.parse(text));
+          if (safe.success && safe.data.error.code === 'rate_limited' && safe.data.error.reason) {
+            throw new FundedControlPlaneError(429, safe.data.error.reason);
+          }
+        }
+        throw new FundedControlPlaneError(response.status === 401 ? 401 : 503);
+      }
+      return schema.parse(JSON.parse(text));
     } catch (error) {
       controller.abort(); if (reader) await reader.cancel().catch(cleanup => console.warn('[qualified-relay] Body cleanup:', cleanup instanceof Error ? 'operation_failed' : 'untyped_failure'));
       if (error instanceof FundedControlPlaneError) throw error; throw new FundedControlPlaneError(503);

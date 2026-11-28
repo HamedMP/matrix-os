@@ -130,7 +130,7 @@ export function createQualifiedFundedService(options: { runner: QualifiedFundedT
       });
       // Commit the claim before reporting refusal; database/admission failures
       // still throw inside the transaction and roll all related writes back.
-      if (outcome.kind === 'priority-rejected') throw outcome.rejection;
+      if (outcome.kind === 'priority-rejected') throw new QualifiedFundedError(429, outcome.rejection.reason);
       return outcome.response;
     }); },
     async close() { closed = true; for (const operation of active) operation.abort(); await drained; },

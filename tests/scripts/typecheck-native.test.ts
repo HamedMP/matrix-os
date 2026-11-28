@@ -12,7 +12,7 @@ const configs = [
   'packages/gateway/tsconfig.json', 'packages/platform/tsconfig.typecheck.json',
   'packages/proxy/tsconfig.json', 'packages/hostd/tsconfig.json', 'packages/edge-router/tsconfig.json',
   'packages/pr-evidence-worker/tsconfig.json',
-  'desktop/tsconfig.json', 'desktop/tsconfig.node.json',
+  'desktop/tsconfig.json', 'desktop/tsconfig.node.json', 'shell/tsconfig.e2e.json',
 ];
 
 describe('native standalone typecheck', () => {

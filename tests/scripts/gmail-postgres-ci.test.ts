@@ -11,6 +11,7 @@ describe('Gmail PostgreSQL CI qualification', () => {
     for (const file of ['tests/gateway/google-data/provenance/model-history-read-scope.test.ts',
       'tests/gateway/google-data/provenance/model-history-reader-lifecycle.test.ts',
       'tests/platform/ai-funded-qualified-proxy-composition.test.ts',
+      'tests/gateway/chat-history-continuation.test.ts',
       'tests/gateway/google-context-admission-startup.test.ts',
       'tests/gateway/google-platform-policy-composition.test.ts',
       'tests/gateway/google-managed-profile-resolution.test.ts',
@@ -18,6 +19,7 @@ describe('Gmail PostgreSQL CI qualification', () => {
       'tests/gateway/google-runtime-authority-pins.test.ts',
       'tests/gateway/google-pilot-copy-lifecycle.test.ts',
       'tests/gateway/google-pilot-owner-pool.test.ts',
+      'tests/gateway/google-data-owner-routes.test.ts',
       'tests/platform/google-qualified-startup.test.ts',
       'tests/platform/account-deletion-google-cleanup.test.ts']) expect(files).toContain(file);
     expect(new Set(files).size).toBe(files.length);
