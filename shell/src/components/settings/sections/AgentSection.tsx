@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { webProviderSettingsIdentityKey } from "@/lib/provider-settings-identity";
 import { AgentsProvidersView, sessionProviderSettingsSnapshotCache, useProviderSettingsController, type AgentsProvidersViewProps } from "@matrix-os/ui";
+import { WebChatUsageSettings } from "./ChatUsageSettings";
 import { getGatewayUrl } from "@/lib/gateway";
 import { openProviderAuthorizationPath } from "@/lib/provider-browser-action";
 import { createProviderSettingsTransport, openWebProviderAgentSetup } from "@/lib/provider-settings-transport";
@@ -130,6 +131,7 @@ export function AgentSection({
         speechClient={speechClient}
         onAddCredit={addCredit}
       />
+      <WebChatUsageSettings />
     </div>
   );
 }

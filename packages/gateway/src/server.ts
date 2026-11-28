@@ -179,6 +179,8 @@ import { startScopeRuntimeHost } from "./startup/scope-runtime-host.js";
 import { startBots, type BotServices } from "./startup/bots.js";
 import { createCompanyBotSetup } from "./startup/slack-company.js";
 import { startOwnerSlack } from "./startup/slack-owner.js";
+import { startChatUsageAnalytics } from "./startup/chat-usage.js";
+import type { ChatUsageRuntime } from "./chat-usage-routes.js";
 import { withBotProviderInstance } from "./bots/provider-instance.js";
 import { createLocalIntegrationTransport, createPlatformIntegrationTransport } from "./bots/integration-client.js";
 import { createBotContinuationAdmitter } from "./bots/continuations.js";
@@ -792,6 +794,7 @@ export async function createGateway(config: GatewayConfig) {
   let botServices: BotServices | undefined;
   let companyBotSetup: ReturnType<typeof createCompanyBotSetup>;
   let slackRuntime: Awaited<ReturnType<typeof startOwnerSlack>> | undefined;
+  let chatUsageRuntime: ChatUsageRuntime | undefined;
   let messagingRepository: MessagingKyselyRepository | null = null;
   // Collaboration wiring always constructs (S20): there is no release flag.
   // Incomplete configuration or a missing owner database registers the
@@ -1525,7 +1528,14 @@ export async function createGateway(config: GatewayConfig) {
     }
     const routineCliTransport = { binPath: fileURLToPath(new URL("../bin/matrix.mjs", import.meta.resolve("@finnaai/matrix"))),
       endpoint: `http://127.0.0.1:${port}/api/routine-cli/execute` };
+    try {
+      chatUsageRuntime = await startChatUsageAnalytics({ db: chatRepository.kysely,
+        ownerId: terminalRuntimeOwnerId ?? null, fundedConfig: fundedAiRuntimeConfig, fundedCredentialProvider });
+    } catch (error: unknown) {
+      console.warn("[chat-usage] startup unavailable", error instanceof Error ? error.name : "UnknownError");
+    }
     botServices = await startBots({
+      ...(chatUsageRuntime ? { chatAnalytics: chatUsageRuntime.classifier } : {}),
       routineCliTransport,
       googlePilot, googleCopies: ownerDatabaseServices?.googleCopies, qualifiedFundedConfig: fundedAiRuntimeConfig,
       executionAdmissionFence, pendingExecutionCount: () => canonicalChatOrchestrator?.pendingCount ?? 0,
@@ -1550,6 +1560,10 @@ export async function createGateway(config: GatewayConfig) {
       ...(fundedCredentialProvider ? { fundedCredentialProvider } : {}),
       ...(fundedAdmission ? { fundedAdmission } : {}),
     });
+    if (!botServices && chatUsageRuntime) {
+      await chatUsageRuntime.classifier.close();
+      chatUsageRuntime = undefined;
+    }
     canonicalChatProviderCatalog = composePhaseCatalog(baseCanonicalChatProviderCatalog, canonicalPhaseDiscovery.canonical, base => {
       const sourceCatalog = matrixAnthropicRuntime?.service
         ? withMatrixAnthropicProviderInstances(base, aiProviderService,
@@ -1743,7 +1757,7 @@ export async function createGateway(config: GatewayConfig) {
     credentialKey: toolOutputKey, runtimeOwnerIds: terminalRuntimeOwnerIds,
     collaborationFailClosedReason, canonicalChatOrchestrator, canonicalChatExecutionRoots, listProjectSetupMcpServices: customMcp.listProjectSetupMcpServices,
     canonicalChatCollaborationGuard, projectOwnerToolOutput, canonicalChatRuntime,
-    canonicalChatProviderCatalog, aiProviderService, botServices,
+    canonicalChatProviderCatalog, aiProviderService, botServices, chatUsage: chatUsageRuntime,
     providerSettingsStore: createProviderTerminalLoginHandoff(providerSettingsStore, providerLoginTerminalRegistry.resolveTerminalRef, providerLoginCoordinator.resolveTerminalIdentity),
     listGmailAccounts: (ownerId) => withCapabilityLookupTimeout(() => lookupJevGmailAccounts(ownerId)),
   });

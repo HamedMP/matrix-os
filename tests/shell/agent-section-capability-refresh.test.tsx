@@ -14,6 +14,8 @@ const service = vi.hoisted(() => ({
   getSnapshot: vi.fn(), mutate: vi.fn(), capabilities: vi.fn(), connections: vi.fn(),
   refreshConnections: vi.fn(), authorizeConnection: vi.fn(),
 }));
+// This cadence scenario keeps the separate owner-only Chat Usage panel at its sign-in boundary.
+vi.mock("@clerk/nextjs", () => ({ useAuth: () => ({ isLoaded: true, userId: null, sessionId: null }) }));
 vi.mock("@/lib/gateway", () => ({ getGatewayUrl: () => service.gateway }));
 vi.mock("@/lib/ai-credit-checkout", () => ({ currentAiCreditRuntimeSlot: () => "primary", openWebAiCreditCheckout: vi.fn() }));
 vi.mock("@/lib/provider-settings-transport", () => ({
