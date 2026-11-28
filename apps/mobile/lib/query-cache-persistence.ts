@@ -1,4 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { mobileHostedStorage } from "@/lib/hosted-origin";
 import {
   CanonicalChatListResponseSchema,
   CanonicalProviderCatalogSchema,
@@ -63,6 +64,6 @@ const kinds: PersistedQueryKind[] = [
 
 export const mobileQueryPersistence = createQueryPersistence({
   queryClient: mobileQueryClient,
-  storage: AsyncStorage,
+  storage: mobileHostedStorage(AsyncStorage),
   kinds,
 });
