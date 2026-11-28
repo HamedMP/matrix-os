@@ -2,6 +2,17 @@ import { execFileSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 
 describe("contracts native Node runtime", () => {
+  it("loads managed Google route and qualified funded contracts without a TypeScript resolver", () => {
+    const output = execFileSync(process.execPath, ["--input-type=module", "-e", `
+      const { ManagedGoogleRouteDescriptorSchema, ManagedGoogleRouteResolveRequestSchema,
+        GoogleQualifiedFundedCheckRequestSchema, GOOGLE_QUALIFIED_FUNDED_PROTOCOL } = await import("@matrix-os/contracts");
+      console.log(typeof ManagedGoogleRouteDescriptorSchema.safeParse,
+        ManagedGoogleRouteResolveRequestSchema.safeParse({ api: "anthropic-messages", canonicalModelId: "anthropic/claude-sonnet-5" }).success,
+        typeof GoogleQualifiedFundedCheckRequestSchema.safeParse, GOOGLE_QUALIFIED_FUNDED_PROTOCOL);
+    `], { cwd: process.cwd(), encoding: "utf8", timeout: 10_000, env: { ...process.env, NODE_OPTIONS: "" } });
+    expect(output.trim()).toBe("function true function matrix-google-qualified-funded-v1");
+  });
+
   it("loads personal subscription peer and inference schemas without a TypeScript resolver", () => {
     const output = execFileSync(process.execPath, ["--input-type=module", "-e", `
       const { ChatGptPlanPeerSnapshotSchema, ChatGptPlanRawWireSchema, ChatGptPlanWireSchema } = await import("@matrix-os/contracts");
