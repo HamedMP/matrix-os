@@ -5,6 +5,7 @@
  * proposal.
  */
 
+import { coveredIn } from "../grid/merge-guard";
 import { askAboutWorkbook } from "./ai";
 import { editTargets, runProposal, validateReply, writeResolved } from "./apply";
 import { type AgentContext, type ProposalOutcome, isoNow } from "./context";
@@ -66,9 +67,12 @@ function normalisedEdits(workbook: Workbook, sheet: SheetId, col: number, limit:
   }
   const numericColumn = filled > 0 && numeric / filled >= 0.6;
   const edits: ResolvedSheetEdit[] = [];
+  // Text a merged cell hides is left as it is: a change there would be made out of sight.
+  const covered = coveredIn(workbook.getSheet(sheet).mergedRanges, range);
   cells.forEach((cell, index) => {
     // A cell with a pending change keeps it: its proposal is reviewed on its own.
     if (edits.length >= limit || cell.formula !== null || typeof cell.value !== "string" || cell.pendingChangeId !== null) return;
+    if (covered(range.start.row + index, col)) return;
     const tidy = tidyText(cell.value);
     const asNumber = numericColumn ? numberFromText(tidy) : null;
     const value: CellValue = asNumber ?? (tidy === "" ? null : tidy);

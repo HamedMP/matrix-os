@@ -101,6 +101,21 @@ describe("fixing a finding", () => {
     expect(session.workbook.listChanges()).toEqual(before);
     expect(session.cell(sheets.summary, 1, 1).formula).toBeNull();
   });
+
+  // Outcome: the assistant never proposes a change the owner cannot see.
+  // Fault: a total kept under a merged cell (as another program can save it) is rewritten out of sight.
+  it("refuses a finding hidden under a merged cell", async () => {
+    const { session, sheets } = await openModel();
+    const finding = checkWorkbook(session.workbook).findings.find((entry) => entry.kind === "total-mismatch")!;
+    session.mutate((workbook) => {
+      workbook.mergeCells(finding.sheet, { start: { row: finding.row, col: finding.col - 1 }, end: { row: finding.row, col: finding.col } });
+      workbook.setCell(finding.sheet, finding, finding.actual);
+    });
+    const outcome = fixFinding({ session, ai: null, now: NOW }, finding);
+    expect(outcome).toMatchObject({ status: "invalid" });
+    expect(session.workbook.listChanges()).toEqual([]);
+    expect(session.cell(sheets.summary, 1, 1).formula).toBeNull();
+  });
 });
 
 describe("formatting as a table", () => {
@@ -160,6 +175,17 @@ describe("cleaning a column", () => {
       [12, 50],
       [14, "n/a"],
     ]);
+  });
+
+  // Outcome: the clean-up leaves text a merged cell hides alone. Fault: it is rewritten out of sight.
+  it("skips cells hidden under a merged cell", async () => {
+    const { session, sheets } = await openModel();
+    session.mutate((workbook) => {
+      workbook.mergeCells(sheets.summary, { start: { row: 11, col: 3 }, end: { row: 11, col: 4 } });
+      // Written after the merge, as another program can leave it in a file.
+      workbook.setRange(sheets.summary, { row: 10, col: 4 }, [[" 7 "], [" 1,200 "], ["£50"]]);
+    });
+    expect(normaliseColumn(session.workbook, sheets.summary, 4).map((edit) => edit.row)).toEqual([10, 12]);
   });
 
   // Outcome: a clean-up that stops at the proposal bound says the column is not finished.

@@ -4,6 +4,7 @@
  * Both land in a proposal, so the owner reviews them like any other change.
  */
 
+import { MERGED_CELLS, coveredIn } from "../grid/merge-guard";
 import { runProposal } from "./apply";
 import type { Finding } from "./checks";
 import { type AgentContext, type ProposalOutcome, type SheetSelection, isoNow } from "./context";
@@ -63,10 +64,12 @@ export function fixFinding(ctx: AgentContext, finding: Finding): ProposalOutcome
   const workbook = ctx.session.workbook;
   const cell = workbook.getCell(finding.sheet, finding);
   if (cell.formula !== null || cell.value !== finding.actual) return { status: "invalid", messages: ["The cell has changed since the check. Run the check again."] };
+  // A total a merged cell hides cannot be seen: changing it would happen out of sight.
+  const at = { row: finding.row, col: finding.col };
+  if (coveredIn(workbook.getSheet(finding.sheet).mergedRanges, { start: at, end: at })(at.row, at.col)) return { status: "invalid", messages: [MERGED_CELLS] };
   const sourceName = workbook.getSheet(source.sheet).name;
   const formula = source.sheet === finding.sheet ? formatA1(source) : `${sheetRef(sourceName)}!${formatA1(source)}`;
   const label = `Assistant: link ${finding.location} to its calculation`;
-  const at = { row: finding.row, col: finding.col };
   const record = runProposal(ctx.session, label, isoNow(ctx), [{ sheet: finding.sheet, range: { start: at, end: at } }], (wb) => wb.setFormula(finding.sheet, at, formula), ctx.log);
   return { status: "proposed", ...record, label, summary: `${finding.location} becomes =${formula}.` };
 }
