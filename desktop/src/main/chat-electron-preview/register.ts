@@ -1,10 +1,8 @@
 import type { BrowserWindow, IpcMain } from "electron";
+import { dialog } from "electron";
 import { isAbsolute, join } from "node:path";
-import type { MacActionPairing, MacActionPairingLease } from "../desktop-pairing/action";
 import type { AuthService } from "../auth/auth-service";
 import { CHAT_ELECTRON_PREVIEW_INVOKE } from "../../shared/chat-electron-preview-ipc";
-import type { BeginMacActivity } from "../mac-activity/activity";
-import { showMacActivityDialog } from "../mac-activity/dialog";
 import { createChatElectronPreviewClaims } from "./claims";
 import { runChatElectronPreview } from "./executor";
 import { createChatElectronPreviewService } from "./service";
@@ -12,7 +10,6 @@ import type { ChatElectronPreviewBackgroundBinding, createChatElectronPreviewTra
 
 interface RegistrationOptions {
   auth: AuthService;
-  acquireActionPairing: MacActionPairing;
   transport: ReturnType<typeof createChatElectronPreviewTransport>;
   allowed: boolean;
   checkout?: string;
@@ -20,15 +17,12 @@ interface RegistrationOptions {
   electronPath: string;
   window(): BrowserWindow | null;
   isTrustedSender(event: unknown): boolean;
-  beginActivity?: BeginMacActivity;
 }
 
 export function registerChatElectronPreview(ipc: Pick<IpcMain, "handle">, options: RegistrationOptions) {
   const { auth, transport, checkout, userData, electronPath } = options;
   const service = createChatElectronPreviewService({
     ...transport,
-    beginActivity: options.beginActivity,
-    acquireActionPairing: options.acquireActionPairing,
     ...createChatElectronPreviewClaims(join(userData, "chat-electron-preview-claims")),
     enabled: options.allowed && !!checkout && isAbsolute(checkout),
     async approve(request, signal) {
@@ -53,7 +47,7 @@ export function registerChatElectronPreview(ipc: Pick<IpcMain, "handle">, option
         cancelId: 0,
         signal,
       };
-      const answer = await showMacActivityDialog(parent, prompt);
+      const answer = parent ? await dialog.showMessageBox(parent, prompt) : await dialog.showMessageBox(prompt);
       return answer.response === 1;
     },
     execute(request, signal) {
@@ -87,13 +81,12 @@ export function registerChatElectronPreview(ipc: Pick<IpcMain, "handle">, option
       grant: ChatElectronPreviewBackgroundBinding["grant"],
       signal: AbortSignal,
       beginPreview: () => boolean,
-      pairing?: MacActionPairingLease,
     ) {
       if (!service.available || signal.aborted) return;
       const target = await transport.readBackgroundPreviewTarget(context, grant, signal);
       if (!target || (lastHandled?.targetId === grant.targetId && lastHandled.runId === target.runId)) return;
       if (!beginPreview()) return;
-      const { status } = await service.run(target, { context, grant, signal, pairing });
+      const { status } = await service.run(target, { context, grant, signal });
       if ((status === "returned" || status === "declined" || status === "already-handled") && !signal.aborted) {
         lastHandled = { targetId: grant.targetId, runId: target.runId };
       }

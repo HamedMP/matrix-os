@@ -51,34 +51,6 @@ function accelerators(template: MenuItemConstructorOptions[], platform: Platform
 }
 
 describe("createAppMenuTemplate", () => {
-  it("opens Mac pairing directly in installed and development Matrix clients", () => {
-    const openMacPairing = vi.fn();
-    const send = vi.fn();
-    function pairingItem(opts: Parameters<typeof createAppMenuTemplate>[0]) {
-      return find(submenu(createAppMenuTemplate(opts), "Matrix OS"), "Mac Pairing…");
-    }
-    for (const isPackaged of [true, false]) {
-      click(pairingItem(options({ isPackaged, send, openMacPairing })));
-    }
-    expect(openMacPairing).toHaveBeenCalledTimes(2);
-    expect(send).not.toHaveBeenCalled();
-    expect(pairingItem(options())).toBeUndefined();
-    expect(pairingItem(options({ platform: "linux", openMacPairing }))).toBeUndefined();
-  });
-
-  it("opens local Mac activity history from the native menu without a renderer action", () => {
-    const openMacActivity = vi.fn();
-    const menuOptions = options({ isPackaged: false, openMacActivity });
-    function historyItem(opts: Parameters<typeof createAppMenuTemplate>[0]) {
-      return find(submenu(createAppMenuTemplate(opts), "Matrix OS"), "Recent Mac Activity…");
-    }
-    click(historyItem(menuOptions));
-    expect(openMacActivity).toHaveBeenCalledOnce();
-    expect(menuOptions.send).not.toHaveBeenCalled();
-    expect(historyItem(options({ isPackaged: false }))).toBeUndefined();
-    expect(historyItem(options({ isPackaged: false, platform: "linux", openMacActivity }))).toBeUndefined();
-  });
-
   it("offers a native stop control for enabled Mac background checks independent of the renderer", () => {
     const stopBackgroundMacChecks = vi.fn();
     const menuOptions = options({ isPackaged: false, stopBackgroundMacChecks });

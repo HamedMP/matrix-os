@@ -461,10 +461,11 @@ export function createChatElectronPreviewTransport(
           turns: [receipt.turn], activities: [] }, turn)) throw new Error("Mac terminal result receipt mismatch");
     },
 
-    async read(ref: { chatId: string; runId: string }, background?: ChatElectronPreviewBackgroundBinding, signal = background?.signal): Promise<ChatElectronPreviewRequest | null> {
+    async read(ref: { chatId: string; runId: string }, background?: ChatElectronPreviewBackgroundBinding): Promise<ChatElectronPreviewRequest | null> {
       if (!RequestRef.safeParse(ref).success) return null;
       const authority = background ? backgroundAuthority(background) : currentAuthority();
       if (!authority) return null;
+      const signal = background?.signal;
       const detail = await readDetail(authority, ref.chatId, signal);
       const candidate = detail && (background
         ? getBackgroundPreview(detail, authority, background)

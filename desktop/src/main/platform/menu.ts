@@ -6,7 +6,7 @@ import type { EffectiveShortcuts, ShortcutActionId } from "@matrix-os/contracts/
 import { isShortcutActionAvailable } from "../shortcuts/shortcut-availability";
 import type { ShortcutService } from "../shortcuts/shortcut-service";
 import { createMenuRouter } from "./menu-routing";
-import { createAppMenuTemplate, RECENT_MAC_ACTIVITY_MENU_ID, STOP_BACKGROUND_MAC_CHECKS_MENU_ID } from "./menu-template";
+import { createAppMenuTemplate, STOP_BACKGROUND_MAC_CHECKS_MENU_ID } from "./menu-template";
 import type { TerminalWindowCommand } from "../../shared/terminal-window";
 
 // The application menu is process-wide, and so is its shortcut runner.
@@ -34,17 +34,12 @@ export function installAppMenu(options: {
   checkForUpdates(): void;
   openTerminalWindow(): void;
   stopBackgroundMacChecks?(): void;
-  openMacActivity?(): void;
-  openMacPairing?(): void;
   /** The bundled notices file, or null when this build ships no third-party binary. */
   thirdPartyNoticesPath: string | null;
   shortcuts: Pick<ShortcutService, "snapshot" | "onChange">;
   /** Delivers a Terminal window shortcut to that window (spec 2706). */
   sendTerminalCommand(command: TerminalWindowCommand): void;
-}): {
-  terminalWindowFocused(focused: boolean): void;
-  updateMacActivity(active: boolean, hasActivityScope: boolean): void;
-} {
+}): { terminalWindowFocused(focused: boolean): void; backgroundMacChecksActive(active: boolean): void } {
   const router = createMenuRouter(options);
   const run = (id: ShortcutActionId): void => {
     if (id === "terminal.window") {
@@ -60,14 +55,11 @@ export function installAppMenu(options: {
   let menus: { main: Menu; terminal: Menu } | null = null;
   let current: Menu | null = null;
   let backgroundChecksActive = false;
-  let activityScope = false;
-  const updateActivityItems = (): void => {
-    if (!menus || (!options.stopBackgroundMacChecks && !options.openMacActivity)) return;
+  const setStopVisibility = (): void => {
+    if (!menus || !options.stopBackgroundMacChecks) return;
     for (const menu of [menus.main, menus.terminal]) {
       const stop = menu.getMenuItemById(STOP_BACKGROUND_MAC_CHECKS_MENU_ID);
       if (stop) stop.visible = backgroundChecksActive;
-      const activity = menu.getMenuItemById(RECENT_MAC_ACTIVITY_MENU_ID);
-      if (activity) activity.enabled = activityScope;
     }
   };
   const show = (): void => {
@@ -92,8 +84,6 @@ export function installAppMenu(options: {
     shortcuts,
     runShortcut: run,
     stopBackgroundMacChecks: options.stopBackgroundMacChecks,
-    openMacActivity: options.openMacActivity,
-    openMacPairing: options.openMacPairing,
     ...(options.thirdPartyNoticesPath ? {
       openThirdPartyNotices: () => {
         // openPath resolves to an error string instead of rejecting.
@@ -112,7 +102,7 @@ export function installAppMenu(options: {
   const build = (shortcuts: EffectiveShortcuts): void => {
     const terminal = template(shortcuts, true);
     menus = { main: template(shortcuts, false), terminal };
-    updateActivityItems();
+    setStopVisibility();
     current = null;
     show();
   };
@@ -125,10 +115,9 @@ export function installAppMenu(options: {
       terminalFocused = focused;
       show();
     },
-    updateMacActivity(active, hasActivityScope) {
+    backgroundMacChecksActive(active) {
       backgroundChecksActive = active;
-      activityScope = hasActivityScope;
-      updateActivityItems();
+      setStopVisibility();
     },
   };
 }

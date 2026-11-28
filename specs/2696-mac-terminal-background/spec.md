@@ -98,35 +98,8 @@ acceptance sends two batches and the fixed preview action from one Main Chat,
 closes the Chat renderer before dispatch, and checks its canonical receipts.
 The preview source is restored after the run.
 
-### Mac activity and local Stop
-
-The opt-in Mac client shows a native menu bar item after the existing owner
-and worktree checks admit a request. The item shows waiting for approval,
-ready, running, or returning results. It remains available with the original
-Chat closed. Use **Stop Mac Activity** to cancel pending approval, revoke the
-active grants, and stop the associated preview and dedicated terminal work.
-A canonical result already accepted by Gateway remains in its original Chat.
-`Stopped` records the local cancellation. If the stop crosses an in-flight
-admission, the original Chat remains the source of truth for the result.
-
-**Recent Mac Activity** is available from the status item or the Matrix
-application menu. The local application profile keeps up to 64 events per
-account and Computer and 192 across the profile. The history displays recent
-activity up to 30 days old. It records kind, phase, time and worktree ID.
-Records are scoped by a hash of the authenticated account and Computer scope.
-Prompts, commands, output, images and credentials are excluded. The native
-menu stays subject to the existing signed-in profile and runtime, and
-switching account or Computer dismisses the history and fences stale menu
-actions. The application closes admission during shutdown and allows up to
-five seconds to drain local activity. No new remote route or renderer API
-is introduced.
-
-Acceptance covers opening and dismissing native history across an application
-restart, stopping with the Chat closed, concurrent account changes, operation
-cancellation before execution and receipt delivery, and bounded private history.
-
 Packaged device enrollment, selecting already-open Mac terminals, an
-interactive two-way terminal session, additional application actions and
-foreground takeover remain separate milestones.
+interactive two-way terminal session, arbitrary application control, foreground
+takeover, and owner-visible execution history remain separate milestones.
 Public usage docs follow in the site repository when packaged enrollment and
 supported actions are ready for review.

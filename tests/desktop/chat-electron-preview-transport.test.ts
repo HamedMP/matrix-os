@@ -493,9 +493,8 @@ describe("authenticated Chat Mac terminal probe transport", () => {
       await Promise.race([finalRead.promise, running.then(result => {
         throw new Error(`expected an in-flight Chat read, got ${result.status}`);
       })]);
-      const stopped = service.cancel(chatId);
+      expect(await service.cancel(chatId)).toBe(true);
       resumeRead.resolve();
-      await expect(stopped).resolves.toBe(true);
 
       const result = await running;
       expect(resultWrites(fetchFn)).toEqual([]);
