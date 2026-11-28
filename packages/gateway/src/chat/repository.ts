@@ -3,6 +3,7 @@ import { lockRunCollaborationScope } from "./run-scope-lock.js";
 import { assertPrivateRoutineTurn } from "./private-routine-authority.js";
 import { publicChatIdPredicate } from "./routine-direct-visibility.js";
 import { appendRoutineReceiptWithin, type AppendRoutineReceiptInput } from "./routine-receipt-repository.js";
+import { snapshotContextWriteInput, type ChatContextWriteHook, type ChatContextWriteKey } from "./context-write-hook.js";
 import type { ChatActivityWriteHook } from "./activity-write-hook.js";
 import { metadataOnlyOutboxEvent, type ChatContentProjectionMode } from "./outbox-projection.js";
 import type { AssistantDeltaInput, AssistantDeltaWriteHook, AssistantDeltaTransact } from "./assistant-delta-repository.js";
@@ -426,6 +427,7 @@ async function hydrateAdmission(
 export interface ChatRepositoryOptions extends ChatCreationOptions {
   assistantDeltaWrites?: AssistantDeltaWriteHook;
   activityWrites?: ChatActivityWriteHook;
+  contextWrites?: ChatContextWriteHook;
   /** Server-only pilot boundary: persist notifications without copied chat content. */
   contentProjectionMode?: ChatContentProjectionMode;
 }
@@ -1007,7 +1009,19 @@ export class ChatRepository {
       toPrincipalRecord }, owner, chatId, turnId, clientRequestId);
   }
 
-  async admitTurn(ownerInput: ChatOwner, input: AdmitTurnInput): Promise<AdmittedTurn> {
+  private contextMutation<T>(key: ChatContextWriteKey, operation: (scoped: ChatRepository) => Promise<T>, signal?: AbortSignal): Promise<T> {
+    const hook = this.repositoryOptions.contextWrites;
+    if (!hook) return operation(this);
+    return hook.write(key, (fn, check) => this.transact(fn, check), tx => operation(new ChatRepository(tx, true,
+      this.outboxDelivery, { ...this.repositoryOptions, contextWrites: undefined })), signal);
+  }
+
+  async admitTurn(ownerInput: ChatOwner, input: AdmitTurnInput, signal?: AbortSignal): Promise<AdmittedTurn> {
+    if (this.repositoryOptions.contextWrites) {
+      ownerInput = validateOwner(ownerInput); input = snapshotContextWriteInput(input);
+      return this.contextMutation({ owner: ownerInput, chatId: input.chatId, runIds: [input.run.id], requestId: input.turn.clientRequestId },
+        scoped => scoped.admitTurn(ownerInput, input), signal);
+    }
     return admitChatTurn({
       transact: (operation) => this.transact(operation),
       appendOutbox: (...args) => this.appendOutbox(...args),
@@ -1065,7 +1079,13 @@ export class ChatRepository {
   async enqueueQueuedTurn(
     owner: ChatOwner,
     input: EnqueueQueuedTurnInput,
+    signal?: AbortSignal,
   ): Promise<EnqueuedQueuedTurn> {
+    if (this.repositoryOptions.contextWrites) {
+      owner = validateOwner(owner); input = snapshotContextWriteInput(input);
+      return this.contextMutation({ owner, chatId: input.chatId, queueIds: [input.queuedTurnId], requestId: input.clientRequestId },
+        scoped => scoped.enqueueQueuedTurn(owner, input), signal);
+    }
     return this.queue.enqueue(owner, input);
   }
 
@@ -1174,7 +1194,13 @@ export class ChatRepository {
   async claimNextQueuedTurn(
     owner: ChatOwner,
     input: ClaimNextQueuedTurnInput,
+    signal?: AbortSignal,
   ): Promise<ClaimedQueuedTurn | null> {
+    if (this.repositoryOptions.contextWrites) {
+      owner = validateOwner(owner); input = snapshotContextWriteInput(input);
+      return this.contextMutation({ owner, chatId: input.chatId, runIds: [input.runId], discoverQueued: true },
+        scoped => scoped.claimNextQueuedTurn(owner, input), signal);
+    }
     return this.queue.claimNext(owner, input);
   }
 
@@ -1233,7 +1259,12 @@ export class ChatRepository {
     return this.steering.failQueuedTurn(owner, input);
   }
 
-  async admitRetry(ownerInput: ChatOwner, input: AdmitRetryInput): Promise<AdmittedRun> {
+  async admitRetry(ownerInput: ChatOwner, input: AdmitRetryInput, signal?: AbortSignal): Promise<AdmittedRun> {
+    if (this.repositoryOptions.contextWrites) {
+      ownerInput = validateOwner(ownerInput); input = snapshotContextWriteInput(input);
+      return this.contextMutation({ owner: ownerInput, chatId: input.chatId, runIds: [input.run.id], requestId: input.clientRequestId },
+        scoped => scoped.admitRetry(ownerInput, input), signal);
+    }
     const owner = validateOwner(ownerInput);
     const chatId = CanonicalChatIdSchema.parse(input.chatId);
     const turnId = requireSafeRef(input.turnId);

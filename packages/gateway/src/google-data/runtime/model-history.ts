@@ -6,6 +6,7 @@ import type { ChatOwner } from '../../chat/records.js';
 import { boundedProvenanceTransaction } from '../provenance/transaction.js';
 import { createGoogleContextStore, type GoogleContext } from './contexts.js';
 import { lockGoogleContexts } from './contexts-schema.js';
+import { migrateOrdinaryCopyReceipts } from '../provenance/ordinary-copy-receipts.js';
 
 export type GoogleModelHistory = { classification: 'unknown'; googleContext?: GoogleContext }
   | { classification: 'ordinary' } | { classification: 'google'; googleContext: GoogleContext };
@@ -46,6 +47,7 @@ export function createGoogleModelHistoryStore<DB>(db: Kysely<DB>, options: Googl
           owner_type TEXT NOT NULL CHECK(owner_type='personal'), owner_id TEXT NOT NULL CHECK(char_length(owner_id) BETWEEN 1 AND 160),
           created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp())`.execute(tx);
         await sql`CREATE INDEX IF NOT EXISTS google_model_history_births_owner ON google_model_history_births(owner_type,owner_id)`.execute(tx);
+        await migrateOrdinaryCopyReceipts(tx);
       });
     },
     /** Install only on successful canonical empty-chat INSERT, before its transaction commits.
