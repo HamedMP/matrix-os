@@ -117,6 +117,19 @@ describe("find and replace", () => {
     expect(nextMatch(matches, { row: 2, col: 0 }, true)).toBe(0);
     expect(nextMatch(matches, { row: 0, col: 0 }, true)).toBe(2);
   });
+
+  // Outcome: Find and Replace only touch text the owner can see.
+  // Fault: a file that keeps a value under a merged cell has it found and replaced out of sight.
+  it("skips text hidden under a merged cell", async () => {
+    const { session, sheet } = await sessionWith((wb, s) => {
+      wb.mergeCells(s, { start: { row: 0, col: 0 }, end: { row: 0, col: 1 } });
+      // Written after the merge, as another program can leave it in a file.
+      wb.setRange(s, { row: 0, col: 0 }, [["apple", "apple"]]);
+    });
+    const base = { query: "apple", matchCase: false, wholeCell: false, lookIn: "values" as const };
+    expect(findMatches(session, sheet, base).matches).toEqual([{ row: 0, col: 0 }]);
+    expect(planReplaceAll(session, sheet, base, "pear").edits.map((edit) => [edit.row, edit.col])).toEqual([[0, 0]]);
+  });
 });
 
 describe("sheet tabs model", () => {

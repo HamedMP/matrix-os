@@ -4,9 +4,11 @@
  * "values" looks at what the grid shows; "formulas" looks at what was typed
  * (a formula with its `=`). Replacing in "values" changes typed text and
  * numbers only: a formula's result cannot be replaced, so such cells are
- * skipped and counted.
+ * skipped and counted. Text hidden under a merged cell is never found, so it
+ * is never replaced out of sight.
  */
 import { editTextOf } from "../grid/actions-edit";
+import { coveredIn } from "../grid/merge-guard";
 import { usesDate1904 } from "../session/date-system";
 import type { SessionCellEdit } from "../session/edits";
 import type { Cell, SheetId } from "../session/engine";
@@ -64,14 +66,16 @@ export function searchText(reader: Reader, sheet: SheetId, row: number, col: num
 export function findMatches(reader: Reader, sheet: SheetId, options: FindOptions, limit = MAX_MATCHES): FindResult {
   const matches: FindMatch[] = [];
   if (options.query === "" || options.query.length > MAX_QUERY_LENGTH) return { matches, truncated: false };
-  const used = reader.sheet(sheet).dimensions;
+  const info = reader.sheet(sheet);
+  const used = info.dimensions;
   if (used === null) return { matches, truncated: false };
+  const covered = coveredIn(info.mergedRanges, used);
   let scanned = 0;
   for (let row = used.start.row; row <= used.end.row; row++) {
     for (let col = used.start.col; col <= used.end.col; col++) {
       if (++scanned > MAX_SCANNED_CELLS) return { matches, truncated: true };
       const raw = reader.raw(sheet, row, col);
-      if (raw.value === null && raw.formula === null) continue;
+      if ((raw.value === null && raw.formula === null) || covered(row, col)) continue;
       if (!contains(searchText(reader, sheet, row, col, options.lookIn), options)) continue;
       if (matches.length >= limit) return { matches, truncated: true };
       matches.push({ row, col });
