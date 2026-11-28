@@ -19,6 +19,14 @@ const roots: string[] = [];
 afterEach(async () => { vi.restoreAllMocks(); await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
 const paths = { checkout: "source.tar", node: "toolchain/node/bin/node", pnpm: "toolchain/pnpm/bin/pnpm.cjs",
   electron: "runtime/Electron.app/Contents/MacOS/Electron" };
+// Developer machines may run with umask 002; strip the group-write bits the
+// product correctly rejects so the fixture models a default 022 checkout.
+async function withoutGroupWrite(path: string): Promise<void> {
+  const info = await lstat(path);
+  if (info.isSymbolicLink()) return;
+  await chmod(path, info.mode & 0o7755);
+  if (info.isDirectory()) for (const name of await readdir(path)) await withoutGroupWrite(join(path, name));
+}
 async function fixture() {
   const root = await realpath(await mkdtemp(join(tmpdir(), "matrix-source-provider-"))); roots.push(root);
   const kit = join(root, "resources", "mac-verification-support");
@@ -37,6 +45,7 @@ async function fixture() {
       ? '#!/bin/sh\nif [ "$1" = "--version" ]; then echo v24.18.0; else echo 10.33.4; fi\n' : "fixture\n");
     await chmod(join(kit, path), 0o755);
   }
+  await withoutGroupWrite(root);
   const archives = { checkout: await sealMacVerificationArchive(source, join(kit, paths.checkout), { allowSymlinks: true }) };
   const manifest = { version: 3, baseSha: git("rev-parse", "HEAD"), nodeVersion: "24.18.0", pnpmVersion: "10.33.4",
     platform: "darwin", arch: "arm64", lockfileSha256: createHash("sha256").update(await readFile(join(source, "pnpm-lock.yaml"))).digest("hex"), paths, archives };
@@ -222,7 +231,7 @@ describe("packaged Mac Verification source preparation", () => {
     const store = prepared.toolchain.store;
     try {
       const projects = join(store, "v10", "projects");
-      await mkdir(projects, { recursive: true });
+      await mkdir(projects, { recursive: true, mode: 0o755 });
       const link = join(projects, "a".repeat(32));
       await symlink(f.source, link);
       await checkVerificationStore(store, f.signal);
@@ -230,7 +239,7 @@ describe("packaged Mac Verification source preparation", () => {
       expect(await readdir(projects)).toEqual([]);
       expect(await readFile(join(f.source, "pnpm-lock.yaml"), "utf8")).toContain("lockfileVersion");
       const unexpected = join(projects, "b".repeat(32));
-      await mkdir(unexpected);
+      await mkdir(unexpected, { mode: 0o755 });
       await writeFile(join(unexpected, "keep"), "owned contents");
       await expect(clearVerificationStoreProjects(store)).rejects.toThrow("support-unavailable");
       expect(await readFile(join(unexpected, "keep"), "utf8")).toBe("owned contents");

@@ -17,7 +17,8 @@ async function fixture() {
   const electronPackage = join(sandbox, "pnpm", "electron");
   const electron = join(electronPackage, "dist", "Electron.app", "Contents", "MacOS", "Electron");
   const packageJson = join(checkout, "desktop", "package.json");
-  await mkdir(join(checkout, "desktop", "node_modules"), { recursive: true });
+  // Explicit modes keep the fixture a default 022 checkout on umask 002 hosts.
+  await mkdir(join(checkout, "desktop", "node_modules"), { recursive: true, mode: 0o755 });
   await mkdir(dirname(electron), { recursive: true });
   await mkdir(join(checkout, ".git"));
   await writeFile(join(checkout, "package.json"), '{"name":"matrix-os"}');
@@ -48,6 +49,13 @@ describe("packaged Mac Verification dependencies", () => {
     await rm(packageJson);
     await writeFile(packageJson, '{"name":"desktop"}');
     await chmod(electron, 0o720);
+    expect(await resolveVerificationSource(checkout)).toBeNull();
+  });
+
+  it("rejects a group-writable checkout even when its pnpm-linked Electron is safe", async () => {
+    const { checkout, electron } = await fixture();
+    expect(await resolveVerificationSource(checkout)).toMatchObject({ checkout, electronPath: electron });
+    await chmod(checkout, 0o775);
     expect(await resolveVerificationSource(checkout)).toBeNull();
   });
 });
