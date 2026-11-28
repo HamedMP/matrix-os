@@ -20,7 +20,6 @@ const PREVIEW_STATUS: Record<PreviewStatus, string> = {
   failed: "Electron preview could not be completed.",
   busy: "This Mac is already handling an Electron preview.",
   "already-handled": "This Electron preview request was already handled.",
-  incompatible: "This worktree revision is incompatible with the installed Desktop build.",
 };
 
 const PREVIEW_DRAFT_INTRO = "Prepare an Electron preview of the Matrix OS sign-in page in this Chat's isolated worktree.";
@@ -85,7 +84,6 @@ export function useChatElectronPreview({ active, editingQueuedTurn = false, acto
     && marker && !marker.backgroundTargetId ? latestRun.id : null;
   const [available, setAvailable] = useState(false);
   const [verificationAvailable, setVerificationAvailable] = useState(false);
-  const [terminalRequests, setTerminalRequests] = useState(false);
   const [retry, setRetry] = useState(0);
   const [result, setResult] = useState<{ key: string; status: PreviewStatus } | null>(null);
   const availability = useRef<Promise<InvokeResponse<"chat:electron-preview-available">> | null>(null);
@@ -98,7 +96,7 @@ export function useChatElectronPreview({ active, editingQueuedTurn = false, acto
     function readAvailability(): Promise<InvokeResponse<"chat:electron-preview-available">> {
       return invoke("chat:electron-preview-available", {}).catch((error: unknown) => {
         console.warn("[electron-preview] capability unavailable", error instanceof Error ? error.name : "UnknownError");
-        return { available: false, terminalRequests: false };
+        return { available: false };
       });
     }
     function loadCapability(refresh?: boolean) {
@@ -108,7 +106,6 @@ export function useChatElectronPreview({ active, editingQueuedTurn = false, acto
         if (current && availability.current === request) {
           setAvailable(value.available);
           setVerificationAvailable(value.verificationAvailable === true);
-          setTerminalRequests(value.terminalRequests === true);
         }
       });
     }
@@ -141,12 +138,10 @@ export function useChatElectronPreview({ active, editingQueuedTurn = false, acto
 
   const canPreview = available && eligible && worktree !== null;
   const verification = useMacVerification({
-    permissionMode, terminalRequests,
-    discoverable: eligible && Boolean(window.operator?.invoke),
-    available: verificationAvailable,
+    permissionMode,
     busy: Boolean(activeRun),
     editingQueuedTurn,
-    candidate: eligible && worktree && latestRun?.driverKind === "codex"
+    candidate: verificationAvailable && eligible && worktree && latestRun?.driverKind === "codex"
       ? { chatId: chat.id, run: latestRun, worktree } : null,
   });
   const action: ComposerMentionAction | undefined = canPreview && !activeRun && onDraft ? {

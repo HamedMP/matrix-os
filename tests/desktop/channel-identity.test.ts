@@ -66,8 +66,7 @@ describe("desktop channel identity", () => {
     const withoutIdentity = ({ icon: _icon, title: _title, ...rest }: Record<string, unknown>) => rest;
     expect(withoutIdentity(config.mac)).toEqual(withoutIdentity(base.mac));
     expect(withoutIdentity(config.dmg)).toEqual(withoutIdentity(base.dmg));
-    expect(config.mac.extraResources).toEqual([{ from: "build/herdr", to: "herdr" },
-      { from: "build/mac-verification-support", to: "mac-verification-support" }]);
+    expect(config.mac.extraResources).toEqual([{ from: "build/herdr", to: "herdr" }]);
     expect(config.linux.extraResources).toEqual(base.linux.extraResources);
     expect(config.publish).toEqual(base.publish);
     expect(config.files).toEqual(base.files);

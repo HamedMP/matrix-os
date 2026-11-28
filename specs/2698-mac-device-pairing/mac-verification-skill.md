@@ -1,6 +1,6 @@
 # Mac Verification Skill
 
-Tracking ENG-495. This document defines the original verification contract. The [agent-driven continuation](./agent-mac-verification.md) supersedes the manual checkout setup and historical-run-only entry for the automated candidate; approval and source integrity boundaries remain required.
+Tracking ENG-495. This document defines the user flow and the initial supported verification operation.
 
 ## User flow
 
@@ -25,8 +25,6 @@ If the previous worktree becomes unavailable, an ordinary text reply in an idle 
 | Result | Return the test outcome, source provenance and screenshot of the disposable Electron window to the originating Chat. Deduplicate retries by request identity. Stop cancels a pending local action. For a direct Full Access run, recheck the same Chat, Full Access selection, source candidate and device proof before starting the build and each return attempt. Switching away from the Chat or Full Access, signing out or changing Computer, and revoking or disconnecting on the Mac cancel affected pending work. A committed receipt remains available in its Chat. |
 
 The initial verifier accepts an unchanged Matrix OS worktree or a single plain-text sign-in label edit. It validates the registered path, Git base and exact file bytes, runs the fixed sign-in suite and opens a disposable Electron window. Other edits fail admission. Reuse the already-paired device and the trusted local checkout configured from the native app menu. Multi-file source snapshots and additional app surfaces require separate execution contracts.
-
-[Terminal Mac Verification](./terminal-mac-verification.md) uses the same Chat and device boundaries with an explicit typed recipe. It supports the sign-in recipe and a disposable Files Trash scenario.
 
 ### Setup
 

@@ -45,8 +45,7 @@ function loadFixtureConfig(ambient: NodeJS.ProcessEnv = process.env) {
 beforeAll(() => {
   sourceFixture = mkdtempSync(join(tmpdir(), "matrix-electron-config-source-"));
   for (const path of ["desktop/electron.vite.config.ts", "desktop/src/main/renderer-url.ts",
-    "desktop/package.json", "scripts/release/build-source.mjs",
-    "scripts/release/mac-verification-support-pin.mjs"]) {
+    "desktop/package.json", "scripts/release/build-source.mjs"]) {
     const target = join(sourceFixture, path);
     mkdirSync(resolve(target, ".."), { recursive: true });
     copyFileSync(join(root, path), target);

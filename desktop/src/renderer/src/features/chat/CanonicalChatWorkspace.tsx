@@ -100,9 +100,7 @@ import { chatElectronPreviewWorktree, isChatElectronPreviewDraft, type StageChat
 import { canSendBackgroundMacCheck, isMacTerminalProbeDraft } from "./ChatMacTerminalProbe";
 import { ChatWorktreeActions } from "./ChatWorktreeActions";
 import { isMacVerificationReceiptRun } from "../../../../shared/chat-electron-preview";
-import { MATCHING_MAC_BUILD } from "../../../../shared/chat-electron-preview-ipc";
 import type { MacVerificationDraft, MacVerificationSubmission } from "./ChatMacVerification";
-import { macVerificationWorkflowParts } from "./mac-verification-workflow";
 import type { ComposerMentionAction } from "./ComposerMentionActions";
 
 type ChatWorktree = NonNullable<ReturnType<typeof chatElectronPreviewWorktree>>;
@@ -731,8 +729,6 @@ function CanonicalChatWorkspaceContent({
         : selectedCheckout ? controller.detail?.record.projectId : undefined;
       const input = {
         ...chatInput,
-        parts: !directBotId && (verification || pendingReply?.requestedExecutionRoot?.kind === "worktree")
-          ? macVerificationWorkflowParts(parts) : chatInput.parts,
         ...(executionRoot ? { executionRoot }
           : submission.projectSkill ? { executionRoot: { kind: "project" as const, projectId: submission.projectSkill.projectId } }
           : checkoutProjectId ? { executionRoot: { kind: "project" as const, projectId: checkoutProjectId } } : {}),
@@ -745,13 +741,7 @@ function CanonicalChatWorkspaceContent({
       if (verification) {
         if (!worktreeRequest && !submission.projectSkill && !permissionResources.length
           && requestedRoot?.projectId === verification.worktree.projectId && requestedRoot.worktreeId === verification.worktree.worktreeId) {
-          const compatible = pendingReply ? true : await verification.checkCompatibility();
-          if (!isCurrentSubmission() || compatible === undefined) return;
-          if (!compatible) {
-            setSubmissionError(`${MATCHING_MAC_BUILD} Choose Cancel verification to send without this check.`);
-            return;
-          }
-          const prepared = verification.beginSubmission(draftKey, submission.text.trim(), Boolean(pendingReply));
+          const prepared = verification.beginSubmission(draftKey);
           if (prepared === "draft-changed") {
             setSubmissionError("Choose Cancel verification before sending the edited message.");
             return;

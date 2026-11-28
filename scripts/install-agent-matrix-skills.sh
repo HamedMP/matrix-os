@@ -34,7 +34,6 @@ skills=(
   integrations
   jev-email-triage
   landing-design
-  mac-verification
   personal-daily-brief
   review-animations
   shadcn

@@ -59,27 +59,6 @@ function extractHermesFallbackSkillList(script: string): string[] {
 }
 
 describe("Matrix coding-agent skill sync", () => {
-  it("ships the actual Mac Verification workflow and discovers it for coding agents", () => {
-    const root = resolve(mkdirSync(join(tmpdir(), `matrix-mac-skill-${Date.now()}`), { recursive: true }));
-    try {
-      execFileSync("bash", [join(process.cwd(), "scripts/sync-matrix-agent-skills.sh"), join(process.cwd(), "skills/matrix")], {
-        env: { ...process.env, HOME: join(root, "cli"), MATRIX_HOME: join(root, "matrix"),
-          HERMES_HOME: join(root, "hermes"), MATRIX_AGENT_SKILLS_ROOT: join(root, "agent"),
-          MATRIX_SKILL_TARGETS: "matrix,claude,codex,hermes,agent" }, stdio: "pipe",
-      });
-      const source = readFileSync(join(process.cwd(), "skills/matrix/mac-verification/SKILL.md"), "utf8");
-      for (const destination of ["matrix/.agents/skills", "cli/.claude/skills", "cli/.agents/skills", "hermes/skills", "agent"]) {
-        expect(readFileSync(join(root, destination, "matrix-mac-verification/SKILL.md"), "utf8")).toBe(source);
-      }
-      expect(loadSkills(join(root, "matrix")).find(skill => skill.name === "matrix-mac-verification"))
-        .toMatchObject({ triggers: expect.arrayContaining(["verify on my Mac"]) });
-      expect(source).toContain("never ask them to find a checkout directory");
-      expect(source).toContain("Do not claim native verification passed before the receipt arrives");
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-
   it("ships the collaborative builder and its runnable example to every local harness", () => {
     const root = resolve(mkdirSync(join(tmpdir(), `matrix-collaborative-skill-${Date.now()}`), { recursive: true }));
     try {

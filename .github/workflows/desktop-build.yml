@@ -237,8 +237,7 @@ jobs:
     if: ${{ inputs.candidate_sha == '' }}
     name: macOS ${{ matrix.arch }}
     runs-on: ${{ matrix.runner }}
-    # Bound large offline-support packaging plus Apple's notarization queue.
-    timeout-minutes: 75
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -329,9 +328,6 @@ jobs:
         run: |
           node --input-type=module -e "import { readFile, writeFile } from 'node:fs/promises'; const p='desktop/package.json'; const j=JSON.parse(await readFile(p,'utf8')); const exact=process.env.RELEASE_VERSION || ''; const suffix=process.env.VERSION_SUFFIX || ''; j.version = exact || (j.version.replace(/-.*/, '') + '-' + suffix); await writeFile(p, JSON.stringify(j, null, 2) + '\n');"
 
-      - name: Prepare pinned Mac Verification support
-        run: pnpm run prepare:mac-verification-support --refresh-electron
-
       - name: Build desktop app
         env:
           NODE_OPTIONS: --max-old-space-size=4096
@@ -342,11 +338,6 @@ jobs:
 
       - name: Package desktop app
         working-directory: desktop
-        env:
-          # Exact coarse progress only: no wildcard, argv/options or raw notary logs.
-          DEBUG: electron-notarize,electron-notarize:staple
-          DEBUG_COLORS: "0"
-          DEBUG_HIDE_DATE: "0"
         run: pnpm exec electron-builder --config "$DESKTOP_BUILDER_CONFIG" --mac --${{ matrix.arch }} --publish never
 
       - name: Resolve mac artifact metadata
