@@ -5,6 +5,7 @@ import { createPlatformDb, type PlatformDb } from '../../packages/gateway/src/pl
 import { createNativeGmailRuntime } from '../../packages/gateway/src/integrations/native-gmail/runtime.js';
 import { createIntegrationRoutes } from '../../packages/gateway/src/integrations/routes.js';
 import type { PipedreamConnectClient } from '../../packages/gateway/src/integrations/pipedream.js';
+import { profileInput,consentInput } from '../gateway/google-data/fixtures.js';
 import { GMAIL_SCOPE } from '../../packages/gateway/src/integrations/native-gmail/types.js';
 
 describe('feature-off native Gmail user disconnect', () => {
@@ -48,6 +49,16 @@ describe('feature-off native Gmail user disconnect', () => {
   afterEach(async () => { vi.unstubAllGlobals(); await db.destroy(); });
   const disconnect = (userId?: string) => app.request(`/api/integrations/${connectionId}`, { method: 'DELETE', headers: userId ? { 'x-owner': userId } : {} });
 
+  it('durably queues consent cleanup in the same transaction that removes the native grant',async()=>{
+    await db.googleData!.purgeDelivery.pinRuntime('user_owner','machine-one');
+    const reviewedAt = new Date();
+    const expiresAt = new Date(reviewedAt.getTime() + 86400_000).toISOString();
+    const input = profileInput();
+    const profile=await db.googleData!.repository.reviewProfile({...input,ownerId:'user_owner',evidence:{...input.evidence,reviewedAt:reviewedAt.toISOString(),expiresAt}},0);
+    const consent=await db.googleData!.repository.recordConsent(consentInput(profile.id,{ownerId:'user_owner',googleAccountId:connectionId,expiresAt}),0);
+    expect((await app.request(`/api/integrations/${connectionId}`,{method:'DELETE',headers:{'x-owner':owner}})).status).toBe(200);
+    expect(await db.googleData!.purgeDelivery.poll('user_owner','machine-one')).toMatchObject([{googleAccountId:connectionId,consentId:consent.id}]);
+  });
   it('revokes and deletes only the owned grant after provider confirmation, notifying once', async () => {
     const response = await disconnect(owner);
     expect(response.status).toBe(200);

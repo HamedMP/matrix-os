@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
-import { sql, type Kysely, type Transaction } from 'kysely';
+import { sql, type Kysely, type RawBuilder } from 'kysely';
 import { z } from 'zod/v4';
+import { migrateGooglePurgeDelivery,queueGooglePurgeConsents,type PurgeConsentRow } from './purge-delivery/store.js';
 import { GoogleDataAuthorityError, GoogleDataConsentInputSchema, GoogleDataProfileInputSchema, type GoogleDataConsentInput, type GoogleDataProfileInput } from './profiles.js';
 
 export interface ReviewedGoogleProfile { id: string; revision: number; status: 'reviewed' | 'revoked'; input: GoogleDataProfileInput }
@@ -24,7 +25,7 @@ async function guarded<T>(work: () => Promise<T>): Promise<T> {
   try { return await work(); }
   catch (error) {
     if (error instanceof GoogleDataAuthorityError) throw error;
-    if (!(error instanceof z.ZodError)) console.warn('[google-data] Registry unavailable:', error instanceof Error ? error.name : 'UnknownError');
+    if (!(error instanceof z.ZodError)) console.warn('[google-data] Registry unavailable:', error instanceof Error ? 'operation_failed' : 'untyped_failure');
     throw new GoogleDataAuthorityError();
   }
 }
@@ -33,21 +34,49 @@ export function createGoogleDataRepository<DB>(db: Kysely<DB>, options: { now?: 
   const now = options.now ?? (() => new Date());
   let timer: ReturnType<typeof setInterval> | undefined;
   let sweeping: Promise<unknown> | undefined;
-  const locked = <T>(work: (tx: Transaction<DB>) => Promise<T>) => db.transaction().execute(async tx => {
-    await sql`SET LOCAL statement_timeout = '5s'`.execute(tx);
-    await sql`SET LOCAL lock_timeout = '2s'`.execute(tx);
-    // Every mutation shares one lock order; capacity count+insert is serialized across instances.
-    await sql`SELECT pg_advisory_xact_lock(5510356)`.execute(tx);
-    return work(tx);
-  });
+  const locked = <T>(work: (tx: Kysely<DB>) => Promise<T>) => {
+    const execute=async(tx:Kysely<DB>)=>{
+      await sql`SET LOCAL statement_timeout = '5s'`.execute(tx);
+      await sql`SET LOCAL lock_timeout = '2s'`.execute(tx);
+      await sql`SELECT pg_advisory_xact_lock(5510356)`.execute(tx);
+      return work(tx);
+    };
+    return db.isTransaction ? execute(db) : db.transaction().execute(execute);
+  };
+  const queueMatching=async(tx:Kysely<DB>,where:RawBuilder<unknown>)=>{
+    const rows=(await sql<PurgeConsentRow>`SELECT id,owner_id,google_account_id FROM google_data_consents WHERE ${where} ORDER BY id LIMIT 1001`.execute(tx)).rows;
+    if(rows.length>1000) throw new GoogleDataAuthorityError('capacity');
+    await queueGooglePurgeConsents(tx,rows);
+  };
   const cleanup = (at = now()) => guarded(() => locked(async tx => {
     const cutoff = new Date(at.getTime() - RETAIN_MS);
-    const before = await sql<{ count: number }>`SELECT count(*)::int AS count FROM google_data_consents`.execute(tx);
-    // Match snapshot's profile→consent order; profile deletion also cascades consents.
-    const deletedProfiles = await sql`DELETE FROM google_data_profiles WHERE COALESCE(invalidated_at,expires_at) <= ${cutoff} RETURNING id`.execute(tx);
-    await sql`DELETE FROM google_data_consents WHERE COALESCE(invalidated_at,expires_at) <= ${cutoff}`.execute(tx);
-    const after = await sql<{ count: number }>`SELECT count(*)::int AS count FROM google_data_consents`.execute(tx);
-    return { consents: before.rows[0]!.count - after.rows[0]!.count, profiles: deletedProfiles.rows.length };
+    // Queue invalid authority immediately. Each pass advances past already durable commands.
+    const invalid=(await sql<PurgeConsentRow>`SELECT c.id,c.owner_id,c.google_account_id FROM google_data_consents c
+      JOIN google_data_profiles p ON p.id=c.profile_id
+      WHERE (c.status='revoked' OR p.status='revoked' OR c.expires_at<=${at} OR p.expires_at<=${at})
+      AND NOT EXISTS(SELECT 1 FROM google_data_purge_commands d WHERE d.consent_id=c.id) ORDER BY c.id LIMIT 1000`.execute(tx)).rows;
+    await queueGooglePurgeConsents(tx,invalid);
+    // Match snapshot's profile -> consent order before deleting either relation.
+    await sql`WITH aged_consents AS (
+      SELECT c.profile_id FROM google_data_consents c JOIN google_data_profiles p ON p.id=c.profile_id
+      WHERE (COALESCE(c.invalidated_at,c.expires_at)<=${cutoff} OR COALESCE(p.invalidated_at,p.expires_at)<=${cutoff})
+      AND EXISTS(SELECT 1 FROM google_data_purge_commands d WHERE d.consent_id=c.id) ORDER BY c.id LIMIT 1000
+    ), empty_profiles AS (SELECT p.id FROM google_data_profiles p WHERE COALESCE(p.invalidated_at,p.expires_at)<=${cutoff}
+      AND NOT EXISTS(SELECT 1 FROM google_data_consents c WHERE c.profile_id=p.id) ORDER BY p.id LIMIT 1000)
+    SELECT p.id FROM google_data_profiles p WHERE p.id IN (SELECT profile_id FROM aged_consents UNION SELECT id FROM empty_profiles)
+      ORDER BY p.id FOR UPDATE`.execute(tx);
+    const removed=await sql`DELETE FROM google_data_consents WHERE id IN (SELECT c.id FROM google_data_consents c
+      JOIN google_data_profiles p ON p.id=c.profile_id
+      WHERE (COALESCE(c.invalidated_at,c.expires_at)<=${cutoff} OR COALESCE(p.invalidated_at,p.expires_at)<=${cutoff})
+      AND EXISTS(SELECT 1 FROM google_data_purge_commands d WHERE d.consent_id=c.id) ORDER BY c.id LIMIT 1000) RETURNING id`.execute(tx);
+    const profiles=await sql`DELETE FROM google_data_profiles WHERE id IN (SELECT p.id FROM google_data_profiles p
+      WHERE COALESCE(p.invalidated_at,p.expires_at)<=${cutoff}
+      AND NOT EXISTS(SELECT 1 FROM google_data_consents c WHERE c.profile_id=p.id) ORDER BY p.id LIMIT 1000) RETURNING id`.execute(tx);
+    // Never expire pending delivery or permit a still-present consent to be requeued after ACK cleanup.
+    await sql`DELETE FROM google_data_purge_commands WHERE id IN (SELECT d.id FROM google_data_purge_commands d
+      WHERE d.state='acked' AND d.acked_at<=${cutoff}
+      AND NOT EXISTS(SELECT 1 FROM google_data_consents c WHERE c.id=d.consent_id) ORDER BY d.acked_at,d.id LIMIT 100)`.execute(tx);
+    return {consents:removed.rows.length,profiles:profiles.rows.length};
   }));
   return {
     async migrate() {
@@ -65,6 +94,7 @@ export function createGoogleDataRepository<DB>(db: Kysely<DB>, options: { now?: 
         await sql`CREATE INDEX IF NOT EXISTS google_data_profile_owner ON google_data_profiles(owner_id)`.execute(tx);
         await sql`CREATE INDEX IF NOT EXISTS google_data_profile_expiry ON google_data_profiles(expires_at)`.execute(tx);
         await sql`CREATE INDEX IF NOT EXISTS google_data_consent_expiry ON google_data_consents(expires_at)`.execute(tx);
+        await migrateGooglePurgeDelivery(tx);
       }));
       await cleanup();
     },
@@ -89,6 +119,7 @@ export function createGoogleDataRepository<DB>(db: Kysely<DB>, options: { now?: 
             if (!result.rows.length) throw new GoogleDataAuthorityError('conflict');
             return profile(result.rows[0])!;
           }
+          await queueMatching(tx,sql`owner_id=${input.ownerId} AND profile_id=${id}`);
           const result = await sql<ProfileRow>`UPDATE google_data_profiles SET revision=revision+1,status='reviewed',payload=${JSON.stringify(input)}::jsonb,
             expires_at=${new Date(input.evidence.expiresAt)},invalidated_at=NULL,updated_at=${at}
             WHERE id=${id} AND owner_id=${input.ownerId} AND revision=${expectedRevision} RETURNING *`.execute(tx);
@@ -117,6 +148,7 @@ export function createGoogleDataRepository<DB>(db: Kysely<DB>, options: { now?: 
             if (!result.rows.length) throw new GoogleDataAuthorityError('conflict');
             return consent(result.rows[0])!;
           }
+          await queueMatching(tx,sql`owner_id=${input.ownerId} AND google_account_id=${input.googleAccountId} AND purpose_id=${input.purposeId} AND profile_id=${input.profileId}`);
           const result = await sql<ConsentRow>`UPDATE google_data_consents SET id=${id},revision=revision+1,status='active',payload=${JSON.stringify(input)}::jsonb,
             expires_at=${new Date(input.expiresAt)},invalidated_at=NULL,updated_at=${at}
             WHERE owner_id=${input.ownerId} AND google_account_id=${input.googleAccountId} AND purpose_id=${input.purposeId} AND profile_id=${input.profileId} AND revision=${expectedRevision} RETURNING *`.execute(tx);
@@ -128,6 +160,7 @@ export function createGoogleDataRepository<DB>(db: Kysely<DB>, options: { now?: 
     async revokeProfile(id: string, ownerId: string, expectedRevision: number) {
       return guarded(() => locked(async tx => {
         z.uuid().parse(id); keySchema.shape.ownerId.parse(ownerId); expectedSchema.parse(expectedRevision);
+        await queueMatching(tx,sql`owner_id=${ownerId} AND profile_id=${id}`);
         const result = await sql`UPDATE google_data_profiles SET revision=revision+1,status='revoked',invalidated_at=${now()},updated_at=${now()}
           WHERE id=${id} AND owner_id=${ownerId} AND revision=${expectedRevision} RETURNING revision`.execute(tx);
         if (!result.rows.length) throw new GoogleDataAuthorityError('conflict');
@@ -137,6 +170,7 @@ export function createGoogleDataRepository<DB>(db: Kysely<DB>, options: { now?: 
     async revokeConsent(value: unknown, expectedRevision: number) {
       return guarded(() => locked(async tx => {
         const key = keySchema.parse(value); expectedSchema.parse(expectedRevision);
+        await queueMatching(tx,sql`owner_id=${key.ownerId} AND google_account_id=${key.googleAccountId} AND purpose_id=${key.purposeId} AND profile_id=${key.profileId}`);
         const result = await sql`UPDATE google_data_consents SET revision=revision+1,status='revoked',invalidated_at=${now()},updated_at=${now()}
           WHERE owner_id=${key.ownerId} AND google_account_id=${key.googleAccountId} AND purpose_id=${key.purposeId} AND profile_id=${key.profileId} AND revision=${expectedRevision} RETURNING revision`.execute(tx);
         if (!result.rows.length) throw new GoogleDataAuthorityError('conflict');
@@ -146,6 +180,7 @@ export function createGoogleDataRepository<DB>(db: Kysely<DB>, options: { now?: 
     async revokeAccount(ownerId: string, googleAccountId: string) {
       return guarded(() => locked(async tx => {
         keySchema.shape.ownerId.parse(ownerId); z.uuid().parse(googleAccountId);
+        await queueMatching(tx,sql`owner_id=${ownerId} AND google_account_id=${googleAccountId}`);
         const result = await sql`UPDATE google_data_consents SET revision=revision+1,status='revoked',invalidated_at=${now()},updated_at=${now()}
           WHERE owner_id=${ownerId} AND google_account_id=${googleAccountId} AND status='active' RETURNING id`.execute(tx);
         return result.rows.length;
@@ -153,6 +188,7 @@ export function createGoogleDataRepository<DB>(db: Kysely<DB>, options: { now?: 
     },
     async deleteOwner(ownerId: string) {
       return guarded(() => locked(async tx => { keySchema.shape.ownerId.parse(ownerId);
+        await queueMatching(tx,sql`owner_id=${ownerId}`);
         return (await sql`DELETE FROM google_data_profiles WHERE owner_id=${ownerId} RETURNING id`.execute(tx)).rows.length;
       }));
     },
@@ -180,7 +216,7 @@ export function createGoogleDataRepository<DB>(db: Kysely<DB>, options: { now?: 
     startCleanup() {
       if (timer) return;
       timer = setInterval(() => {
-        if (!sweeping) sweeping = cleanup().catch(error => console.warn('[google-data] Cleanup unavailable:', error instanceof Error ? error.name : 'UnknownError')).finally(() => { sweeping = undefined; });
+        if (!sweeping) sweeping = cleanup().catch(error => console.warn('[google-data] Cleanup unavailable:', error instanceof Error ? 'operation_failed' : 'untyped_failure')).finally(() => { sweeping = undefined; });
       }, 300000);
       timer.unref();
     },
