@@ -24,6 +24,7 @@ describe('Gmail PostgreSQL CI qualification', () => {
       'tests/platform/google-qualified-startup.test.ts',
       'tests/platform/pilot-cohort-access.test.ts',
       'tests/platform/pilot-native-app-capability.test.ts',
+      'tests/platform/hosted-gmail-revocation-proxy.test.ts',
       'tests/platform/account-deletion-google-cleanup.test.ts']) expect(files).toContain(file);
     expect(new Set(files).size).toBe(files.length);
   });

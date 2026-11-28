@@ -111,7 +111,7 @@ export function createIntegrationReadCallRoutes(options: {
       if (binding) {
         const data = await executeJevBoundRead({ ownerId: uid, externalUserId: user.pipedream_external_id,
           connection: selected.connection, binding, action, params, pipedream: options.pipedream, signal: c.req.raw.signal, beforeSend: lease?.beforeSend });
-        return await integrationActionSuccess(c, { db: options.db, connectionId: selected.connection.id, service, action, data, beforeRelease: lease?.release });
+        return await integrationActionSuccess(c, { db: options.db, connectionId: selected.connection.id, service, action, data, risk: actionDef.risk, beforeRelease: lease?.release });
       }
       const { data, summary } = await executeIntegrationAction({
         pipedream: options.pipedream,
@@ -132,6 +132,7 @@ export function createIntegrationReadCallRoutes(options: {
         action,
         data,
         summary,
+        risk: actionDef.risk,
         beforeRelease: lease?.release,
       });
     } catch (err: unknown) {

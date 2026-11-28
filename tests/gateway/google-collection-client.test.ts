@@ -12,7 +12,7 @@ import { createGoogleRunPinStore } from '../../packages/gateway/src/google-data/
 import { createGoogleRuntimeInferenceAuthority } from '../../packages/gateway/src/google-data/runtime/runtime-authority.js';
 import { GOOGLE_POLICY_HARNESS_ID } from '../../packages/gateway/src/google-data/runtime/profile-resolution.js';
 import { createGoogleCollectionClient, GoogleCollectionClientError, type GoogleCollectionClientDependencies } from '../../packages/gateway/src/google-data/runtime/collection-client.js';
-import { createGoogleOwnerConsentClient } from '../../packages/gateway/src/google-data/runtime/owner-consent-client.js';
+import { createGoogleOwnerConsentClient, googleOwnerConsentDigest, type GoogleOwnerConsentInput } from '../../packages/gateway/src/google-data/runtime/owner-consent-client.js';
 import type { GoogleInferenceIdentity } from '../../packages/gateway/src/google-data/runtime/inference-policy.js';
 import { createAuthorityFixture } from './google-data/fixture-db.js';
 import { accountId, consentInput, profileInput } from './google-data/fixtures.js';
@@ -72,11 +72,12 @@ describe('trusted Google collection client', () => {
     expect(Date.parse(context!.retentionDeadline)).toBe(Date.parse(claim.policyExpiresAt)); // evidence expires before published 1-day retention
     expect(f.requestConsent).toHaveBeenCalledOnce();
     const notice = f.requestConsent.mock.calls[0]![0];
-    expect(notice).toEqual({ disclosure: expect.objectContaining({ dataKinds: [...kinds], retention: f.input.retention,
+    expect(notice).toEqual({ actionDigest: expect.stringMatching(/^[0-9a-f]{64}$/), disclosure: expect.objectContaining({ dataKinds: [...kinds], retention: f.input.retention,
       recipients: f.input.disclosure.recipients, purpose: f.input.disclosure.purpose }), expiresAt: claim.policyExpiresAt });
     expect(JSON.stringify(notice)).not.toMatch(/fingerprint|runtimeHandle|verified-account-map|endpoint|routeDigest|owner-one/);
     const post = vi.mocked(f.transport).mock.calls.find(([, r]) => r.path === '/gmail/processing-consents')![1];
     expect(post.body).toMatchObject({ connectionId: accountId, accepted: true, expectedConsentRevision: 0 });
+    expect(notice.actionDigest).toBe(googleOwnerConsentDigest(post.body as GoogleOwnerConsentInput));
     expect(post.body).not.toHaveProperty('ownerId'); expect(post.body).not.toHaveProperty('route');
   });
   it('uses existing exact consent without prompting and bounds retention by the existing expiry', async () => {

@@ -90,7 +90,7 @@ export async function authenticatedApprovalProxyProof(input: OwnerApprovalProxyI
       if (browser) return browser;
     }
     return mintCustomMcpApprovalProof({ method: input.method, path: input.path, body, secret: input.platformSecret,
-      identity: { handle: input.handle, userId: input.identity.userId, source: input.identity.source } });
+      identity: { ...input.identity, handle: input.handle } });
   } catch (error: unknown) {
     cancel();
     if (error instanceof Error && error.message === "ApprovalBodyTimeout") return { status: 408 };

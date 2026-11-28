@@ -7,7 +7,9 @@ import { INTEGRATION_READ_SCOPE_HEADER, hasIntegrationReadScope } from "./scope-
 import { requireRequestPrincipal } from "../request-principal.js";
 import { authorizeChatIntegrationRequest, MATRIX_PREVIEW_DRIVE_ACTION_GRANT_KEY } from "./chat-action-guard.js";
 import type { PreviewDrivePlatformClient } from "../chat/preview-drive-platform-client.js";
-import { previewDriveActionCanonical } from "@matrix-os/contracts";
+import { namesConsentPath } from "../google-data/consent-route-guard.js";
+import { GMAIL_HOSTED_GRANT_PROOF_HEADER, GMAIL_HOSTED_REVOCATION_PROOF_HEADER, gmailConsentRevocationAccount,
+  isGmailConsentGrant, previewDriveActionCanonical } from "@matrix-os/contracts";
 
 function buildIntegrationProxyUrl(c: Context, targetBase: string, routePrefix: string): string {
   const targetUrl = new URL(targetBase);
@@ -81,9 +83,19 @@ export async function proxyIntegrationRequest(
     if (routePrefix === "/api/integrations") {
       // Platform verifies this machine's token, so sign the authenticated
       // Gateway principal rather than forwarding any caller-supplied ID.
-      const actorId = requireRequestPrincipal(c).userId;
-      for (const [key, value] of Object.entries(delegatedIntegrationHeaders(actorId, options.machineToken))) {
+      const principal = requireRequestPrincipal(c);
+      for (const [key, value] of Object.entries(delegatedIntegrationHeaders(principal.userId, options.machineToken))) {
         headers.set(key, value);
+      }
+      const proofHeader = gmailConsentRevocationAccount(c.req.method, c.req.path, routePrefix)
+        ? GMAIL_HOSTED_REVOCATION_PROOF_HEADER : isGmailConsentGrant(c.req.method, c.req.path, routePrefix)
+          ? GMAIL_HOSTED_GRANT_PROOF_HEADER : null;
+      const proof = proofHeader && c.req.header(proofHeader);
+      const session = c.req.header("authorization");
+      if (proofHeader && proof && principal.source === "platform-verified") {
+        headers.set(proofHeader, proof);
+      } else if (session && c.req.method !== "GET" && c.req.method !== "HEAD" && namesConsentPath(c)) {
+        headers.set("x-matrix-google-owner-authorization", session);
       }
       const runContext = c.get(MATRIX_MCP_RUN_CONTEXT_KEY as never) as MatrixMcpRunContext | undefined;
       if (hasIntegrationReadScope(runContext)) {

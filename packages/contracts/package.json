@@ -124,6 +124,7 @@
     "#managed-google-route": "./src/managed-google-route.ts",
     "#managed-google-route-control": "./src/managed-google-route-control.ts",
     "#google-qualified-funded": "./src/google-qualified-funded.ts",
+    "#gmail-consent-revocation": "./src/gmail-consent-revocation.ts",
     "#funded-ai-execution-recovery": "./src/funded-ai-execution-recovery.ts",
     "#jev": "./src/jev.ts",
     "#jev-inbox": "./src/jev-inbox.ts",

@@ -7,7 +7,7 @@ import type { GoogleCollectionClientDependencies } from '../../packages/gateway/
 import type { GoogleProcessingClaim } from '../../packages/gateway/src/google-data/runtime/envelope.js';
 const account = '123e4567-e89b-42d3-a456-426614174000';
 const binding = { kind: 'managed_chat', ownerId: 'user_owner', chatId: 'chat_one', runId: 'run_one', runtimeHandle: `runtime_${'a'.repeat(32)}`, executionGeneration: '1', capabilities: ['integration.call'], workspace: { kind: 'chat_workspace' }, rootFingerprint: 'a'.repeat(64) } as ManagedPiRuntimeBinding;
-const notice: Parameters<GoogleCollectionClientDependencies['requestConsent']>[0] = { expiresAt: new Date(Date.now() + 60000).toISOString(), disclosure: {
+const notice: Parameters<GoogleCollectionClientDependencies['requestConsent']>[0] = { actionDigest: 'b'.repeat(64), expiresAt: new Date(Date.now() + 60000).toISOString(), disclosure: {
   profileId: '223e4567-e89b-42d3-a456-426614174000', profileRevision: 1, googleAccountId: account, evidenceRevision: 1, disclosureRevision: 1, retentionRevision: 1,
   purposeId: 'mail-assistance', purpose: 'Help with your email', recipients: [{ recipientId: 'cf', name: 'Cloudflare', role: 'AI processing' }, { recipientId: 'model', name: 'Model provider', role: 'Inference' }],
   dataKinds: ['gmail-metadata', 'gmail-content', 'gmail-attachments', 'google-derived-context'], retention: { revision: 1, policyId: 'retention', mode: 'duration', maxAgeSeconds: 86400 }, expiresAt: new Date(Date.now() + 120000).toISOString() } };
@@ -20,7 +20,7 @@ function fixture(options: { missing?: boolean; prompt?: boolean; write?: boolean
   let currentClaim = structuredClone(claim);
   const prepare = vi.fn(async (_binding: ManagedPiRuntimeBinding, _account: string, signal: AbortSignal, requestConsent: GoogleCollectionClientDependencies['requestConsent']) => {
     if (!consentActive) {
-      if (await requestConsent(structuredClone(notice), signal) !== true) throw new Error('not accepted');
+      expect(await requestConsent(structuredClone(notice), signal)).toEqual({ platformApprovalProof: 'trusted-owner-proof' });
       consentActive = true;
     }
     return structuredClone(currentClaim);
@@ -33,8 +33,10 @@ function fixture(options: { missing?: boolean; prompt?: boolean; write?: boolean
   const open = tools.open(binding, event => events.push(event));
   const request = BotToolRequestSchema.parse({ capability: 'integration.call', toolCallId: 'call_one', args: { service: 'gmail', connectionId: account, action: options.write ? 'send_email' : 'get_message', params: options.write ? { to: 'recipient@example.invalid', subject: 'Synthetic', body: 'Synthetic' } : { messageId: 'message1' } } });
   const run = async () => { await open; return tools.dispatch(binding, request, controller.signal); };
-  const submit = (decision: 'approve' | 'decline' | 'cancel', ownerId = binding.ownerId) => tools.submit({ owner: { type: 'personal', ownerId }, chatId: binding.chatId, runId: binding.runId,
-    approvalId: events.filter(e => e.type === 'approval.requested').at(-1).approvalId, decision, clientRequestId: 'client_one' });
+  const submit = (decision: 'approve' | 'decline' | 'cancel', ownerId = binding.ownerId, proven = true) => tools.submit({ owner: { type: 'personal', ownerId }, chatId: binding.chatId, runId: binding.runId,
+    approvalId: events.filter(e => e.type === 'approval.requested').at(-1).approvalId, decision, clientRequestId: 'client_one',
+    actionDigest: events.filter(e => e.type === 'approval.requested').at(-1).actionDigest,
+    ...(proven ? { platformApprovalProof: 'trusted-owner-proof' } : {}) });
   return { tools, controller, events, call, prepare, run, submit, request, replaceClaim: (patch: Partial<GoogleProcessingClaim>) => { currentClaim = { ...currentClaim, ...patch }; }, revoke: () => { consentActive = false; }, supervise: () => { permissionMode = 'supervised'; } };
 }
 describe('owner Gmail processing consent', () => {
@@ -42,6 +44,9 @@ describe('owner Gmail processing consent', () => {
     const f = fixture(); const work = f.run();
     await vi.waitFor(() => expect(f.events[0]?.type).toBe('approval.requested'));
     expect(f.call).not.toHaveBeenCalled(); const event = f.events[0];
+    expect(event.actionDigest).toBe(notice.actionDigest);
+    await expect(f.submit('approve', binding.ownerId, false)).rejects.toThrow();
+    expect(f.call).not.toHaveBeenCalled();
     expect(event.title).toBe('Allow this AI to use Gmail data?');
     expect(event.safeDescription).toMatch(/Cloudflare/); expect(event.safeDescription).toMatch(/Model provider/);
     expect(event.safeDescription).toMatch(/Help with your email/); expect(event.safeDescription).toMatch(/attachment/i); expect(event.safeDescription).toMatch(/1 day/);

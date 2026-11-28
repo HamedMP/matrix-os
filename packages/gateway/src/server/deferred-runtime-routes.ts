@@ -14,6 +14,7 @@ import { httpRequestDuration, httpRequestsTotal, metricsRegistry, normalizePath 
 import { createBrowserSetupClient, isBrowserRuntimeEnabled, registerBrowserSetupRoutes, resolveBrowserSetupOwner } from "../browser-lab/setup.js";
 import { registerAppRuntimeRoutes } from "./app-runtime-routes.js";
 import { authorizeChatIntegrationRequest } from "../integrations/chat-action-guard.js";
+import { denyNonInteractiveGmailConsentMutation } from "../google-data/consent-route-guard.js";
 import type { SharedBrowserBroker } from "../shared-browser/broker.js";
 
 const INTEGRATION_PROXY_BODY_LIMIT = 64 * 1024;
@@ -80,7 +81,8 @@ export async function registerDeferredRuntimeRoutes(options: DeferredRuntimeRout
   // Deferred route mounts -- must come AFTER auth middleware
   if (integrationRoutes) {
     app.use("/api/integrations/*", bodyLimit({ maxSize: INTEGRATION_PROXY_BODY_LIMIT }), async (c, next) => {
-      const denied = await authorizeChatIntegrationRequest(c, { localRoutes: true });
+      const denied = denyNonInteractiveGmailConsentMutation(c)
+        ?? await authorizeChatIntegrationRequest(c, { localRoutes: true });
       if (denied) return denied;
       await next();
     });
@@ -91,6 +93,8 @@ export async function registerDeferredRuntimeRoutes(options: DeferredRuntimeRout
       proxyIntegrationRequest(c, internalIntegrationBaseUrl, internalPlatformToken),
     );
     app.all("/api/integrations/*", bodyLimit({ maxSize: INTEGRATION_PROXY_BODY_LIMIT }), async (c) => {
+      const consentDenied = denyNonInteractiveGmailConsentMutation(c);
+      if (consentDenied) return consentDenied;
       const isPublic =
         c.req.path === "/api/integrations/available" ||
         c.req.path.startsWith("/api/integrations/webhook/");

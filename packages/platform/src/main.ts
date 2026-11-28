@@ -10,7 +10,7 @@ import { createAccountDeletionRoutes } from './account-deletion/routes.js';
 import { recordSiteRecipientLifecycle } from './sites/account-lifecycle.js';
 import { terminateEmailClerkSessionForMatrixSignOut } from './sites/email-viewer-sessions.js';
 import type { AccountDeletionRuntime } from './account-deletion/wiring.js';
-import { registerInternalIntegrationRoutes } from './internal-integration-route-registration.js';
+import { createGmailOwnerSessionVerifier, registerInternalIntegrationRoutes } from './internal-integration-route-registration.js';
 import { registerGetStartedBotNameRoutes } from './get-started-bot-names.js';
 import { Hono, type Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
@@ -773,6 +773,7 @@ export function createApp(deps: {
     db,
     platformSecret,
     internalIntegrationRoutes: deps.internalIntegrationRoutes,
+    verifyGmailOwnerSession: createGmailOwnerSessionVerifier(clerkAuth, platformJwtSecret),
     privatePreviewEligibility,
   });
   registerGetStartedBotNameRoutes(app, { db, platformSecret, env: appEnv });

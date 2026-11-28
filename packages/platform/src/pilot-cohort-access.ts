@@ -48,6 +48,17 @@ function independentCapability(method: string, path: string): boolean {
 }
 
 /**
+ * Downstream verifiers (journey, MCP) accept the scheme case-insensitively and
+ * trim surrounding whitespace, so admission must see the same token. A header
+ * claiming the bearer scheme that cannot be reduced to one token is refused
+ * rather than skipped, so no spelling reaches a laxer verifier unchecked.
+ */
+export function parseBearerAuthorization(header: string | undefined): string | undefined | 'malformed' {
+  if (header === undefined || !/^\s*bearer(?:\s|$)/i.test(header)) return undefined;
+  return /^\s*bearer\s+(\S+)\s*$/i.exec(header)?.[1] ?? 'malformed';
+}
+
+/**
  * Extra admission, never authentication: invalid/absent credentials still reach
  * the existing route-specific verifier. Checks all supported session carriers
  * so a second signed nonmember cookie cannot become a downstream fallback.
@@ -65,9 +76,11 @@ export function createPilotCohortAccessGuard(opts: {
       return c.json({ error: 'Access unavailable' }, status);
     };
     if (opts.policy.status === 'invalid') return deny(503);
+    const authorization = parseBearerAuthorization(c.req.header('authorization'));
+    if (authorization === 'malformed') return deny(401);
     const cookie = c.req.header('cookie');
     const tokens = [
-      c.req.header('authorization')?.match(/^Bearer (.+)$/)?.[1],
+      authorization,
       readCookie(cookie, '__session'), readCookie(cookie, APP_SESSION_COOKIE), readCookie(cookie, CODE_SESSION_COOKIE),
     ];
     for (const token of tokens) {

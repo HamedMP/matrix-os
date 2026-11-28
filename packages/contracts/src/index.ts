@@ -1519,6 +1519,7 @@ export * from '#managed-google-route';
 export * from '#managed-google-route-control';
 export * from '#google-qualified-funded';
 export * from '#google-qualified-authorization';
+export * from '#gmail-consent-revocation';
 export * from '#pilot-cohort';
 export * from "#native-mobile-target";
 

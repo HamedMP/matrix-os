@@ -1,5 +1,7 @@
 import type { Context } from 'hono';
 import type { BeforeGmailSend } from './gmail-send-admission.js';
+import { GOOGLE_PROCESSING_HEADER } from '../google-data/runtime/envelope.js';
+import { connectedAccountMethod } from './connection-projection.js';
 
 export interface GoogleCollectionLease { beforeSend: BeforeGmailSend; release(): Promise<void>; }
 
@@ -10,10 +12,15 @@ export class GoogleCollectionRefusedError extends Error {
   constructor() { super('Integration service unavailable'); this.name = 'GoogleCollectionRefusedError'; }
 }
 /** Optional trusted server dependency. Requests cannot supply admission or
- * replace the canonical account. A lease is settled once on every outcome. */
+ * replace the canonical account. A lease is settled once on every outcome.
+ * Pipedream Gmail callers without a processing envelope keep their legacy path.
+ * A supplied envelope always goes through the trusted verifier. Native Gmail
+ * and missing or unknown account identities always require admission. */
 export async function admitGoogleCollection(hook: GoogleCollectionAdmission | undefined, c: Context, ownerId: string,
-  connection: { id: string; user_id: string; service: string; status: string }, path: '/call' | '/read-call'): Promise<GoogleCollectionLease | undefined> {
+  connection: { id: string; user_id: string; service: string; status: string; pipedream_account_id?: string | null }, path: '/call' | '/read-call'): Promise<GoogleCollectionLease | undefined> {
   if (!hook || connection.service !== 'gmail') return undefined;
+  if (c.req.header(GOOGLE_PROCESSING_HEADER) === undefined && connection.pipedream_account_id
+    && connectedAccountMethod({ service: connection.service, pipedream_account_id: connection.pipedream_account_id }) === 'pipedream') return undefined;
   try {
     if (!connection.id || connection.user_id !== ownerId || connection.status !== 'active') throw new GoogleCollectionRefusedError();
     const lease = await hook.admit(c, { id: connection.id, user_id: connection.user_id, service: connection.service, status: connection.status }, path);

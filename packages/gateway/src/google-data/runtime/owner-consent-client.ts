@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { z } from 'zod/v4';
 import { discardGooglePolicyResponse } from './response-cleanup.js';
 import type { BotIntegrationTransport } from '../../bots/integration-client.js';
@@ -12,6 +13,9 @@ const Consent = GoogleDataConsentInputSchema.omit({ ownerId: true, googleAccount
 const Recorded = z.strictObject({ consentRevision: z.number().int().positive().max(2_147_483_646), consentActive: z.literal(true) });
 export type GoogleOwnerProfileDisclosure = z.infer<typeof OwnerProfile>;
 export type GoogleOwnerConsentInput = z.infer<typeof Consent>;
+export function googleOwnerConsentDigest(value: GoogleOwnerConsentInput): string {
+  return createHash('sha256').update('matrix-gmail-owner-consent:v1\0' + JSON.stringify(Consent.parse(value))).digest('hex');
+}
 export class GoogleOwnerConsentError extends Error {
   constructor() { super('Google data settings unavailable'); this.name = 'GoogleOwnerConsentError'; }
 }
@@ -41,11 +45,11 @@ async function json(response: Response, signal: AbortSignal): Promise<unknown> {
 /** Server-only fixed owner settings paths. Transport must supply verified owner delegation;
  * neither owner selection nor private provider facts are accepted from an HTTP/model payload. */
 export function createGoogleOwnerConsentClient(transport: BotIntegrationTransport) {
-  async function send(ownerId: string, method: 'GET' | 'POST', path: string, body?: GoogleOwnerConsentInput, signal?: AbortSignal) {
+  async function send(ownerId: string, method: 'GET' | 'POST', path: string, body?: GoogleOwnerConsentInput, signal?: AbortSignal, ownerConsentProof?: string) {
     if (!GoogleDataConsentInputSchema.shape.ownerId.safeParse(ownerId).success) throw new GoogleOwnerConsentError();
     const bounded = AbortSignal.any([AbortSignal.timeout(10000), ...(signal ? [signal] : [])]);
     if (bounded.aborted) throw new GoogleOwnerConsentError();
-    const pending = transport(ownerId, { method, path, ...(body ? { body } : {}), signal: bounded });
+    const pending = transport(ownerId, { method, path, ...(body ? { body } : {}), ...(ownerConsentProof ? { ownerConsentProof } : {}), signal: bounded });
     void pending.then(response => { if (bounded.aborted) discardGooglePolicyResponse(response); }, () => undefined);
     const response = await abortable(pending, bounded);
     return json(response, bounded);
@@ -63,11 +67,11 @@ export function createGoogleOwnerConsentClient(transport: BotIntegrationTranspor
         throw new GoogleOwnerConsentError();
       }
     },
-    async recordConsent(ownerId: string, value: GoogleOwnerConsentInput, signal?: AbortSignal) {
+    async recordConsent(ownerId: string, value: GoogleOwnerConsentInput, signal?: AbortSignal, ownerConsentProof?: string) {
       try {
         const input = Consent.parse(value);
         if (Buffer.byteLength(JSON.stringify(input)) > 4096) throw new GoogleOwnerConsentError();
-        const recorded = Recorded.parse(await send(ownerId, 'POST', '/gmail/processing-consents', input, signal));
+        const recorded = Recorded.parse(await send(ownerId, 'POST', '/gmail/processing-consents', input, signal, ownerConsentProof));
         if (recorded.consentRevision !== input.expectedConsentRevision + 1) throw new GoogleOwnerConsentError();
         return recorded;
       } catch (error: unknown) {

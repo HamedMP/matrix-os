@@ -204,7 +204,7 @@ export function createIntegrationCallHandler(deps: IntegrationCallHandlerDepende
         signal: c.req.raw.signal,
       });
 
-      return await integrationActionSuccess(c, { db, connectionId: connection.id, service, action, data, summary, beforeRelease: lease?.release });
+      return await integrationActionSuccess(c, { db, connectionId: connection.id, service, action, data, summary, risk: actionDef.risk, beforeRelease: lease?.release });
     } catch (err: unknown) {
       try { await lease?.release(); } catch (releaseError) { return integrationActionFailure(c, releaseError, service, action); }
       return integrationActionFailure(c, err, service, action);

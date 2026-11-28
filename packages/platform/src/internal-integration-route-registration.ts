@@ -1,5 +1,14 @@
 import { createAccountDeletionMutationGuard } from './account-deletion/integration-admission.js';
+import { GMAIL_HOSTED_GRANT_PROOF_HEADER, GMAIL_HOSTED_REVOCATION_PROOF_HEADER, gmailConsentRevocationAccount,
+  isGmailConsentGrant, type GmailHostedRevocationReceipt } from '@matrix-os/contracts';
 import { Hono } from 'hono';
+import { bodyLimit } from 'hono/body-limit';
+import { verifyGmailOwnerApprovalProof } from './custom-mcp-approval-proof.js';
+import { verifyGmailHostedConsentProof } from './gmail-hosted-revocation-proof.js';
+import { readRoutineProofProxyBody } from './routine-proof-proxy-body.js';
+import type { ClerkAuth } from './clerk-auth.js';
+import { APP_SESSION_COOKIE, readCookie } from './session-cookies.js';
+import { isUserSessionProvenance, verifySyncJwt } from './sync-jwt.js';
 import { canClerkUserAccessMachine, getPersonalAccountRestrictedMachineByHandle } from './customer-vps-preview.js';
 import { getContainer, getRunningUserMachineByHandle, type PlatformDB } from './db.js';
 import { createInternalIntegrationGuard } from './internal-integration-guard.js';
@@ -18,10 +27,29 @@ import { createUnavailableInternalIntegrationRoutes } from './integration-route-
  */
 const HandleSchema = z.string().regex(HANDLE_PATTERN);
 
+type GmailOwnerSession = { handle: string; ownerId: string; authorization?: string; cookie?: string };
+
+export function createGmailOwnerSessionVerifier(clerkAuth: ClerkAuth | undefined, jwtSecret: string | undefined) {
+  return async ({ handle, ownerId, authorization, cookie }: GmailOwnerSession): Promise<boolean> => {
+    const clerkToken = clerkAuth?.extractToken(authorization, cookie);
+    if (clerkToken && (await clerkAuth!.verifyAndMatchOwner(clerkToken, ownerId)).authenticated) return true;
+    const syncToken = authorization?.startsWith('Bearer ') ? authorization.slice(7) : readCookie(cookie, APP_SESSION_COOKIE);
+    if (!jwtSecret || !syncToken) return false;
+    try {
+      const claims = await verifySyncJwt(syncToken, { secret: jwtSecret, expectedHandle: handle, clockTolerance: 0 });
+      return claims.sub === ownerId && isUserSessionProvenance(claims.session_provenance);
+    } catch (error: unknown) {
+      if (!(error instanceof Error)) throw error;
+      return false;
+    }
+  };
+}
+
 export function registerInternalIntegrationRoutes(app: Hono<any>, options: {
   db: PlatformDB;
   platformSecret: string;
   internalIntegrationRoutes?: Hono<any>;
+  verifyGmailOwnerSession?(input: GmailOwnerSession): Promise<boolean>;
   /** Spec 537 P5; without it every Private Preview stays denied. */
   privatePreviewEligibility?: PrivatePreviewEligibility;
 }): void {
@@ -33,6 +61,7 @@ export function registerInternalIntegrationRoutes(app: Hono<any>, options: {
       internalSignedOwnerDelegation: boolean;
       internalContainerMachineId: string;
       internalContainerPersonalOwner: string;
+      gmailHostedRevocationReceipt?: GmailHostedRevocationReceipt;
     };
   }>();
   const integrationGuard = createInternalIntegrationGuard();
@@ -108,6 +137,61 @@ export function registerInternalIntegrationRoutes(app: Hono<any>, options: {
     isCleanup: c => c.get('internalSignedOwnerDelegation') === true && c.req.method === 'POST'
       && /^\/internal\/containers\/[^/]+\/integrations\/gmail\/processing\/(?:purge-commands|purge-ack)$/.test(c.req.path),
   }));
+  const consentLimit = bodyLimit({ maxSize: 4096 });
+  internalIntegrationApp.use('*', async (c, next) => {
+    if (c.req.method === 'GET' || c.req.method === 'HEAD') return next();
+    let path: string;
+    try { path = decodeURIComponent(c.req.path); }
+    catch (error: unknown) {
+      if (!(error instanceof URIError)) throw error;
+      return c.json({ error: 'Invalid request' }, 400);
+    }
+    if (!/\/gmail\/+processing-consents(?:[/?#]|$)/i.test(path)) return next();
+    const handle = c.get('internalContainerHandle');
+    const ownerId = c.get('internalContainerClerkUserId');
+    if (!handle || !ownerId || c.get('internalContainerPersonalOwner') !== ownerId)
+      return c.json({ error: 'Forbidden' }, 403);
+    return consentLimit(c, async () => {
+      c.header('Cache-Control', 'no-store');
+      const revocation = c.req.header(GMAIL_HOSTED_REVOCATION_PROOF_HEADER);
+      const grant = c.req.header(GMAIL_HOSTED_GRANT_PROOF_HEADER);
+      const chatApproval = c.req.header('x-matrix-custom-mcp-approval-proof');
+      // A subsequent bodyLimit middleware still needs the original request stream.
+      const signedBody = c.req.method === 'POST' && (grant || chatApproval)
+        ? await readRoutineProofProxyBody(c.req.raw, 4096) : null;
+      if (signedBody && typeof signedBody === 'object') {
+        c.res = c.json({ error: 'Gmail consent request unavailable' }, signedBody.status);
+        return;
+      }
+      if (revocation || grant) {
+        const prefix = `/internal/containers/${handle}/integrations`;
+        if (new URL(c.req.url).search || c.get('internalSignedOwnerDelegation') !== true || (revocation && grant)) {
+          c.res = c.json({ error: 'Forbidden' }, 403);
+          return;
+        }
+        const accountId = gmailConsentRevocationAccount(c.req.method, c.req.path, prefix);
+        const receipt = revocation && accountId
+          ? verifyGmailHostedConsentProof(revocation, { handle, ownerId, accountId }, platformSecret)
+          : grant && typeof signedBody === 'string' && isGmailConsentGrant(c.req.method, c.req.path, prefix)
+            ? verifyGmailHostedConsentProof(grant, { handle, ownerId, grantBody: signedBody }, platformSecret)
+            : null;
+        if (!receipt) {
+          c.res = c.json({ error: 'Forbidden' }, 403);
+          return;
+        }
+        if (revocation) c.set('gmailHostedRevocationReceipt', receipt);
+        await next();
+        return;
+      }
+      const session = await options.verifyGmailOwnerSession?.({ handle, ownerId,
+        authorization: c.req.header('x-matrix-google-owner-authorization'), cookie: c.req.header('cookie') });
+      if (session || (typeof signedBody === 'string' && verifyGmailOwnerApprovalProof(
+        chatApproval,
+        { handle, actorId: ownerId, consentBody: signedBody, secret: platformSecret },
+      ))) await next();
+      else c.res = c.json({ error: 'Forbidden' }, 403);
+    });
+  });
   internalIntegrationApp.route('/', createIntegrationChatApprovalRoutes(platformSecret));
   internalIntegrationApp.route('/', options.internalIntegrationRoutes ?? createUnavailableInternalIntegrationRoutes());
   app.route('/internal/containers/:handle/integrations', internalIntegrationApp);
