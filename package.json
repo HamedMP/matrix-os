@@ -209,7 +209,15 @@
       "lodash-es@>=4.0.0 <4.18.1": "4.18.1",
       "@clerk/shared@>=3.0.0 <3.47.7": "3.47.7",
       "protobufjs@>=7.0.0 <7.6.6": "7.6.6",
-      "tar@>=7.0.0 <7.5.22": "7.5.22"
+      "tar@>=7.0.0 <7.5.22": "7.5.22",
+      "kysely@>=0.28.0 <0.28.17": "0.28.17",
+      "@clerk/clerk-expo@>=2.0.0 <2.19.36": "2.19.36",
+      "http-cache-semantics@>=4.0.0 <4.3.0": "4.3.0",
+      "@tiptap/core@>=3.0.0 <3.30.5": "3.32.0",
+      "@tiptap/pm@>=3.0.0 <3.30.5": "3.32.0",
+      "electron@>=41.0.0 <41.10.6": "41.10.6",
+      "@tiptap/react>@tiptap/extension-bubble-menu": "3.32.0",
+      "@tiptap/react>@tiptap/extension-floating-menu": "3.32.0"
     }
   },
   "devDependencies": {
@@ -228,7 +236,7 @@
     "codex-fixture-ajv": "npm:ajv@6.15.0",
     "drizzle-orm": "^0.45.2",
     "fflate": "0.8.3",
-    "hono": "^4.12.25",
+    "hono": "^4.13.11",
     "lexical": "0.41.0",
     "lucide-react": "^0.563.0",
     "react": "^19.2.6",

@@ -46,7 +46,7 @@ export function createWhatsAppRoutes(deps: {
     if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) return c.text('Request denied', 403);
     return c.text(parsed.data.challenge);
   });
-  app.post('/whatsapp/webhook', bodyLimit({ maxSize: 262144 }), async (c) => {
+  app.post('/whatsapp/webhook', bodyLimit({ maxSize: 262144, onError: (c) => c.json({ error: 'Request too large' }, 413) }), async (c) => {
     let messages;
     try {
       const raw = await c.req.text();
