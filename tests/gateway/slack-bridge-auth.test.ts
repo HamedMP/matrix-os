@@ -56,6 +56,23 @@ describe("owner Slack bridge", () => {
     expect((await app.request("/api/internal/slack/events",await request("/api/internal/slack/events",envelope,"b".repeat(64)))).status).toBe(401);
     expect(receive).toHaveBeenCalledTimes(1);
   });
+  it("authenticates the private context route separately from dispatching Slack turns", async () => {
+    const receive = vi.fn();
+    const receiveContext = vi.fn().mockResolvedValue(true);
+    const bridge = createSlackBridgeRoutes({ ownerId, token, receive, receiveContext, authority: { authorize: vi.fn() }, now });
+    const path = "/api/internal/slack/context";
+    const envelope = { ownerId, botId: "bot_12345678", chatId: "chat_private", runtimeId: "preview_runtime",
+      grantId: "d".repeat(64), event: { eventId: "Ev123", appId: "A123", teamId: "T123", userId: "U123",
+        channelId: "C123", ts: "1759230000.200", threadTs: "1759230000.123", text: "Plain fixture reply" } };
+    const signedContext = await request(path, envelope);
+    expect((await bridge.request(path, await request("/api/internal/slack/events", envelope))).status).toBe(401);
+    expect((await bridge.request(path, { ...signedContext, body: JSON.stringify({ ...envelope, runtimeId: "other_runtime" }) })).status).toBe(401);
+    expect((await bridge.request(path, await request(path, { ...envelope, ownerId: "user_other" }))).status).toBe(403);
+    expect(receiveContext).not.toHaveBeenCalled();
+    expect((await bridge.request(path, signedContext)).status).toBe(202);
+    expect(receiveContext).toHaveBeenCalledExactlyOnceWith(envelope);
+    expect(receive).not.toHaveBeenCalled();
+  });
   it("rejects owner substitution, missing signature, oversized input and expired signatures",async()=>{
     const {app,receive}=setup();
     const body=JSON.stringify({ownerId:"user_other"});

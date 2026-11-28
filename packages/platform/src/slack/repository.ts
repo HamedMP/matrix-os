@@ -149,6 +149,15 @@ export class SlackRepository {
     const row = await this.db.selectFrom("slack_employee_links").selectAll().where("app_id", "=", appId).where("team_id", "=", teamId).where("slack_user_id", "=", slackUserId).executeTakeFirst();
     return row ? { appId, teamId, slackUserId, actorId: row.actor_id, organizationId: row.organization_id } : null;
   }
+
+  async hasThreadContextLink(input: { appId: string; teamId: string; ownerSlackId: string; organizationId: string; ownerId: string; linkCreatedAt: string }): Promise<boolean> {
+    const row = await this.db.selectFrom("slack_employee_links").select("created_at")
+      .where("app_id", "=", input.appId).where("team_id", "=", input.teamId)
+      .where("slack_user_id", "=", input.ownerSlackId).where("organization_id", "=", input.organizationId)
+      .where("actor_id", "=", input.ownerId).where("created_at", "=", new Date(input.linkCreatedAt)).executeTakeFirst();
+    return Boolean(row);
+  }
+
   async removeLink(appId: string, teamId: string, actorId: string): Promise<void> {
     await this.db.deleteFrom("slack_employee_links").where("app_id", "=", appId).where("team_id", "=", teamId).where("actor_id", "=", actorId).execute();
   }

@@ -1,12 +1,12 @@
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
-import { SlackBridgeEnvelopeSchema, SlackBridgeAuthorizationSchema, verifySlackBridgeRequest,
-  type SlackBridgeEnvelope, type SlackPublicationIdentity } from "@matrix-os/contracts/slack-bridge";
+import { SlackBridgeEnvelopeSchema, SlackBridgeAuthorizationSchema, SlackThreadContextEnvelopeSchema, verifySlackBridgeRequest,
+  type SlackBridgeEnvelope, type SlackPublicationIdentity, type SlackThreadContextEnvelope } from "@matrix-os/contracts/slack-bridge";
 import { CollaborationAuthorizationError, type CollaborationAuthority } from "../collaboration/authority.js";
 
 export function createSlackBridgeRoutes(options:{ownerId:string;token:string;authority:Pick<CollaborationAuthority,"authorize">;
-  receive(envelope:SlackBridgeEnvelope):Promise<unknown>;authorizePublication?(input:SlackPublicationIdentity):Promise<boolean>;now?:()=>Date}) {
+  receive(envelope:SlackBridgeEnvelope):Promise<unknown>; receiveContext?(envelope: SlackThreadContextEnvelope): Promise<boolean>; authorizePublication?(input:SlackPublicationIdentity):Promise<boolean>;now?:()=>Date}) {
   const app=new Hono();
   app.onError((error,c)=>{
     if(error instanceof z.ZodError || error instanceof SyntaxError) return c.json({error:"Invalid request"},400);
@@ -29,6 +29,14 @@ export function createSlackBridgeRoutes(options:{ownerId:string;token:string;aut
     // The service verifies fresh collaboration authority and durably commits before acknowledging.
     await options.receive(envelope);
     return c.json({accepted:true},202);
+  });
+
+  app.post("/api/internal/slack/context", async c => {
+    const request = SlackThreadContextEnvelopeSchema.parse(await c.req.json());
+    if (request.ownerId !== options.ownerId) return c.json({ error: "Forbidden" }, 403);
+    if (!options.receiveContext) return c.json({ error: "Slack unavailable" }, 503);
+    if (!await options.receiveContext(request)) return c.json({ error: "Forbidden" }, 403);
+    return c.json({ accepted: true }, 202);
   });
   app.post("/api/internal/slack/authorize",async c=>{
     const request=SlackBridgeAuthorizationSchema.parse(await c.req.json());

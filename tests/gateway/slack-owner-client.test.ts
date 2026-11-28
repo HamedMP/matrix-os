@@ -19,6 +19,34 @@ describe("Slack owner client",()=>{
     }
     expect(fetchImpl).not.toHaveBeenCalled();
   });
+  it("preserves the strict boolean access request and opts into bounded channel metadata separately", async () => {
+    const access = { ownerId: "user_owner", runtimeId: "runtime_preview", botId: "bot_12345678",
+      chatId: "chat_12345678", grantId: "a".repeat(64) };
+    const signal = AbortSignal.timeout(5_000);
+    const fetchImpl = vi.fn().mockResolvedValueOnce(Response.json({ allowed: true }))
+      .mockResolvedValueOnce(Response.json({ allowed: true, channel: { id: "C123", name: "tech" } }))
+      .mockResolvedValueOnce(Response.json({ allowed: true }));
+    const client = createSlackOwnerClient({ platformUrl: "https://platform.example", handle: "pr-3482", token: "a".repeat(64), fetchImpl });
+    expect(await client.canReadThreadContext(access, signal)).toBe(true);
+    expect(JSON.parse(fetchImpl.mock.calls[0]![1].body)).toEqual(access);
+    expect(await client.readThreadContextAccess(access, signal)).toEqual({ allowed: true, channel: { id: "C123", name: "tech" } });
+    expect(JSON.parse(fetchImpl.mock.calls[1]![1].body)).toEqual({ ...access, includeChannelMetadata: true });
+    expect(await client.readThreadContextAccess(access, signal)).toEqual({ allowed: true });
+  });
+
+  it.each([
+    { allowed: false, channel: { id: "C123", name: "tech" } },
+    { allowed: true, channel: { id: "C123", name: "x".repeat(81) } },
+    { allowed: true, channel: { id: "C123", name: "tech\nadmin" } },
+    { allowed: true, channel: { id: "C123", name: "tech\u202E" } },
+    { allowed: true, channel: { id: "C123", name: "tech", extra: true } },
+  ])("rejects malformed optional channel metadata at the owner boundary: %j", async body => {
+    const client = createSlackOwnerClient({ platformUrl: "https://platform.example", handle: "pr-3482", token: "a".repeat(64),
+      fetchImpl: vi.fn(async () => Response.json(body)) });
+    expect(await client.readThreadContextAccess({ ownerId: "user_owner", runtimeId: "runtime_preview", botId: "bot_12345678",
+      chatId: "chat_12345678", grantId: "a".repeat(64) }, AbortSignal.timeout(5_000))).toEqual({ allowed: false });
+  });
+
   it("never sends a caller-selected Slack destination or credentials in source material",async()=>{
     const fetchImpl=vi.fn().mockResolvedValue(new Response(JSON.stringify({sent:true,messageTs:"123.45"})));
     const client=createSlackOwnerClient({platformUrl:"https://platform.example",handle:"alice",token:"a".repeat(64),fetchImpl});
@@ -57,7 +85,7 @@ describe("Slack owner client",()=>{
     const app = createSlackAppRoutes({ config, repository, api, resolveActor: async () => "user_employee",
       resolveDestination: async () => ({ ownerId: "user_employee", runtimeId: "runtime_original" }),
       requireOrgAdmin: async () => true, isCurrentMember: async () => true, authorizeChannelBinding: async () => true,
-      authenticateRuntime: async () => ({ ownerId: "user_employee" }), authorizeReply,
+      authenticateRuntime: async () => ({ ownerId: "user_employee", runtimeId: "runtime_original" }), authorizeReply,
       dispatch: async () => ({ ownerId: "user_employee" }), now: () => clock });
     try {
       await repository.saveInstallation({ appId: "A123", teamId: "T123", organizationId: "org_company", installedBy: "user_admin", botUserId: "UBOT",

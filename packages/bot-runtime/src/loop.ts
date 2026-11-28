@@ -1,7 +1,7 @@
 import { estimateContextTokens, estimateMessageTokens } from "@earendil-works/pi-ai/utils/estimate";
 import { Agent, type AgentMessage } from "@earendil-works/pi-agent-core";
 import { normalizeContext, type Api, type ImageContent, type Model, type Provider } from "@earendil-works/pi-ai";
-import type { BotRunCommand, BotRunOutcome, BotSessionSnapshot, BotToolErrorCode } from "@matrix-os/contracts";
+import { SLACK_THREAD_REFERENCE_SYSTEM_RULE, type BotRunCommand, type BotRunOutcome, type BotSessionSnapshot, type BotToolErrorCode } from "@matrix-os/contracts";
 import { BotBrokerError, type BotBrokerClient } from "./broker-client.js";
 import { createEventProjector } from "./events.js";
 import { BROKER_PLACEHOLDER_KEY, createBridgeModel } from "./providers.js";
@@ -89,11 +89,13 @@ export async function runBotTurn(input: RunBotTurnInput): Promise<BotRunOutcome>
   }
   const isolated = command.isolatedTurn !== undefined;
   const canonical = command.isolatedTurn?.target;
-  if (isolated && (command.turn.kind !== "prompt" || command.turn.images?.length || (!canonical && history.length)
+  if (isolated && (command.slackThreadReference || command.turn.kind !== "prompt" || command.turn.images?.length || (!canonical && history.length)
     || (canonical && (canonical.runId !== command.runId || command.capabilities.length || snapshot.needsRecompaction))
     || command.route.maxOutputTokens !== 256 || command.limits.maxToolActions !== 1)) {
     return outcome(command, { status: "failed", failureCode: "denied", toolActions: 0 });
   }
+  const slackReference = command.turn.kind === "prompt" ? command.slackThreadReference : undefined;
+  const systemPrompt = slackReference ? `${command.systemPrompt}\n\n${SLACK_THREAD_REFERENCE_SYSTEM_RULE}` : command.systemPrompt;
   const { provider, model } = input.route ?? createBridgeModel(command.route, input.bridgeOrigin, input.bridgeSocket);
   // Unknown/invalid/truncated tools bypass beforeToolCall. Bound model work
   // itself: tool rounds, a final response and at most two session summaries.
@@ -129,7 +131,7 @@ export async function runBotTurn(input: RunBotTurnInput): Promise<BotRunOutcome>
 
   const agent: Agent = new Agent({
     initialState: {
-      systemPrompt: command.systemPrompt,
+      systemPrompt,
       model,
       thinkingLevel: "off",
       tools: isolated ? [] : createBotTools({ capabilities: command.capabilities, broker, state: tools, routineModel: command.route.modelId }),
@@ -139,7 +141,20 @@ export async function runBotTurn(input: RunBotTurnInput): Promise<BotRunOutcome>
       if (budgetExhausted || options?.signal?.aborted || input.signal?.aborted) throw new Error("Run stopped before inference");
       if (inferenceCalls >= maxInferenceCalls) throw new Error("Model action budget ended");
       inferenceCalls += 1;
-      return provider.streamSimple(streamModel, context, {
+      let modelContext = context;
+      if (slackReference) {
+        // Add only to the model request copy. Session persistence and compaction never see the raw Slack block.
+        const messages = context.messages.slice();
+        for (let i = messages.length - 1; i >= 0; i--) {
+          const message = messages[i];
+          if (message?.role !== "user") continue;
+          const original = typeof message.content === "string" ? [{ type: "text" as const, text: message.content }] : message.content;
+          messages[i] = { ...message, content: [...original, { type: "text", text: slackReference }] };
+          modelContext = { ...context, messages };
+          break;
+        }
+      }
+      return provider.streamSimple(streamModel, modelContext, {
       ...options,
       // A Provider does not resolve auth itself. The worker only carries this
       // inert value; the loopback broker owns the funded credential.
@@ -152,7 +167,7 @@ export async function runBotTurn(input: RunBotTurnInput): Promise<BotRunOutcome>
       if (isolated || signal?.aborted || input.signal?.aborted) return;
       // Pi invokes this after all tool results and queued corrections are appended.
       for (const pending of steered) if (context.messages.includes(pending.message)) pending.consumed = true;
-      const overhead = new TextEncoder().encode(JSON.stringify({ systemPrompt: command.systemPrompt, tools: context.tools })).byteLength;
+      const overhead = new TextEncoder().encode(JSON.stringify({ systemPrompt, tools: context.tools, slackReference })).byteLength;
       const imageTokens = context.messages.reduce((total, message) => {
         if ((message.role !== "user" && message.role !== "toolResult") || !Array.isArray(message.content)) return total;
         const images = message.content.filter((part): part is ImageContent => part.type === "image");

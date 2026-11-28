@@ -35,7 +35,7 @@ function envelope(event: object, eventId = "Ev123") { return { type: "event_call
 const mention = { type: "app_mention", user: "U123", channel: "C123", text: "<@UBOT> summarize", ts: "123.456" };
 function makeApp(overrides:Partial<SlackAppRouteOptions>={}) { return createSlackAppRoutes({ config, repository:repo, api, resolveActor:async()=>actor,
   resolveDestination:async({event})=>({ownerId:event.kind==="direct_message"?"user_employee":"user_admin",runtimeId:"runtime_original"}),
-  requireOrgAdmin:async()=>admin,isCurrentMember:async()=>member,authorizeChannelBinding,authenticateRuntime:async()=>({ownerId:actor!}),authorizeReply,dispatch,now:()=>clock,...overrides }); }
+  requireOrgAdmin:async()=>admin,isCurrentMember:async()=>member,authorizeChannelBinding,authenticateRuntime:async()=>({ownerId:actor!,runtimeId:"runtime_original"}),authorizeReply,dispatch,now:()=>clock,...overrides }); }
 const mutation=(path:string,method="POST",body:unknown={})=>app.request(path,{method,headers:{"content-type":"application/json",origin:config.publicBaseUrl},body:JSON.stringify(body)});
 async function startOAuth(){const response=await mutation("/api/slack/install","POST",{organizationId:org});const url=new URL((await response.json()).url);return `/api/slack/oauth/callback?state=${url.searchParams.get("state")}&code=code`;}
 async function linkEmployee(){await repo.createChallenge({hash:"f".repeat(64),appId:"A123",teamId:"T123",slackUserId:"U123"});await repo.completeLink({hash:"f".repeat(64),actorId:"user_employee",organizationId:org});}
@@ -82,6 +82,9 @@ describe("Slack delivery recovery and dispatch fences", () => {
     expect(await waiting.json()).toEqual({ error: "Delivery not ready", code: "receipt_not_ready" });
     expect(api.postMessage).not.toHaveBeenCalled();
     expect(await db.selectFrom("slack_reply_intents").selectAll().execute()).toEqual([]);
+    app = makeApp({ authenticateRuntime: async () => ({ ownerId: "user_employee", runtimeId: "runtime_replacement" }) });
+    expect((await reply()).status).toBe(403);
+    app = makeApp();
     actor = "user_other"; expect((await reply()).status).toBe(403);
     actor = "user_employee";
     expect((await app.request("/webhooks/slack/events", signed(envelope(dm)))).status).toBe(200);

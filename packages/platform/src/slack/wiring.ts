@@ -4,6 +4,7 @@ import { createSlackApi } from "./api.js";
 import { bootstrapSlackDatabase, type SlackDatabase } from "./database.js";
 import { SlackRepository, type SlackLinkTransaction } from "./repository.js";
 import { createSlackAppRoutes } from "./routes.js";
+import type { SlackThreadContextOptions } from "./thread-context.js";
 import { encryptSlackToken } from "./security.js";
 import { SlackAppIdSchema, type SlackApi, type SlackAppConfig, type SlackAuthorityDependencies } from "./types.js";
 
@@ -20,7 +21,7 @@ export function loadSlackAppConfig(env: Record<string, string | undefined>): Sla
 }
 
 /** The caller owns the shared database. close() drains this component only, never destroys the pool. */
-export async function createSlackApp(options: SlackAuthorityDependencies & {
+export async function createSlackApp(options: SlackAuthorityDependencies & SlackThreadContextOptions & {
   db: Kysely<SlackDatabase>; config: SlackAppConfig; api?: SlackApi; fetchImpl?: typeof fetch; now?: () => Date; startCleanup?: boolean; linkTransaction?: SlackLinkTransaction;
 }) {
   await bootstrapSlackDatabase(options.db);

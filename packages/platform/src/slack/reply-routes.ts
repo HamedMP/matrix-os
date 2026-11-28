@@ -3,7 +3,7 @@ import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
 import { SlackApiRateLimitError } from "./api.js";
-import { authorizeSlackDestination } from "./destination-authority.js";
+import { authorizeSlackDestination, matchesSlackRuntime } from "./destination-authority.js";
 import { decryptSlackToken } from "./security.js";
 import { ActorIdSchema, SlackTeamIdSchema } from "./types.js";
 import type { SlackAppRouteOptions } from "./routes.js";
@@ -29,14 +29,14 @@ export function createSlackReplyRoutes(options: SlackAppRouteOptions): Hono {
       return c.json({ error: "Try again later", code: "reply_not_sent" }, 503);
     };
     let authorized: Awaited<ReturnType<typeof authorizeSlackDestination>>;
-    try { authorized = await authorizeSlackDestination(options, key, runtime.ownerId, publication); }
+    try { authorized = await authorizeSlackDestination(options, key, runtime, publication); }
     catch (error: unknown) {
       console.warn("[slack] reply preflight unavailable", error instanceof Error ? error.name : "UnknownError");
       return notSent();
     }
     if (!authorized) {
       const pending = await options.repository.getPendingReplyDestination(key);
-      if (pending?.ownerId === runtime.ownerId) {
+      if (matchesSlackRuntime(pending, runtime)) {
         c.header("Retry-After", "1");
         return c.json({ error: "Delivery not ready", code: "receipt_not_ready" }, 503);
       }
@@ -67,7 +67,7 @@ export function createSlackReplyRoutes(options: SlackAppRouteOptions): Hono {
     let sendStarted = false;
     try {
       // Channel metadata and intent persistence may take seconds. Do not publish with authority from before that latency.
-      if (!await authorizeSlackDestination(options, key, runtime.ownerId, publication)) {
+      if (!await authorizeSlackDestination(options, key, runtime, publication)) {
         await options.repository.settleReply(key, null);
         return c.json({ error: "Forbidden" }, 403);
       }

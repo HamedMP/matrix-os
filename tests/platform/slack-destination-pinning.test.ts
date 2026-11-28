@@ -1,4 +1,6 @@
 import {describe,it,expect,vi,beforeEach} from "vitest";
+import { Hono } from "hono";
+import { buildPlatformVerificationToken } from "../../packages/platform/src/platform-token.js";
 import type {SlackAppRouteOptions} from "../../packages/platform/src/slack/routes.js";
 const {machine,createSlackApp}=vi.hoisted(()=>({machine:vi.fn(),createSlackApp:vi.fn()}));
 vi.mock("../../packages/platform/src/db.js",()=>({getRunningUserMachineByClerkId:machine,getRunningUserMachineByHandle:machine,getUserMachine:machine}));
@@ -8,6 +10,37 @@ const env={SLACK_APP_ID:"A123",SLACK_CLIENT_ID:"123.456",SLACK_CLIENT_SECRET:"c"
 const original={machineId:"11111111-1111-4111-8111-111111111111",clerkUserId:"user_original",handle:"original",status:"running",publicIPv4:"192.0.2.1"};
 describe("production Slack durable destination routing",()=>{
  beforeEach(()=>{vi.resetAllMocks();machine.mockResolvedValue(original);createSlackApp.mockResolvedValue({});});
+ it("keeps the authenticated machine id and refuses a moved Project home for the same owner", async () => {
+  const platformSecret = "a".repeat(64);
+  const replacement = { ...original, machineId: "22222222-2222-4222-8222-222222222222", handle: "replacement" };
+  const fetchImpl = vi.fn(async () => Response.json({ allowed: true }));
+  await bootstrapPlatformSlack({
+    env, db: { kysely: {} } as never, platformSecret, platformJwtSecret: "j".repeat(64), fetchImpl,
+    collaboration: {
+      organizations: { projection: { isCurrentMember: async () => true } },
+      repository: { getDirectoryRoute: async () => ({ kind: "project", organizationId: "org_company", ownerId: original.clerkUserId, runtimeId: `vps:${replacement.machineId}` }) },
+    } as never,
+  });
+  const options = createSlackApp.mock.calls[0][0] as SlackAppRouteOptions;
+  const app = new Hono();
+  app.get("/", async c => c.json(await options.authenticateRuntime!(c)));
+  const response = await app.request("/", {
+    headers: { "x-matrix-handle": original.handle, authorization: `Bearer ${buildPlatformVerificationToken(original.handle, platformSecret)}` },
+  });
+  expect(await response.json()).toEqual({ ownerId: original.clerkUserId, runtimeId: original.machineId });
+
+  machine.mockResolvedValue(replacement);
+  const allowed = await options.authorizeReply!({
+    installation: {} as never, ownerId: original.clerkUserId,
+    destination: {
+      appId: "A123", teamId: "T123", eventId: "Ev123", slackUserId: "U123", actorId: "user_employee",
+      ownerId: original.clerkUserId, runtimeId: original.machineId, organizationId: "org_company",
+      channelId: "C123", threadTs: "123.456", scopeId: "scope_project", installationGeneration: 1,
+    },
+  });
+  expect(allowed).toBe(false);
+  expect(fetchImpl).not.toHaveBeenCalled();
+ });
  it.each(["owner","runtime"])("never dispatches after the pinned %s changes between resolution and RPC",async(change)=>{
   const fetchImpl=vi.fn();
   await bootstrapPlatformSlack({env,db:{kysely:{}} as never,platformSecret:"a".repeat(64),platformJwtSecret:"j".repeat(64),collaboration:{organizations:{},repository:{getDirectoryRoute:async()=>({kind:"project",organizationId:"org_company",ownerId:change==="owner"?"user_other":"user_original",runtimeId:"vps:22222222-2222-4222-8222-222222222222"})}} as never,fetchImpl});

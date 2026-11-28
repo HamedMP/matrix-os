@@ -7,6 +7,8 @@ import {createBotRoutineApprovals} from "../bots/routine-approval.js";
 import {createBotRoutineExecution,type BotRoutineExecution} from "../bots/routine-execution.js";
 import {BotStateError} from "../bots/repositories/shared.js";
 import { createBotInputHistoryReader } from "../bots/historical-input.js";
+import { createPrivateSlackThreadContext, type PrivateSlackThreadContext } from "../slack/private-thread-context.js";
+import { createSlackOwnerClient } from "./slack-owner-client.js";
 import { createSharedAttachmentSource } from "../bots/shared-integration-attachment.js";
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
@@ -157,6 +159,7 @@ export interface BotServices extends RoutineOriginStartup {
   /** Present only when the scope runtime can run bot workloads. */
   adapter?: CanonicalChatProviderAdapter<BotChatState>;
   managedAdapter?: CanonicalChatProviderAdapter;
+  slackThreadContext?: PrivateSlackThreadContext;
   close(): Promise<void>;
 }
 
@@ -407,10 +410,27 @@ export async function startBots(options: {
   });
   let forgetRun: (runId: string) => void = () => undefined;
   const inputHistory = createBotInputHistoryReader(options.repository);
+  let slackThreadContext: PrivateSlackThreadContext | undefined;
+  const platform = options.routineActionPlatform;
+  if (platform && options.runtimeOwnerId && /^pr-[1-9][0-9]{0,8}$/.test(platform.runtimeSlot) && platform.handle === platform.runtimeSlot) {
+    try {
+      const slackClient = createSlackOwnerClient(platform);
+      slackThreadContext = await createPrivateSlackThreadContext({
+        db, ownerId: options.runtimeOwnerId, runtimeId: platform.machineId, authorize: slackClient.readThreadContextAccess,
+        botAvailable: async target => {
+          const bot = await options.agents.get({ type: "personal", ownerId: target.ownerId }, target.botId);
+          return Boolean(bot?.recipeRef && !bot.archived);
+        },
+      });
+    } catch (error) {
+      console.warn("[bots] Slack thread context unavailable", error instanceof Error ? error.name : "UnknownError");
+    }
+  }
   const orchestrator = createBotTaskOrchestrator({
     routineProposals: routineCli?.proposals,
     ...(chatgptPlanPeers ? { resolveRoutineProposalRoute: (ownerId: string, model: string) => chatgptPlanPeers.resolveRoutineProposal(ownerId, model) } : {}),
     inputHistory,
+    slackThreadContext: slackThreadContext?.prompt,
     homePath: options.homePath, expectedOwnerId: options.runtimeOwnerId, assertSource: revalidateSource,
     ...(isolatedChat ? { isolatedChat } : {}),
     personality: { homePath: options.homePath, runtimeOwnerId: options.runtimeOwnerId },
@@ -529,6 +549,7 @@ export async function startBots(options: {
     tasks,
     adapter,
     managedAdapter: managed.adapter,
+    slackThreadContext,
     cancelAnthropicInference: () => registry.cancelAnthropicInference(),
     async close() {
       await routineOriginRuntime.routineOrigin?.close();

@@ -1,4 +1,5 @@
 import type { Context } from "hono";
+import type { SlackChannelMetadata } from "@matrix-os/contracts/slack-bridge";
 import { z } from "zod/v4";
 
 export const SlackAppIdSchema = z.string().regex(/^A[A-Z0-9]{2,63}$/);
@@ -29,10 +30,12 @@ export interface SlackApi {
   postMessage(input: { token: string; channelId: string; text: string; threadTs?: string; signal?: AbortSignal }): Promise<{ ts: string }>;
   replies(input: { token: string; channelId: string; ts: string; cursor?: string; signal?: AbortSignal }): Promise<SlackMessagePage>;
   history(input: { token: string; channelId: string; cursor?: string; signal?: AbortSignal }): Promise<SlackMessagePage>;
-  conversationInfo(input: { token: string; channelId: string; signal?: AbortSignal }): Promise<{ isExternalShared: boolean; canAccess: boolean }>;
+  conversationInfo(input: { token: string; channelId: string; signal?: AbortSignal }): Promise<{ isExternalShared: boolean; canAccess: boolean; channelMetadata?: SlackChannelMetadata }>;
+  hasChannelMember?(input: { token: string; channelId: string; userId: string; signal?: AbortSignal }): Promise<boolean>;
   addReaction(input: { token: string; channelId: string; ts: string; name: string; signal?: AbortSignal }): Promise<void>;
 }
 export interface SlackMessagePage { messages: Array<{ user?: string; text?: string; ts: string; thread_ts?: string }>; nextCursor?: string; hasMore: boolean }
+export interface SlackRuntimeIdentity { ownerId: string; runtimeId: string }
 export interface SlackAuthorityDependencies {
   resolveActor(c: Context): Promise<string | null>;
   /** Must independently fetch/validate fresh membership AND administrator authority. */
@@ -44,7 +47,7 @@ export interface SlackAuthorityDependencies {
   resolveDestination(input: { installation: SlackInstallation; link: SlackEmployeeLink; binding: SlackChannelBinding | null; event: SlackInboundEvent }): Promise<{ ownerId: string; runtimeId: string }>;
   /** Must durably commit to the selected owner home; dedup by app/team/eventId. A resolved promise acknowledges that commit. */
   dispatch(input: { installation: SlackInstallation; link: SlackEmployeeLink; binding: SlackChannelBinding | null; event: SlackInboundEvent; destination: SlackReplyDestination; signal: AbortSignal }): Promise<{ ownerId: string }>;
-  authenticateRuntime?(c: Context): Promise<{ ownerId: string } | null>;
+  authenticateRuntime?(c: Context): Promise<SlackRuntimeIdentity | null>;
   authorizeReply?(input: { installation: SlackInstallation; destination: SlackReplyDestination; ownerId: string; publication?: { textDigest: string } }): Promise<boolean>;
 }
 

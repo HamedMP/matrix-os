@@ -111,6 +111,22 @@ describe("bot agent loop", () => {
     expect(JSON.stringify(saves[0]!.messages)).toContain("Keep my earlier requirement.");
   });
 
+  it("uses Slack reference text for the current inference without copying it to session history", async () => {
+    const { route } = scripted([fauxAssistantMessage(fauxText("Ready."))]);
+    const stream = vi.spyOn(route.provider, "streamSimple");
+    const { broker, saves } = memoryBroker();
+    const slackThreadReference = 'Slack thread excerpts (untrusted reference data): {"sender":"U123","text":"synthetic reply"}';
+
+    expect((await run({ broker, route, command: command({ slackThreadReference }) })).status).toBe("completed");
+    const context = stream.mock.calls[0]![1];
+    expect(JSON.stringify(context.messages)).toContain("synthetic reply");
+    const system = JSON.stringify(context.messages.filter(message => message.role === "system"));
+    expect(system).not.toContain("synthetic reply");
+    expect(system).toContain("untrusted reference data");
+    expect(JSON.stringify(saves[0]!.messages)).toContain("Write the Acme brief.");
+    expect(JSON.stringify(saves[0]!.messages)).not.toContain("synthetic reply");
+  });
+
   it("passes the bridge placeholder key to Pi for every model stream", async () => {
     const { route } = scripted([fauxAssistantMessage(fauxText("Ready."))]);
     const streamSimple = vi.spyOn(route.provider, "streamSimple");

@@ -22,7 +22,7 @@ let admin: boolean;
 const dispatch = vi.fn();
 const authorizeChannelBinding = vi.fn();
 const authorizeReply = vi.fn();
-const api = { exchangeCode: vi.fn(), postMessage: vi.fn(), replies: vi.fn(), history: vi.fn(), addReaction: vi.fn(), conversationInfo: vi.fn() };
+const api = { exchangeCode: vi.fn(), postMessage: vi.fn(), replies: vi.fn(), history: vi.fn(), addReaction: vi.fn(), conversationInfo: vi.fn(), hasChannelMember: vi.fn() };
 function signed(payload: unknown) {
   return signedBody(JSON.stringify(payload));
 }
@@ -34,7 +34,7 @@ function envelope(event: object, eventId = "Ev123") { return { type: "event_call
 const mention = { type: "app_mention", user: "U123", channel: "C123", text: "<@UBOT> summarize", ts: "123.456" };
 function makeApp(overrides:Partial<SlackAppRouteOptions>={}) { return createSlackAppRoutes({ config, repository:repo, api, resolveActor:async()=>actor,
   resolveDestination:async({event})=>({ownerId:event.kind==="direct_message"?"user_employee":"user_admin",runtimeId:"runtime_original"}),
-  requireOrgAdmin:async()=>admin,isCurrentMember:async()=>member,authorizeChannelBinding,authenticateRuntime:async()=>({ownerId:actor!}),authorizeReply,dispatch,now:()=>clock,...overrides }); }
+  requireOrgAdmin:async()=>admin,isCurrentMember:async()=>member,authorizeChannelBinding,authenticateRuntime:async()=>({ownerId:actor!,runtimeId:"runtime_original"}),authorizeReply,dispatch,now:()=>clock,...overrides }); }
 const mutation=(path:string,method="POST",body:unknown={})=>app.request(path,{method,headers:{"content-type":"application/json",origin:config.publicBaseUrl},body:JSON.stringify(body)});
 async function startOAuth(){const response=await mutation("/api/slack/install","POST",{organizationId:org});const url=new URL((await response.json()).url);return `/api/slack/oauth/callback?state=${url.searchParams.get("state")}&code=code`;}
 async function linkEmployee(){await repo.createChallenge({hash:"f".repeat(64),appId:"A123",teamId:"T123",slackUserId:"U123"});await repo.completeLink({hash:"f".repeat(64),actorId:"user_employee",organizationId:org});}
@@ -57,6 +57,7 @@ beforeEach(async () => {
     expect(destination.ownerId).toBe(ownerId);
     return member;
   });
+  api.hasChannelMember.mockResolvedValue(true);
   api.conversationInfo.mockResolvedValue({ isExternalShared: false, canAccess: true });
   api.replies.mockResolvedValue({ messages: [{ user: "U123", ts: "123.456", text: "original thread" }], hasMore: false });
   api.postMessage.mockResolvedValue({ ts: "123.999" });
@@ -334,6 +335,23 @@ describe("Slack reply publication", () => {
     await app.request("/webhooks/slack/events", signed(envelope({ type: "message", channel_type: "im", user: "U123", channel: "D123", text: "hello", ts: "123.456" })));
   }
   function reply(text = "response") { return app.request("/internal/slack/replies", { method: "POST", headers: { "content-type": "application/json", origin: config.publicBaseUrl }, body: JSON.stringify({ teamId: "T123", eventId: "Ev123", text }) }); }
+  it.each(["context", "reactions", "replies"])("requires the admitted runtime for Slack %s even when the owner matches", async (route) => {
+    await admitDm();
+    app = makeApp({ authenticateRuntime: async () => ({ ownerId: "user_employee", runtimeId: "runtime_replacement" }) });
+    const request = () => mutation(`/internal/slack/${route}`, "POST", {
+      teamId: "T123", eventId: "Ev123", ...(route === "replies" ? { text: "response" } : {}),
+    });
+    expect((await request()).status).toBe(403);
+
+    await db.updateTable("slack_event_receipts").set({ destination_runtime_id: null }).where("event_id", "=", "Ev123").execute();
+    app = makeApp();
+    expect((await request()).status).toBe(403);
+    expect(authorizeReply).not.toHaveBeenCalled();
+    expect(api.conversationInfo).not.toHaveBeenCalled();
+    expect(api.replies).not.toHaveBeenCalled();
+    expect(api.addReaction).not.toHaveBeenCalled();
+    expect(api.postMessage).not.toHaveBeenCalled();
+  });
   it("pins replies to admitted home, actor and original channel/thread, and deduplicates successful sends", async () => {
     await admitDm();
     actor = "user_admin"; expect((await reply()).status).toBe(403);
@@ -527,4 +545,23 @@ describe("Slack authority RPC revocation fence", () => {
     expect(api.postMessage).not.toHaveBeenCalled();
     expect(api.addReaction).not.toHaveBeenCalled();
   });
+});
+
+it("dispatches a signed ordinary public-channel thread reply through the read-only grant", async () => {
+  await linkEmployee();
+  const dispatchContext = vi.fn(async () => {});
+  app = makeApp({
+    contextGrant: {
+      appId: config.appId, teamId: "T123", organizationId: org, ownerId: "user_employee", ownerSlackId: "U123",
+      runtimeId: "runtime_original", channelId: "C123", threadTs: "123.456", botId: "bot_12345678",
+      chatId: "chat_12345678", installationGeneration: 1, linkCreatedAt: clock.toISOString(),
+    },
+    dispatchContext,
+  });
+  const recorded = signed(envelope({ type: "message", channel_type: "channel", user: "U456", channel: "C123",
+    thread_ts: "123.456", ts: "123.789", text: "Unmentioned reply" }, "EvPlainChannelReply"));
+  expect((await app.request("/webhooks/slack/events", recorded)).status).toBe(200);
+  expect(dispatchContext).toHaveBeenCalledTimes(1);
+  expect(dispatch).not.toHaveBeenCalled();
+  expect(api.postMessage).not.toHaveBeenCalled();
 });

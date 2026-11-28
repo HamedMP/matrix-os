@@ -27,6 +27,7 @@ import { isRoutineDirectChatId } from "./routine-direct-chat-identity.js";
 import {
   BotRunOutcomeSchema,
   BotRunSpecSchema,
+  SLACK_THREAD_REFERENCE_SYSTEM_RULE,
   type BotEvent,
   type BotRunSpec,
   type BotRunStatus,
@@ -48,7 +49,7 @@ import { createBotTasksRepository, type BotBlockedReason, type BotTask } from ".
 import { BotRouteError, type ResolvedBotRoute } from "./route-resolver.js";
 import { requireGroupBotAuthority, type GroupBotAuthorizer, BOT_RUNTIME_REGISTRY_CAPACITY, isManagedPiBinding, type BotRuntimeRegistry } from "./runtime-registry.js";
 import { readOwnerSoul, OwnerPersonalityError, type OwnerPersonalityConfig } from "./owner-personality.js";
-import { buildBotSystemPrompt, BotSystemPromptError } from "./system-prompt.js";
+import { BOT_SYSTEM_PROMPT_TOKEN_BUDGET, buildBotSystemPrompt, BotSystemPromptError, estimatePromptTokens } from "./system-prompt.js";
 import { ROUTINE_OCCURRENCE_CONTEXT_SUFFIX, withApprovedRoutineOccurrence } from "./routine-prompt-context.js";
 import { ROUTINE_CHAT_CONTEXT_RESERVATION } from "./routine-chat-context.js";
 import { BotSetupStepError, runBotSetupStep } from "./setup-step.js";
@@ -113,6 +114,7 @@ export class BotTurnError extends Error {
 
 export function createBotTaskOrchestrator(deps: {
   homePath?: string; expectedOwnerId?: string | null; inputHistory?: BotInputHistoryReader;
+  slackThreadContext?(input: { ownerId: string; botId: string; chatId: string; signal: AbortSignal }): Promise<string | undefined>;
   assertSource?(binding: import("./runtime-registry.js").PiRuntimeBinding, signal: AbortSignal): Promise<void>;
   bindings: Pick<BotBindingsRepository, "forChat">;
   /** Task writes and their `bot.task.updated` events commit together. */
@@ -553,12 +555,30 @@ export function createBotTaskOrchestrator(deps: {
         if (run.stopping || run.finished || run.signal.aborted || active.get(binding.runId) !== run) throw new BotBrokerActionError("stale_generation");
         return { ...spec, systemPrompt: withApprovedRoutineOccurrence(spec.systemPrompt) };
       }
+      let prepared = spec;
       if (!isManagedPiBinding(binding) && !binding.group && binding.requestClass === "interactive" && deps.routineExecution?.describeChatPhase) {
         const phase = await runBotSetupStep(() => deps.routineExecution!.describeChatPhase!(binding), run.signal);
         if (run.stopping || run.finished || run.signal.aborted || active.get(binding.runId) !== run) throw new BotBrokerActionError("stale_generation");
-        if (phase) return { ...spec, systemPrompt: spec.systemPrompt + phase };
+        if (phase) prepared = { ...spec, systemPrompt: spec.systemPrompt + phase };
       }
-      return spec;
+      const readSlackContext = deps.slackThreadContext;
+      if (!readSlackContext || isManagedPiBinding(binding) || binding.group || binding.requestClass !== "interactive"
+        || spec.isolatedTurn || isRoutineDirectChatId(binding.chatId)
+        || estimatePromptTokens(`${prepared.systemPrompt}\n\n${SLACK_THREAD_REFERENCE_SYSTEM_RULE}`) > BOT_SYSTEM_PROMPT_TOKEN_BUDGET) return prepared;
+      // Provisioned runtime and bot identity are known here; quote only currently authorized data.
+      try {
+        const source = await runBotSetupStep(() => readSlackContext({ ownerId: binding.ownerId, botId: binding.botId,
+          chatId: binding.chatId, signal: run.signal }), run.signal);
+        if (run.stopping || run.finished || run.signal.aborted || active.get(binding.runId) !== run) throw new BotBrokerActionError("stale_generation");
+        if (source) {
+          const withSource = BotRunSpecSchema.safeParse({ ...prepared, slackThreadReference: source });
+          if (withSource.success) return withSource.data;
+        }
+      } catch (error) {
+        if (run.stopping || run.finished || run.signal.aborted || active.get(binding.runId) !== run) throw new BotBrokerActionError("stale_generation");
+        console.warn("[bots] Slack thread context unavailable", error instanceof Error ? error.name : "UnknownError");
+      }
+      return prepared;
     },
     async readImageChunk(binding, request) {
       const run = active.get(binding.runId);

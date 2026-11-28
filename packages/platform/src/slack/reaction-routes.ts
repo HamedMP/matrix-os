@@ -24,7 +24,7 @@ export function createSlackReactionRoutes(options: SlackAppRouteOptions): Hono {
     }
     const parsed = RequestSchema.safeParse(payload); if (!parsed.success) return c.json({ error: "Invalid request" }, 422);
     const key = { appId: options.config.appId, teamId: parsed.data.teamId, eventId: parsed.data.eventId };
-    const authorized = await authorizeSlackDestination(options, key, runtime.ownerId);
+    const authorized = await authorizeSlackDestination(options, key, runtime);
     if (!authorized) return c.json({ error: "Forbidden" }, 403);
     const eventTs = SlackTimestampSchema.safeParse(authorized.destination.eventTs);
     if (!eventTs.success) return c.json({ error: "Forbidden" }, 403);
@@ -34,7 +34,7 @@ export function createSlackReactionRoutes(options: SlackAppRouteOptions): Hono {
     if (!channel.canAccess || channel.isExternalShared) return c.json({ error: "Forbidden" }, 403);
     const state = await options.repository.prepareReaction(key);
     // Recheck even a sent replay, so a delayed metadata request cannot bypass a revocation.
-    if (!await authorizeSlackDestination(options, key, runtime.ownerId)) {
+    if (!await authorizeSlackDestination(options, key, runtime)) {
       if (state === "prepared") await options.repository.settleReaction(key, false);
       return c.json({ error: "Forbidden" }, 403);
     }

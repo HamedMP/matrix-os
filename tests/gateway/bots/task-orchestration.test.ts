@@ -56,6 +56,7 @@ function setup(options: {
   homePath?: string;
   routineTools?: boolean;
   inputHistory?: Parameters<typeof createBotTaskOrchestrator>[0]["inputHistory"];
+  slackThreadContext?: Parameters<typeof createBotTaskOrchestrator>[0]["slackThreadContext"];
   resolveGroupRoute?: Parameters<typeof createBotTaskOrchestrator>[0]["resolveGroupRoute"];
   worker?: (input: RunBotInput, context: { publish(seq: number, event: Record<string, unknown>): Promise<void> }) => Promise<unknown>;
   resolveRoute?: (selection?: CanonicalChatModelSelection) => Promise<import("../../../packages/gateway/src/bots/route-resolver.js").ResolvedBotRoute>;
@@ -116,6 +117,7 @@ function setup(options: {
     homePath: options.homePath, expectedOwnerId: OWNER, routineTools: options.routineTools,
     assertSource: options.assertSource,
     inputHistory: options.inputHistory,
+    slackThreadContext: options.slackThreadContext,
     bindings: createBotBindingsRepository(db),
     transact,
     interactions: options.answerWithMessage ? { answerWithMessage: options.answerWithMessage } : interactions,
@@ -303,6 +305,24 @@ describe("bot turns through the matrix_bot adapter", () => {
     const { adapter, admission, commands } = setup({ executorReady: async () => { throw new Error("Revoked"); } });
     await collect(adapter.start(turn())); expect(admission.admit).not.toHaveBeenCalled(); expect(commands).toEqual([]);
     expect(await tasks()).toEqual([expect.objectContaining({ status: "blocked", blocked_reason: "policy_denied" })]);
+  });
+
+  it("loads the selected private bot’s current Slack reference only when the worker requests its spec", async () => {
+    const slackThreadContext = fixtureMock(async (): Promise<string | undefined> => undefined)
+      .mockResolvedValueOnce("Slack reference fixture");
+    const { adapter, orchestrator, registry } = setup({ slackThreadContext, worker: async input => {
+      expect(slackThreadContext).not.toHaveBeenCalled();
+      const binding = registry.lookupRun({ ...input, runId: input.command.runId })!;
+      const spec = await orchestrator.runSource.loadRunSpec(binding);
+      expect(spec.slackThreadReference).toBe("Slack reference fixture");
+      expect(JSON.stringify(spec.turn)).not.toContain("Slack reference fixture");
+      expect((await orchestrator.runSource.loadRunSpec(binding)).slackThreadReference).toBeUndefined();
+      return { runId: input.command.runId, status: "completed", toolActions: 0, sessionRevision: 1 };
+    } });
+    const events = await collect(adapter.start(turn()));
+    expect(events.at(-1)).toEqual({ type: "run.completed", outcome: "completed" });
+    expect(slackThreadContext).toHaveBeenCalledTimes(2);
+    expect(slackThreadContext).toHaveBeenNthCalledWith(1, { ownerId: OWNER, botId: BOT, chatId: CHAT, signal: expect.any(AbortSignal) });
   });
 
   it("runs one turn in the bot workload and projects its events onto Chat", async () => {
