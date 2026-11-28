@@ -3,8 +3,9 @@ import { z } from "zod/v4";
 import { canonicalPreviewDriveTurnBody, CanonicalCreateChatTurnRequestSchema, TerminalRefSchema } from "@matrix-os/contracts";
 import { isTerminalControlCommand } from "@matrix-os/contracts/herdr-terminals";
 import { isManagedTerminalRef, ManagedTerminalRuntimeSchema } from "@matrix-os/contracts/managed-terminal-control";
-import { managedTerminalBodyDigest } from "@matrix-os/contracts/managed-terminal-proof";
+import { managedTerminalBodyDigest, managedWorkspaceIdFor } from "@matrix-os/contracts/managed-terminal-proof";
 import type { UserMachineRecord } from "./db.js";
+import { matchesManagedTerminalCanaryMachine, type ManagedTerminalCanary } from "./managed-terminal-canary.js";
 import { readRoutineProofProxyBody } from "./routine-proof-proxy-body.js";
 import type { AppDomainIdentity } from "./session-routing-identity.js";
 
@@ -75,15 +76,19 @@ export async function authenticatedManagedTerminalProxyProof(input: {
   machine: SourceMachine;
   identity: AppDomainIdentity;
   platformSecret: string;
+  canary?: ManagedTerminalCanary;
   now?: number;
   timeoutMs?: number;
 }): Promise<string | null | { status: 400 | 408 | 413 | 503 }> {
   const match = CHAT_TURN_PATH.exec(input.path);
   const chatId = match?.[1];
   const now = input.now ?? Date.now();
+  const { canary } = input;
   const sessionExpiry = verifiedOwnerSessionExpiry(input.identity, input.machine, now);
   if (!chatId || input.method !== "POST" || input.request.method !== "POST" || !input.platformSecret
     || sessionExpiry === null
+    || (canary && (chatId !== canary.chatId || canary.expiresAt <= now
+      || !matchesManagedTerminalCanaryMachine(input.machine, canary.source)))
     || input.request.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() !== "application/json"
     || new URL(input.request.url).searchParams.has("token")) return null;
 
@@ -100,17 +105,18 @@ export async function authenticatedManagedTerminalProxyProof(input: {
   if (!body.success || body.data.permissionMode !== "full_access" || body.data.interactionMode !== "default"
     || body.data.executionRoot?.kind !== "worktree" || body.data.routineCreation) return null;
   const terminal = selectedTerminal(body.data);
-  if (!terminal) return null;
+  if (!terminal || (canary && (terminal.workspaceId !== managedWorkspaceIdFor(canary.target.machineId)
+    || canary.expiresAt <= (input.now ?? Date.now())))) return null;
   // The browser must still be authenticated when the Platform admits the first
   // action. Its short token lifetime does not interrupt an already authorized run.
-  const expiresAt = now + GRANT_MS;
+  const expiresAt = canary ? Math.min(now + GRANT_MS, canary.expiresAt) : now + GRANT_MS;
   const payload = payloadSchema.safeParse({
     ...terminal, version: 1,
     ownerId: input.identity.userId, sourceMachineId: input.machine.machineId, sourceRuntimeSlot: input.machine.runtimeSlot,
     sourceEpoch: input.machine.runtimeTokenEpoch,
     chatId, clientRequestId: body.data.clientRequestId, worktreeId: body.data.executionRoot.worktreeId,
     bodyDigest: managedTerminalBodyDigest(canonicalPreviewDriveTurnBody(body.data)),
-    nonce: randomUUID(), activateBefore: Math.min(sessionExpiry, now + ACTIVATION_MS), expiresAt,
+    nonce: randomUUID(), activateBefore: Math.min(sessionExpiry, now + ACTIVATION_MS, expiresAt), expiresAt,
   });
   if (!payload.success) return null;
   const encoded = Buffer.from(JSON.stringify(payload.data)).toString("base64url");

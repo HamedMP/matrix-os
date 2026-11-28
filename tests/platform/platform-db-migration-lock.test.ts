@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 describe("platform database startup migration", () => {
   it("serializes the full schema migration on one transaction-scoped advisory lock", async () => {
     const source = await readFile("packages/platform/src/db.ts", "utf8");
-    expect(source).toContain('const ready = runPlatformStartupMigrations(kysely)');
+    expect(source).toContain('const ready = runPlatformStartupMigrations(kysely, migrationScope)');
     const composition = await readFile('packages/platform/src/database/run-migrations.ts', 'utf8');
     expect(composition).toContain('await runPlatformMigration(db, migratePlatformSchema, {');
     expect(composition).toContain('revision: PLATFORM_SCHEMA_REVISION');

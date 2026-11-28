@@ -36,11 +36,7 @@ import { startAtsBackgroundWorker } from './ats-background-worker.js';
 import { startGooglePurchaseWorker } from './billing/google-purchases.js';
 import type { Orchestrator } from './orchestrator.js';
 import type { ClerkAuth } from './clerk-auth.js';
-import {
-  createClerkAuth,
-  createClerkSessionRevoker,
-  resolveClerkVerificationConfig,
-} from './clerk-auth.js';
+import { createConfiguredClerkAuth } from './clerk-auth.js';
 import type { MatrixProvisioner } from './matrix-provisioning.js';
 import type { CustomerVpsService } from './customer-vps.js';
 import type { CustomerVpsServiceDeps } from './customer-vps-types.js';
@@ -69,6 +65,7 @@ import { createInternalCustomMcpApprovalRouteOptions } from './custom-mcp-approv
 import { createPreviewDriveIntegration } from './preview-drive-integration.js';
 import { createPreviewDriveStore } from './preview-drive-store.js';
 import { createManagedTerminalGrantClaims } from './managed-terminal-grant-claims.js';
+import { startManagedTerminalCanary } from './managed-terminal-canary-startup.js';
 import type { PreviewDriveIntegration } from './preview-drive-routes.js';
 import { createCustomMcpProjection } from './custom-mcp-projection.js';
 import { createPlatformCoreMcp, type GatewayCoreConnectedAppsModule, type GatewayCoreToolsModule } from './mcp-usage/startup.js';
@@ -365,6 +362,10 @@ async function startPlatformServerWithCleanup(
   if (checkUnsafeDefaultSecrets().length > 0) {
     process.exit(1);
   }
+  if (process.env.MATRIX_MANAGED_TERMINAL_CONTROL_CANARY_V1 !== undefined) {
+    await startManagedTerminalCanary(opts, registerCustomMcpStartupCleanup);
+    return;
+  }
   if (checkCustomerVpsPrimaryStorageEnv().length > 0) {
     process.exit(1);
   }
@@ -531,24 +532,7 @@ async function startPlatformServerWithCleanup(
     console.log('[platform] Cloud Run mode enabled; legacy Docker container orchestration is disabled');
   }
 
-  let clerkAuth: ClerkAuth | undefined;
-  const clerkVerificationConfig = resolveClerkVerificationConfig(process.env);
-  if (clerkVerificationConfig) {
-    const { verifyToken } = await import('@clerk/backend');
-    clerkAuth = createClerkAuth({
-      verifyToken: async (token: string) => {
-        const payload = await verifyToken(token, clerkVerificationConfig.verifyTokenOptions);
-        return payload as { sub: string; [key: string]: unknown };
-      },
-      ...(clerkVerificationConfig.sessionRevocationSecret
-        ? {
-            revokeSession: createClerkSessionRevoker({
-              secretKey: clerkVerificationConfig.sessionRevocationSecret,
-            }),
-          }
-        : {}),
-    });
-  }
+  const clerkAuth = await createConfiguredClerkAuth(process.env);
 
   const collaboration = await bootstrapPlatformCollaboration({
     env: process.env,

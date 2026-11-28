@@ -113,6 +113,10 @@ export function registerPlatformWebSocketUpgradeHandler(
   } = opts;
 
   server.on('upgrade', async (req: IncomingMessage, socket, head) => {
+    if (env.MATRIX_MANAGED_TERMINAL_CONTROL_CANARY_V1 !== undefined) {
+      rejectWebSocketUpgrade(socket, 404);
+      return;
+    }
     // Once the upstream has written its handshake response to the client, the client socket
     // carries a WebSocket stream and must be closed bare; before that, every refusal is an HTTP status.
     let upstreamResponded = false;

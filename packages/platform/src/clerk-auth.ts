@@ -71,6 +71,18 @@ export interface ClerkAuth {
   isPublicPath(path: string): boolean;
 }
 
+export async function createConfiguredClerkAuth(env: NodeJS.ProcessEnv): Promise<ClerkAuth | undefined> {
+  const config = resolveClerkVerificationConfig(env);
+  if (!config) return undefined;
+  const { verifyToken } = await import('@clerk/backend');
+  return createClerkAuth({
+    verifyToken: token => verifyToken(token, config.verifyTokenOptions),
+    ...(config.sessionRevocationSecret
+      ? { revokeSession: createClerkSessionRevoker({ secretKey: config.sessionRevocationSecret }) }
+      : {}),
+  });
+}
+
 const PUBLIC_PATHS = ["/health"];
 
 export function createClerkSessionRevoker(opts: {

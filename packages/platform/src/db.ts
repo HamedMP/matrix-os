@@ -1400,7 +1400,10 @@ export interface NewProviderDeletionQueueRecord {
   completedAt?: string | null;
 }
 
-export function createPlatformDb(opts: string | { dialect: unknown } = DEFAULT_PLATFORM_DB_URL ?? ''): PlatformDB {
+export function createPlatformDb(
+  opts: string | { dialect: unknown } = DEFAULT_PLATFORM_DB_URL ?? '',
+  migrationScope?: Parameters<typeof runPlatformStartupMigrations>[1],
+): PlatformDB {
   if (typeof opts === 'string' && !opts) {
     throw new Error('Platform Postgres URL is required: set PLATFORM_DATABASE_URL or POSTGRES_URL');
   }
@@ -1413,7 +1416,7 @@ export function createPlatformDb(opts: string | { dialect: unknown } = DEFAULT_P
       })()
     : new Kysely<PlatformDatabase>({ dialect: opts.dialect as never });
 
-  const ready = runPlatformStartupMigrations(kysely);
+  const ready = runPlatformStartupMigrations(kysely, migrationScope);
   return wrapPlatformDb(kysely, kysely, ready, async () => {
     await kysely.destroy();
     try {

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
-import { createManagedTerminalBroker, createManagedTerminalPickerRoutes } from "../../packages/gateway/src/chat/managed-terminal-source.js";
+import { createManagedTerminalBroker, createManagedTerminalPickerRoutes, managedTerminalBrokerFromEnv } from "../../packages/gateway/src/chat/managed-terminal-source.js";
 import { createHerdrChatTerminalRoute } from "../../packages/gateway/src/chat/herdr-terminal-route.js";
 import { MATRIX_MCP_RUN_CONTEXT_KEY } from "../../packages/gateway/src/chat/matrix-mcp-launch.js";
 import { HERDR_TERMINAL_WORKSPACE_ID } from "@matrix-os/contracts/herdr-terminals";
@@ -38,6 +38,33 @@ function fixture() {
 }
 
 describe("managed terminal control source", () => {
+  it("uses only the configured canary for terminal calls and stops at the canary deadline", async () => {
+    const now = 1_790_000_000_000;
+    const candidate = "https://tc-d6bc5cf---matrix-platform-hash-ew.a.run.app";
+    const env = {
+      MATRIX_MANAGED_TERMINAL_CONTROL_ENABLED: "1",
+      MATRIX_CLERK_USER_ID: "user_test",
+      MATRIX_MACHINE_ID: "71085f3e-9453-4ecd-9e4a-531d0905dd3c",
+      MATRIX_RUNTIME_SLOT: "primary",
+      MATRIX_SYNC_RUNTIME_TOKEN: token,
+      PLATFORM_INTERNAL_URL: "https://platform.test",
+      MATRIX_MANAGED_TERMINAL_CONTROL_CANARY_ORIGIN: candidate,
+      MATRIX_MANAGED_TERMINAL_CONTROL_CANARY_EXPIRES_AT: String(now + 1000),
+    };
+    const fetcher = vi.fn<typeof fetch>(async () => Response.json({ computers: [], partial: false }));
+    let clock = now;
+    const opts = { now: () => clock, fetch: fetcher };
+    const broker = managedTerminalBrokerFromEnv(env, opts);
+    await expect(broker?.computers()).resolves.toEqual({ computers: [], partial: false });
+    expect(String(fetcher.mock.calls[0]?.[0])).toBe(candidate + "/internal/terminal-control");
+    expect(managedTerminalBrokerFromEnv({ ...env, MATRIX_RUNTIME_SLOT: "dev" }, opts)).toBeNull();
+    expect(managedTerminalBrokerFromEnv({ ...env, MATRIX_MANAGED_TERMINAL_CONTROL_CANARY_ORIGIN: "https://tc-d6bc5cf---matrix-platform-hash.run.app.example.com" }, opts)).toBeNull();
+    clock = now + 1000;
+    await expect(broker?.computers()).rejects.toThrow("Managed terminal candidate expired");
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(managedTerminalBrokerFromEnv(env, opts)).toBeNull();
+  });
+
   it("lists target terminals for the exact runtime owner, without opening a run", async () => {
     const { broker, calls } = fixture();
     let principal = { source: "jwt", userId: "someone-else" } satisfies RequestPrincipal;
