@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[2]
 SUITES = ('funded-host-sync-initialization.test.py', 'funded-host-epoch.test.py', 'funded-host-component.test.py', 'funded-host-restoration.test.py',
           'funded-host-artifact-repair.test.py', 'funded-host-speech-recovery.test.py', 'funded-host-browser-recovery.test.py', 'funded-host-install-serialization.test.py',
           'funded-host-large-archive.test.py', 'funded-host-generated.test.py', 'funded-host-generated-epoch.test.py',
-          'funded-host-generated-speech.test.py', 'funded-host-finalization.test.py')
+          'funded-host-generated-speech.test.py', 'funded-host-finalization.test.py', 'update-transaction-permissions.test.py')
 
 
 def require_disposable():
