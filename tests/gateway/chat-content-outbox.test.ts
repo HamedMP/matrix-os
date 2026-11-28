@@ -84,3 +84,14 @@ it("signals recovery with the current checkpoint when the bounded replay cannot 
   expect(window.gap).toBe(true);
   expect(window.nextCursor).toBe(first.cursor + 150);
 });
+
+it("never advances public replay cursors to private routine events", async () => {
+  await repository.kysely.insertInto("chat_outbox").values([
+    { owner_type: owner.type, owner_id: owner.ownerId, chat_id: "chat_public", revision: 1, event_type: "run.activity", payload: {} },
+    { owner_type: owner.type, owner_id: owner.ownerId, chat_id: "chat_routine_" + "a".repeat(32), revision: 1, event_type: "run.activity", payload: {} },
+  ]).execute();
+  const first = await repository.replayOutboxWindow(owner, { limit: 10 });
+  expect(first.events.map(event => event.chatId)).toEqual(["chat_public"]);
+  const next = await repository.replayOutboxWindow(owner, { afterCursor: first.nextCursor, limit: 10 });
+  expect(next).toEqual({ events: [], gap: false });
+});

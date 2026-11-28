@@ -1,6 +1,6 @@
-import type { ProjectAgentContext } from "@matrix-os/contracts";
+import type { CanonicalChatRun, ProjectAgentContext } from "@matrix-os/contracts";
 import { z } from "zod/v4";
-import type { ChatOwner } from "./records.js";
+import { parseJson, type ChatOwner } from "./records.js";
 import type { CanonicalProviderRunInput } from "./provider-adapter.js";
 import { redactSharedAssistantText } from "./safe-activity-projection.js";
 
@@ -51,6 +51,10 @@ export function projectSetupInterviewInventory(project: ProjectSetupInterviewPro
     skills: inventory.skills.slice(0, 32).map(({ name, source }) => ({ name, path: `${source}/${name}/SKILL.md` })),
     mcpServices: mcpServices.slice(0, 40),
   };
+}
+
+export function isProjectSetupInterview(context: unknown) {
+  return parseJson<CanonicalChatRun["context"]>(context)?.projectSetupDraft?.mode === "interview";
 }
 
 export function supportsProjectSetupInterviewProvider(driver: string): boolean {
