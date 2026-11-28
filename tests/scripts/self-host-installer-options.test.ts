@@ -211,13 +211,13 @@ prepare_scope_runtime_roots "${home}" ${owner}`,
     it("moves only an existing owner root itself into private setgid group matrix, never its contents", () => {
       const { result, home, calls } = prepare("alice", { projects: "alice", "agent-workspaces": "alice", bots: "root" }, ["worktrees"]);
       expect(result.status, result.stderr).toBe(0);
+      // The exact commands bound the operations to these roots and forbid extra flags.
       expect(calls).toEqual([
         `chgrp matrix ${home}/agent-workspaces`,
         `chmod g+s,o-rwx ${home}/agent-workspaces`,
         `chgrp matrix ${home}/projects`,
         `chmod g+s,o-rwx ${home}/projects`,
       ]);
-      expect(calls.join("\n")).not.toMatch(/-R|owner-data/);
     });
 
     it("leaves projects to this step on self-host, so it is never created world-readable", () => {
@@ -259,7 +259,8 @@ prepare_scope_runtime_roots "${home}" alice`,
       expect(calls).toContain(`chmod g+s ${workspaces}/${key}`);
       expect(calls).toContain(`chgrp matrix ${workspaces}/${key}/chat_abc123`);
       expect(calls).toContain(`chmod g+s ${workspaces}/${key}/chat_abc123`);
-      expect(calls.join("\n")).not.toMatch(/chat_abc123\/src|notes|chat_foreign|chat_link|owner-data|-R/);
+      const relativeCalls = calls.map((call) => call.replace(`${home}/`, "")).join("\n");
+      expect(relativeCalls).not.toMatch(/chat_abc123\/src|notes|chat_foreign|chat_link|owner-data|(?:^|\s)(?:-R|--recursive)(?=\s|$)/);
     });
 
     it("keeps the legacy matrix layout exactly as before", () => {
