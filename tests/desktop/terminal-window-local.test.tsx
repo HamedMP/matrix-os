@@ -116,7 +116,10 @@ describe("This Computer terminals", () => {
     fireEvent.click(await findRow(/zsh/));
     await screen.findByTestId("terminal-view");
     operator.command({ command: "close-terminal" });
-    const dialog = await screen.findByRole("dialog", { name: "End terminal" });
+    // ENG-521: the app's destructive confirm, naming the terminal; the last pane says "End terminal".
+    const dialog = await screen.findByRole("alertdialog", { name: "End “zsh”?" });
+    expect(within(dialog).getByRole("button", { name: "Cancel" })).toBeTruthy();
+    expect(within(dialog).getByText("↵ End")).toBeTruthy();
     expect(operator.invoke).not.toHaveBeenCalledWith("local-terminal:kill", expect.anything());
     fireEvent.click(within(dialog).getByRole("button", { name: "End terminal" }));
     await waitFor(() => expect(screen.queryByTestId("terminal-view")).toBeNull());
@@ -136,7 +139,7 @@ describe("This Computer terminals", () => {
     fireEvent.click(await findRow(/tests/));
     operator.command({ command: "close-terminal" });
     await waitFor(() => expect(operator.invoke).toHaveBeenCalledWith("local-terminal:remove", { id: "t3" }));
-    expect(screen.queryByRole("dialog", { name: "End terminal" })).toBeNull();
+    expect(screen.queryByRole("alertdialog", { name: /^End “/ })).toBeNull();
   });
 
   it("files terminals by what they need: Needs you, Done, Working, Idle", async () => {
@@ -258,7 +261,7 @@ describe("This Computer terminals", () => {
     fireEvent.click(await findRow(/zsh/));
     await screen.findByTestId("terminal-view");
     operator.command({ command: "close-terminal" });
-    fireEvent.click(within(await screen.findByRole("dialog", { name: "End terminal" })).getByRole("button", { name: "End terminal" }));
+    fireEvent.click(within(await screen.findByRole("alertdialog", { name: /^End “/ })).getByRole("button", { name: "End terminal" }));
     expect(await screen.findByText("Couldn't end that terminal. Try again.")).toBeTruthy();
     expect(screen.getByTestId("terminal-view").textContent).toBe("local:t1");
   });

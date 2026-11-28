@@ -1,7 +1,7 @@
 // The Terminal window's small dialogs (spec 2706): the Cmd+P picker, F2
 // rename, and the confirmation before Cmd+W ends a running program.
 import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
-import { Button, Dialog, Input } from "@matrix-os/ui";
+import { Button, DestructiveConfirmDialog, Dialog, Input } from "@matrix-os/ui";
 import type { TerminalSidebarEntry } from "@matrix-os/ui/terminal-status-sidebar";
 
 const secondaryText = { color: "var(--text-secondary, var(--color-muted-foreground))" };
@@ -95,22 +95,15 @@ function RenameForm({ target, onRename, onClose }: {
 
 /** Cmd+W on a terminal whose program still runs: ending it stops that program. */
 export function CloseTerminalDialog({ target, onConfirm, onClose }: {
-  target: { key: string; name: string } | null;
+  target: { key: string; name: string; pane: boolean } | null;
   onConfirm(key: string): void;
   onClose(): void;
 }) {
+  // "End pane" while it is one pane of a split; "End terminal" for the last pane or a tab.
+  const action = target?.pane ? "End pane" : "End terminal";
   return (
-    <Dialog open={target !== null} onClose={onClose} aria-label="End terminal" style={{ maxWidth: 400 }}>
-      {target ? (
-        <div className="flex flex-col gap-3">
-          <h2 className="text-[15px] font-semibold">End “{target.name}”?</h2>
-          <p className="text-[13px]" style={secondaryText}>Its program is still running and will stop.</p>
-          <div className="flex justify-end gap-2">
-            <Button type="button" variant="ghost" size="sm" onClick={onClose}>Cancel</Button>
-            <Button type="button" variant="destructive" size="sm" autoFocus onClick={() => { onConfirm(target.key); onClose(); }}>End terminal</Button>
-          </div>
-        </div>
-      ) : null}
-    </Dialog>
+    <DestructiveConfirmDialog open={target !== null} title={target ? `End “${target.name}”?` : action}
+      body="Its program is still running and will stop." confirmLabel={action} confirmVerb="End"
+      onCancel={onClose} onConfirm={() => { if (target) onConfirm(target.key); onClose(); }} />
   );
 }

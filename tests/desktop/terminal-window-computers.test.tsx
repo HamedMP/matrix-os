@@ -444,7 +444,7 @@ describe("Terminal window computers", () => {
     await stream("primary", [tabFacts(TAB_1, "build", { agentStatus: "working" }), tabFacts(TAB_2, "old", { state: "finished", exitCode: 0 })]);
     fireEvent.click(await within(sidebar()).findByRole("button", { name: /build/ }));
     act(() => emit("terminal-window:command", { command: "close-terminal" }));
-    const dialog = await screen.findByRole("dialog", { name: "End terminal" });
+    const dialog = await screen.findByRole("alertdialog", { name: /^End “/ });
     expect(fetchMock).not.toHaveBeenCalled();
     fireEvent.click(within(dialog).getByRole("button", { name: "End terminal" }));
     await waitFor(() => expect(requests()).toEqual([`DELETE ${HOST}/api/terminal/workspaces/${WS}/tabs/${TAB_1}`]));

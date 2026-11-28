@@ -14,6 +14,7 @@ import { terminalRefKey } from "../../lib/terminal-workspaces";
 import type { LocalTerminalAgent, SshOptions } from "../../../../shared/local-terminals";
 import type { TerminalWindowCommand } from "../../../../shared/terminal-window";
 import { closeComputerTab, createComputerTab, renameComputerTab } from "./computer-terminals";
+import { friendlyTerminalName } from "./terminal-friendly-name";
 import { useTerminalPanes } from "./use-terminal-panes";
 import { useOpenTabs } from "./use-open-tabs";
 import { leaves } from "@matrix-os/ui/terminal-pane-tree";
@@ -59,7 +60,8 @@ export function useTerminalWindow() {
   // The overview of every terminal in the active space, in place of the panes.
   const [overviewOpen, setOverviewOpen] = useState(false);
   const [renaming, setRenaming] = useState<{ key: string; name: string } | null>(null);
-  const [closing, setClosing] = useState<{ key: string; name: string } | null>(null);
+  // A terminal about to be ended: its friendly name, and whether it is one pane of a split.
+  const [closing, setClosing] = useState<{ key: string; name: string; pane: boolean } | null>(null);
   // The last computer action that did not take effect, shown until the next one.
   const [computerNotice, setComputerNotice] = useState<"rename-failed" | "end-failed" | null>(null);
   const [now, setNow] = useState(() => Date.now());
@@ -317,8 +319,10 @@ export function useTerminalWindow() {
   /** Closes a terminal's pane by ending it: a finished one goes at once, a running program asks first. */
   const requestClose = useCallback((key: string) => {
     if (isFinished(key, local.state, status.states)) { close(key); return; }
-    setClosing({ key, name: status.rows.find((row) => row.key === key)?.name ?? "Terminal" });
-  }, [close, local.state, status.rows, status.states]);
+    setClosing({
+      key, name: friendlyTerminalName(status.rows.find((row) => row.key === key)), pane: panes.groupOf(key).terminals.length > 1,
+    });
+  }, [close, local.state, panes, status.rows, status.states]);
 
   /** Shows nothing: the last tab on the bar was closed. */
   const deselect = useCallback(() => {
