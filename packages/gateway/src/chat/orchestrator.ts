@@ -165,6 +165,11 @@ function mapSteerFinalizationError(error: unknown): never {
 
 export class CanonicalChatOrchestrator {
   private readonly active = new Map<string, ActiveRun>();
+  // A dispatch still owns database work while its finalizer prepares the next queued run,
+  // even after it leaves the active-control registry. Track that entire lifecycle in constant space.
+  private dispatchesInFlight = 0;
+  private dispatchDrain: Promise<void> = Promise.resolve();
+  private resolveDispatchDrain: (() => void) | undefined;
   private readonly pendingDispatch = new Set<string>();
   private readonly reservedDispatch = new Set<string>();
   private readonly queueDispatches = new Set<string>();
@@ -455,6 +460,10 @@ export class CanonicalChatOrchestrator {
   ): Promise<void> {
     this.assertOpen();
     this.reserveDispatchSlot(run.id);
+    if (this.dispatchesInFlight === 0) {
+      this.dispatchDrain = new Promise<void>(resolve => { this.resolveDispatchDrain = resolve; });
+    }
+    this.dispatchesInFlight += 1;
     const controller = new AbortController();
     const completion = this.dispatch(
       owner, message, run, adapter, controller, resolvedRoot, resumeState, promptOverride, sharedScopeId, nativeScheduled,
@@ -463,16 +472,25 @@ export class CanonicalChatOrchestrator {
         console.error("[chat/orchestrator] Run dispatch failed:", error instanceof Error ? error.name : "UnknownError");
       })
       .finally(async () => {
-        this.active.delete(run.id);
-        if (this.closing) return;
         try {
-          if (onComplete) await onComplete();
-          else await this.dispatchNextQueued(owner, run.chatId);
-        } catch (error: unknown) {
-          console.error(
-            "[chat/orchestrator] Queued Run dispatch failed:",
-            error instanceof Error ? error.name : "UnknownError",
-          );
+          this.active.delete(run.id);
+          if (this.closing) return;
+          try {
+            if (onComplete) await onComplete();
+            else await this.dispatchNextQueued(owner, run.chatId);
+          } catch (error: unknown) {
+            console.error(
+              "[chat/orchestrator] Queued Run dispatch failed:",
+              error instanceof Error ? error.name : "UnknownError",
+            );
+          }
+        } finally {
+          this.dispatchesInFlight -= 1;
+          if (this.dispatchesInFlight === 0) {
+            const resolve = this.resolveDispatchDrain;
+            this.resolveDispatchDrain = undefined;
+            resolve?.();
+          }
         }
       });
     this.active.set(run.id, {
@@ -1234,8 +1252,8 @@ export class CanonicalChatOrchestrator {
   }
 
   async drain(): Promise<void> {
-    while (this.active.size > 0) {
-      await Promise.allSettled([...this.active.values()].map((entry) => entry.completion));
+    while (this.dispatchesInFlight > 0) {
+      await this.dispatchDrain;
     }
   }
 

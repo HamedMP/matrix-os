@@ -33,7 +33,8 @@ const request = (id: string, revision = 0) => ({ clientRequestId: id, baseRevisi
   selection, interactionMode: 'default', permissionMode: 'supervised', parts: [{ type: 'text' as const, text: 'Hello' }] });
 
 async function fixture() {
-  let clock = new Date(); let matched = true;
+  const initialClock = new Date();
+  let clock = initialClock; let matched = true;
   let starts = 0;
   const paused = new Promise<void>(done => { release = done; });
   const steer = vi.fn(async () => undefined);
@@ -64,7 +65,7 @@ async function fixture() {
   // Queue while ordinary; later history changes must not consume this owner input.
   const queued = await orchestrator.enqueueQueuedTurn(principal, owner, 'chat_one',
     request('req_queue', (await repository.get(owner, 'chat_one'))!.chat.revision));
-  const contexts = createGoogleContextStore(repository.kysely);
+  const contexts = createGoogleContextStore(repository.kysely, { now: () => clock });
   await contexts.mark({ ownerId: owner.ownerId, chatId: 'chat_one', googleAccountId: account,
     consentId: 'consent_one', profileId: 'reviewed', profileRevision: 1, purposeId: 'assistant',
     expiresAt: new Date(clock.getTime() + 60_000).toISOString(), retentionDeadline: new Date(clock.getTime() + 60_000).toISOString() });
@@ -82,7 +83,7 @@ async function fixture() {
   return { adapter, adapters, admitted, queued, reader, assertRun, contexts, calls, invoke, starts: () => starts,
     expire: () => { clock = new Date(clock.getTime() + 120_000); },
     mismatch: () => { matched = false; },
-    restore: () => { matched = true; clock = new Date(); },
+    restore: () => { matched = true; clock = initialClock; },
     purge: () => contexts.beginPurge(owner.ownerId, account) };
 }
 
@@ -131,6 +132,26 @@ describe('current history on canonical continuation sends', () => {
       await expect(f.invoke(kind)).rejects.toThrow(); expect(f.calls[kind]).not.toHaveBeenCalled();
     });
   }
+  it('drain waits for queue preparation after the active run has left the registry', async () => {
+    await fixture();
+    let enter!: () => void;
+    let resume!: () => void;
+    const entered = new Promise<void>(resolve => { enter = resolve; });
+    const paused = new Promise<void>(resolve => { resume = resolve; });
+    vi.spyOn(repository, 'claimNextQueuedTurn').mockImplementationOnce(async () => {
+      enter(); await paused; return null;
+    });
+    release();
+    await entered;
+    expect(orchestrator!.activeCount).toBe(0);
+    let drained = false;
+    const draining = orchestrator!.drain().then(() => { drained = true; });
+    try {
+      await new Promise(resolve => setTimeout(resolve, 10));
+      expect(drained).toBe(false);
+    } finally { resume(); await draining; }
+    expect(drained).toBe(true);
+  });
   it('quiesces an expired run rather than forwarding a decline that could resume its model', async () => {
     const f = await fixture(); f.expire();
     await expect(orchestrator!.submitApproval(owner, 'chat_one', f.admitted.run.id, 'approval_one',
