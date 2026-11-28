@@ -1,3 +1,4 @@
+import type { GoogleManagedRouteResolver } from '../google-data/runtime/profile-resolution.js';
 import { createPipedreamGmailAttemptRoutes, type PipedreamGmailAttemptConfig } from "./pipedream-attempts/routes.js";
 import { registerGoogleDataOwnerRoutes } from "../google-data/register-owner-routes.js";
 import { isNativeGmailAccount } from "./native-gmail/request.js";
@@ -129,6 +130,7 @@ export interface IntegrationBroadcast {
 }
 
 export interface IntegrationRoutesOpts {
+  resolveManagedRoute?: GoogleManagedRouteResolver;
   googleCollection?: GoogleCollectionAdmission;
   pipedreamGmailAttempts?: PipedreamGmailAttemptConfig;
   db: PlatformDb;
@@ -247,7 +249,7 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
   const { db, pipedream, webhookSecret, resolveUserId, broadcast, mcpPresetBroker } = opts;
   const emit = broadcast ?? (() => {});
   const app = new Hono();
-  registerGoogleDataOwnerRoutes(app, db, resolveUserId);
+  registerGoogleDataOwnerRoutes(app, db, resolveUserId, { resolveManagedRoute: opts.resolveManagedRoute });
   if (opts.nativeGmail) app.route("/", createNativeGmailRoutes({ db, oauth: opts.nativeGmail, resolveUserId, broadcast, isEligible: opts.nativeGmailEligible }));
   if (!opts.nativeGmail) app.route("/", createNativeGmailConnectionRoutes({ db, resolveUserId, isEligible: opts.nativeGmailEligible ?? (async () => false) }));
   if (!opts.nativeGmail && opts.nativeGmailCleanup) app.route("/", createNativeGmailDisconnectRoutes({ db, cleanup: opts.nativeGmailCleanup, resolveUserId, broadcast }));

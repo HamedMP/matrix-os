@@ -27,3 +27,13 @@ describe("platform application shutdown", () => {
     expect(shutdownPostHog).toHaveBeenCalledOnce();
   });
 });
+
+it("closes the qualified Google runtime before shared infrastructure and still closes telemetry on failure", async () => {
+ const calls: string[] = [];
+ const app = {shutdownBrowserApprovals: async () => { calls.push("browser"); }, shutdownPostHog: async () => { calls.push("telemetry"); }};
+ await shutdownPlatformApp(app, {close: async () => { calls.push("qualified"); }});
+ expect(calls).toEqual(["qualified", "browser", "telemetry"]);
+ calls.length = 0;
+ await expect(shutdownPlatformApp(app, {close: async () => { calls.push("qualified"); throw new Error("fixture close"); }})).rejects.toThrow("fixture close");
+ expect(calls).toEqual(["qualified", "browser", "telemetry"]);
+});

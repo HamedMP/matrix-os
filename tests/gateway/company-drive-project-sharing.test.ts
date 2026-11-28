@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { createGoogleContextStore } from "../../packages/gateway/src/google-data/runtime/contexts.js";
 import { ChatRepository } from "../../packages/gateway/src/chat/repository.js";
 import { bootstrapChatDatabase } from "../../packages/gateway/src/chat/database.js";
 import { bootstrapCollaborationDatabase } from "../../packages/gateway/src/collaboration/database.js";
@@ -25,4 +26,24 @@ describe("company drive project sharing boundary",()=>{
   await expect(fixture.db.transaction().execute(trx=>reconcileProjectMembershipAtPublication(trx,{projectScopeId:scopeId,ownerType:"personal",ownerId,requestedBy:ownerId,destinationAuthorityRuntimeId:runtimeId,destinationAuthorityGeneration:1,now,createEventId:()=>"20000000-0000-4000-8000-000000000001"}))).rejects.toMatchObject({code:"conflict"});
   const child=await fixture.db.selectFrom("collaboration_scopes").select("lifecycle").where("kind","=","chat").executeTakeFirstOrThrow();expect(child.lifecycle).toBe("preparing");
  });
+ it("keeps a staged Chat private if Gmail collection marks it before publication", async () => {
+  await createProjectInheritanceResolver({ db: fixture.db }).bindOwnedResource(binding());
+  const contexts = createGoogleContextStore(fixture.db);
+  await contexts.migrate();
+  const deadline = new Date(Date.now() + 60_000).toISOString();
+  await contexts.mark({ ownerId, chatId: binding().resourceId,
+    googleAccountId: "10000000-0000-4000-8000-000000000001", consentId: "consent_project",
+    profileId: "profile_project", profileRevision: 1, purposeId: "assistant",
+    expiresAt: deadline, retentionDeadline: deadline });
+
+  await expect(fixture.db.transaction().execute(trx => reconcileProjectMembershipAtPublication(trx, {
+    projectScopeId: scopeId, ownerType: "personal", ownerId, requestedBy: ownerId,
+    destinationAuthorityRuntimeId: runtimeId, destinationAuthorityGeneration: 1, now,
+    createEventId: () => "20000000-0000-4000-8000-000000000001",
+  }))).rejects.toMatchObject({ code: "conflict" });
+
+  const child = await fixture.db.selectFrom("collaboration_scopes").select("lifecycle").where("kind", "=", "chat").executeTakeFirstOrThrow();
+  expect(child.lifecycle).toBe("preparing");
+ });
+
 });

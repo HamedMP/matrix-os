@@ -1,3 +1,5 @@
+import { boundedProvenanceTransaction } from "../google-data/provenance/transaction.js";
+import { hasGoogleContextMarker, lockGoogleContexts } from "../google-data/runtime/contexts-schema.js";
 import { sql, type Kysely, type Transaction } from "kysely";
 import { hasCompanyDriveMaterial } from "../chat/drive-sharing-guard.js";
 import type { ChatOwner, ChatOutboxEvent, ChatRecord } from "../chat/records.js";
@@ -178,6 +180,8 @@ export function createProjectChatAssignmentCoordinator(options: {
     const projectIds = [...new Set([current?.project_id, targetProjectId]
       .filter((projectId): projectId is string => typeof projectId === "string"))].sort();
     if (projectIds.length > 0) {
+      // Take the Google context lock before project/scope/Chat row locks.
+      await boundedProvenanceTransaction<OwnerCollaborationDatabase, void>(trx, lockGoogleContexts<OwnerCollaborationDatabase>);
       await trx.selectFrom("collaboration_scopes").select("id")
         .where("owner_type", "=", owner.type)
         .where("owner_id", "=", owner.ownerId)
@@ -426,6 +430,9 @@ export function createProjectChatAssignmentCoordinator(options: {
     const effects: ReconciliationEffects = { chatEvents: [], scopeIdsToRevokeSessions: [] };
     const at = now();
     const target = await targetProject(trx, owner, record.projectId);
+    if (target && await hasGoogleContextMarker(trx, owner.ownerId, record.chat.id)) {
+      throw new ProjectInheritanceError("resource_blocked");
+    }
     const current = await currentBinding(trx, owner, record.chat.id);
     if (current && current.projectScopeId !== target?.id) {
       effects.scopeIdsToRevokeSessions.push(await endBinding(trx, current, at));

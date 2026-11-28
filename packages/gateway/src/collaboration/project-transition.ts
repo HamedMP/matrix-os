@@ -1,3 +1,5 @@
+import { boundedProvenanceTransaction } from "../google-data/provenance/transaction.js";
+import { lockGoogleContexts } from "../google-data/runtime/contexts-schema.js";
 import { randomUUID } from "node:crypto";
 import { sql, type Kysely, type Selectable, type Transaction } from "kysely";
 import { z } from "zod/v4";
@@ -133,12 +135,14 @@ async function lockTransition<T>(
     row: TransitionRow,
     scope: Selectable<OwnerCollaborationDatabase["collaboration_scopes"]>,
   ) => Promise<T>,
+  protectChatAudience = false,
 ): Promise<T> {
   const id = TransitionIdSchema.parse(transitionId);
   const hint = await db.selectFrom("collaboration_transitions")
     .select("scope_id").where("id", "=", id).executeTakeFirst();
   if (!hint) throw new ProjectTransitionError("not_found");
   return db.transaction().execute(async (trx) => {
+    if (protectChatAudience) await boundedProvenanceTransaction<OwnerCollaborationDatabase, void>(trx, lockGoogleContexts<OwnerCollaborationDatabase>);
     const scope = await trx.selectFrom("collaboration_scopes").selectAll()
       .where("id", "=", hint.scope_id).forUpdate().executeTakeFirst();
     if (!scope) throw new ProjectTransitionError("not_found");
@@ -655,7 +659,7 @@ export function createProjectTransitionJournal(options: {
           created_at: now(),
         }).execute();
         return rowToTransition(updated);
-        });
+        }, true);
       const result = options.chatScope
         ? await options.chatScope.withCurrentExecutionCapability(activateWithCapability)
         : await activateWithCapability(null);

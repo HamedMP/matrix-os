@@ -900,7 +900,7 @@ describe("PostHog error tracking", () => {
     expect(gatewayServer).toContain("await socialRoutes?.shutdownPostHog()");
     expect(platformSocialApi).toContain("shutdownPostHog");
     expect(platformStartup).toContain("import { shutdownPlatformApp } from './shutdown-platform-app.js'");
-    expect(platformStartup).toContain("await shutdownPlatformApp(app)");
+    expect(platformStartup).toContain("await shutdownPlatformApp(app, googleQualifiedRuntime)");
     expect(platformShutdown).toContain("await app.shutdownPostHog()");
     expect(platformMain).toContain("await Promise.allSettled(posthogShutdowns.map((shutdownPostHog) => shutdownPostHog()))");
     expect(platformMain).not.toContain("for (let i = posthogShutdowns.length - 1");

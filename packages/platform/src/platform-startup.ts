@@ -1,3 +1,5 @@
+import { createGoogleQualifiedPlatformRuntime } from './google-qualified-startup.js';
+import type { ManagedGoogleRouteResolveRequest, GoogleQualifiedFundedRoute } from '@matrix-os/contracts';
 import { loadGmailPipedreamAttemptConfig } from "./gmail-pipedream-attempt-config.js";
 import { createConfiguredPlatformGmail, initializeOwnedIntegrationDb, requiresPlatformGmailRuntime } from './native-gmail-startup.js';
 import { parseIsolatedChatEnvelope } from "@matrix-os/contracts";
@@ -247,6 +249,7 @@ interface GatewayIntegrationRoutesModule {
     mcpPresetBroker?: unknown;
     verifiedConnectedWebhook?: ReturnType<typeof createAccountDeletionIntegrationWebhookAdmission>;
     googleCollection?: InternalGoogleCollectionAdmission;
+    resolveManagedRoute?: (selector: ManagedGoogleRouteResolveRequest, signal: AbortSignal) => Promise<GoogleQualifiedFundedRoute>;
   }): Hono;
   executeIntegrationAction(opts: {
     pipedream: unknown; externalUserId: string;
@@ -418,6 +421,9 @@ async function startPlatformServerWithCleanup(
   if (cloudflareBinding && (!fundedAiConfig.enabled || !pricingRegistryEnabled)) {
     throw new Error('Cloudflare funded Preview requires the funded control plane and pricing registry');
   }
+  const googleQualifiedRuntime = await createGoogleQualifiedPlatformRuntime({ env: process.env, funded: fundedAiConfig,
+    connectionString: runtimeConfig.platformDatabaseUrl });
+  if (googleQualifiedRuntime) registerCustomMcpStartupCleanup(() => googleQualifiedRuntime.close());
   let internalFundedAiRuntimeRoutes: Hono | undefined;
   let internalFundedAiRelayRoutes: Hono | undefined;
   let internalFundedAiOperatorRoutes: Hono | undefined;
@@ -475,9 +481,11 @@ async function startPlatformServerWithCleanup(
       promotionalGrant: fundedAiConfig.promotionalGrant,
       routeProbes: fundedModelProbes,
       cloudflareBinding,
+      ...(googleQualifiedRuntime ? { qualified: googleQualifiedRuntime.service } : {}),
       isolatedChat: parseIsolatedChatEnvelope(process.env.MATRIX_ISOLATED_CHAT_ENVELOPE),
     });
     internalFundedAiRelayRoutes = createAiFundedRelayRoutes({
+      ...(googleQualifiedRuntime ? { qualified: googleQualifiedRuntime.service } : {}),
       relayControlToken: fundedAiConfig.relayControlToken,
       repository: fundedAiRepository,
       listPricingReviews: pricingStore.list,
@@ -710,6 +718,7 @@ async function startPlatformServerWithCleanup(
       ...(process.env.CUSTOM_MCP_ENABLED === 'true' ? { mcpPresetBroker: managedMcpPresetProxy } : {}),
     });
     internalIntegrationRoutes = createIntegrationRoutes({
+      ...(googleQualifiedRuntime ? { resolveManagedRoute: googleQualifiedRuntime.resolveManagedRoute } : {}),
       db: trustedPlatformDb,
       googleCollection: createPlatformGoogleCollectionAdmission({ integrationDb: trustedPlatformDb, platformSecret,
         createAdmission: createGoogleCollectionAdmissionForPlatform }),
@@ -1383,7 +1392,7 @@ async function startPlatformServerWithCleanup(
         ]);
         await integrationShutdown?.();
         posthogProcessErrors.dispose();
-        await shutdownPlatformApp(app);
+        await shutdownPlatformApp(app, googleQualifiedRuntime);
         await processPosthogErrorTracker.shutdown();
         sitesObjectStore?.destroy();
         await Promise.all([closePrimaryDb(), atsDb?.destroy()]);

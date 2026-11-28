@@ -3,6 +3,7 @@ import { sql } from "kysely";
 import { KyselyPGlite } from "kysely-pglite";
 import { bootstrapChatDatabase } from "../../packages/gateway/src/chat/database";
 import { ChatRepository } from "../../packages/gateway/src/chat/repository";
+import { createGoogleContextStore } from "../../packages/gateway/src/google-data/runtime/contexts";
 import { ChatSharing, bootstrapChatSharing } from "../../packages/gateway/src/chat/sharing";
 
 let repository: ChatRepository;
@@ -31,6 +32,26 @@ it("creates a bounded text snapshot, keeps it immutable, and revokes access", as
   expect((await shares.read(result.token))?.messages[0]?.text).toBe("Hello <script>");
   await shares.revoke(owner, "chat_share", result.id);
   expect(await shares.read(result.token)).toBeNull();
+});
+
+it("blocks sharing and public reads of a Gmail-marked Chat and erases its existing snapshot", async () => {
+  const existing = await shares.create(owner, "chat_share", 0);
+  const contexts = createGoogleContextStore(repository.kysely);
+  await contexts.migrate();
+  const account = "10000000-0000-4000-8000-000000000001";
+  const deadline = new Date(Date.now() + 60_000).toISOString();
+  await contexts.mark({ ownerId: owner.ownerId, chatId: "chat_share", googleAccountId: account,
+    consentId: "consent_share", profileId: "profile_share", profileRevision: 1, purposeId: "assistant",
+    expiresAt: deadline, retentionDeadline: deadline });
+
+  expect(await shares.read(existing.token)).toBeNull();
+  await expect(shares.preview(owner, "chat_share")).rejects.toMatchObject({ code: "conflict" });
+  await expect(shares.create(owner, "chat_share", 0)).rejects.toMatchObject({ code: "conflict" });
+
+  await contexts.beginPurge(owner.ownerId, "10000000-0000-4000-8000-000000000002");
+  expect(await shares.list(owner, "chat_share")).toHaveLength(1);
+  await contexts.beginPurge(owner.ownerId, account);
+  expect(await repository.kysely.selectFrom("chat_shares").select("id").where("id", "=", existing.id).execute()).toEqual([]);
 });
 
 it("removes private assistant paths and credentials from public share previews and snapshots", async () => {

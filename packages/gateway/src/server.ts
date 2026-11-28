@@ -1,7 +1,9 @@
 import { withCapabilityLookupTimeout } from "./server/capability-lookup-timeout.js";
+import { readConnectedCapabilityIds } from "./server/integration-capability-reader.js";
 import { createTerminalLaunchRuntime } from "./terminal/launch-runtime.js";
 import { fileURLToPath } from "node:url";
 import { startUsageHistory } from "./ai-usage/history-service.js";
+import { loadGoogleDataPilotConfig } from './google-data/runtime/pilot-config.js';
 import { createSupervisedBrowserRuntime } from "./startup/browser-approvals.js";
 import { createRuntimeProviderSettings, executableChatDrivers } from "./server/provider-discovery-composition.js";
 import { composePhaseCatalog } from "./chat/phase-catalog-composition.js";
@@ -148,7 +150,7 @@ import { createCompanyBrainRoutes } from "./onboarding/company-brain-routes.js";
 import { createDraftActionReadinessService } from "./onboarding/draft-action-readiness.js";
 import { createDraftActionRoutes } from "./onboarding/draft-action-routes.js";
 import type { GeminiLiveConnection } from "./onboarding/gemini-live.js";
-import { capabilityIdsForConnectedServices, createIntegrationCapabilityService } from "./onboarding/integration-capabilities.js";
+import { createIntegrationCapabilityService } from "./onboarding/integration-capabilities.js";
 import { createIntegrationCapabilityRoutes } from "./onboarding/integration-capability-routes.js";
 import { ReadinessStatusCache } from "./onboarding/readiness-cache.js";
 import { InMemoryReadinessRepository } from "./onboarding/readiness-repository.js";
@@ -421,49 +423,9 @@ export async function createGateway(config: GatewayConfig) {
     codexExecutable,
   });
   let internalIntegrationBaseUrl: string | null = null;
-  const PLATFORM_USER_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  async function getConnectedCapabilityIds(ownerId: string): Promise<string[]> {
-    if (platformDb) {
-      try {
-        const dbForLookup = platformDb;
-        const services = await withCapabilityLookupTimeout(async () => {
-          const user = await dbForLookup.getUserByClerkId(ownerId);
-          const platformUserId = user?.id ?? (PLATFORM_USER_ID_PATTERN.test(ownerId) ? ownerId : null);
-          if (!platformUserId) return [];
-          return dbForLookup.listConnectedServices(platformUserId);
-        });
-        return capabilityIdsForConnectedServices(services.map((service) => service.service));
-      } catch (err: unknown) {
-        console.warn("[integrations] platform capability lookup failed:", err instanceof Error ? err.message : String(err));
-        return [];
-      }
-    }
-    if (!internalIntegrationBaseUrl) return [];
-    try {
-      const headers = new Headers({ Accept: "application/json" });
-      if (internalPlatformToken) headers.set("authorization", `Bearer ${internalPlatformToken}`);
-      const response = await fetch(internalIntegrationBaseUrl, {
-        headers,
-        redirect: "error",
-        signal: AbortSignal.timeout(10_000),
-      });
-      if (!response.ok) return [];
-      const body = await response.json() as unknown;
-      const connections = Array.isArray(body)
-        ? body
-        : body && typeof body === "object" && Array.isArray((body as { connections?: unknown }).connections)
-          ? (body as { connections: unknown[] }).connections
-          : [];
-      return capabilityIdsForConnectedServices(connections.flatMap((connection) =>
-        connection && typeof connection === "object" && typeof (connection as { service?: unknown }).service === "string"
-          ? [(connection as { service: string }).service]
-          : [],
-      ));
-    } catch (err: unknown) {
-      console.warn("[integrations] capability connection lookup failed:", err instanceof Error ? err.message : String(err));
-      return [];
-    }
-  }
+  const getConnectedCapabilityIds = (ownerId: string) => readConnectedCapabilityIds(ownerId, {
+    platformDb, internalIntegrationBaseUrl, internalPlatformToken,
+  });
   const agentCredentialService = createAgentCredentialStatusService({
     onChange: (ownerId) => readinessCache.delete(ownerId),
     probeAgent: async (_ownerId, agent) => {
@@ -486,6 +448,7 @@ export async function createGateway(config: GatewayConfig) {
   // canonical when present; MATRIX_CLERK_USER_ID supports VPS-native hosts
   // provisioned before the canonical variable was added.
   const terminalRuntimeOwnerId = process.env.MATRIX_USER_ID ?? process.env.MATRIX_CLERK_USER_ID;
+  const googlePilot = loadGoogleDataPilotConfig(process.env, terminalRuntimeOwnerId);
   const supervisedBrowserRuntime = createSupervisedBrowserRuntime({ env: process.env, ownerId: terminalRuntimeOwnerId, clerkOwnerId: process.env.MATRIX_CLERK_USER_ID });
   const sharedBrowserRuntime = createSharedBrowserRuntime({ homePath, authorizeAction: supervisedBrowserRuntime?.control.authorizeAction,
     supervisedRunExpiresAt: process.env.MATRIX_SUPERVISED_BROWSER_DEV_SCOPE === undefined
@@ -837,6 +800,7 @@ export async function createGateway(config: GatewayConfig) {
     ? null
     : collaborationHealth.reason;
   const ownerDatabaseStartup = await initializeOwnerDatabaseServices({
+    googlePilot,
     databaseUrl,
     homePath,
     collaborationConfig,
@@ -867,6 +831,7 @@ export async function createGateway(config: GatewayConfig) {
   canvasSubscriptionHub = ownerDatabaseServices?.canvasSubscriptionHub ?? null;
   canvasCleanupTimer = ownerDatabaseServices?.canvasCleanupTimer ?? null;
   chatRepository = ownerDatabaseServices?.chatRepository ?? null;
+  if (googlePilot.enabled && (!chatRepository || !ownerDatabaseServices?.googleCopies)) throw new Error('Google pilot unavailable');
   canonicalChatEventStream = ownerDatabaseServices?.chatEventStream ?? null;
   canonicalChatExecutionRoots = ownerDatabaseServices?.chatExecutionRoots ?? null;
   canonicalChatCollaborationGuard = ownerDatabaseServices?.chatCollaborationGuard ?? null;
@@ -1553,6 +1518,7 @@ export async function createGateway(config: GatewayConfig) {
       endpoint: `http://127.0.0.1:${port}/api/routine-cli/execute` };
     botServices = await startBots({
       routineCliTransport,
+      googlePilot, googleCopies: ownerDatabaseServices?.googleCopies, qualifiedFundedConfig: fundedAiRuntimeConfig,
       toolOutputKey, homePath, repository: chatRepository, agents: chatAgents, executionRoots: canonicalChatExecutionRoots,
       ...(sharedBrowserRuntime ? { sharedBrowser: sharedBrowserRuntime.broker } : {}),
       ...(internalPlatformUrl && internalPlatformToken && internalHandle && process.env.MATRIX_MACHINE_ID && process.env.MATRIX_RUNTIME_SLOT
