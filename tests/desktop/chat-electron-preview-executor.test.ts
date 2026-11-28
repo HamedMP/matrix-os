@@ -38,13 +38,6 @@ describe("one-shot Electron preview source", () => {
     expect(verifiedSignInSource(Buffer.from(original), label, candidateSha)).toEqual(Buffer.from(updated));
   });
 
-  it("can reconstruct an unchanged sign-in label only for a verification request", () => {
-    const baseline = Buffer.from(original);
-    const baselineSha = createHash("sha256").update(baseline).digest("hex");
-    expect(verifiedSignInSource(baseline, "YOUR SPACE TO BEGIN", baselineSha, true)).toEqual(baseline);
-    expect(() => verifiedSignInSource(baseline, "YOUR SPACE TO BEGIN", baselineSha)).toThrow();
-  });
-
   it.each([
     [original, 'GO</span><img onLoad={() => 1}>', candidateSha],
     [`${original}\n${original}`, label, candidateSha],

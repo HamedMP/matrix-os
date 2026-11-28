@@ -10,7 +10,6 @@ import {
 } from "../../../../shared/chat-electron-preview";
 import { invoke } from "../../lib/operator";
 import type { ComposerMentionAction } from "./ComposerMentionActions";
-import { useMacVerification } from "./ChatMacVerification";
 
 type PreviewStatus = InvokeResponse<"chat:electron-preview-run">["status"];
 const PREVIEW_STATUS: Record<PreviewStatus, string> = {
@@ -61,7 +60,6 @@ export type StageChatWorktreeDraft = (
 
 interface ChatElectronPreviewProps {
   active: boolean;
-  editingQueuedTurn?: boolean;
   actorId: string | null;
   detail: CanonicalChatDetailResponse;
   onDraft?: StageChatWorktreeDraft;
@@ -72,7 +70,7 @@ interface PreviewAttempt {
   promise: Promise<PreviewStatus>;
 }
 
-export function useChatElectronPreview({ active, editingQueuedTurn = false, actorId, detail, onDraft }: ChatElectronPreviewProps) {
+export function useChatElectronPreview({ active, actorId, detail, onDraft }: ChatElectronPreviewProps) {
   const { chat, activeRun, projectId } = detail.record;
   const eligible = active && !!projectId && chat.lifecycle === "active" && !chat.collaboration
     && chat.ownerScope.type === "personal" && chat.ownerScope.ownerId === actorId;
@@ -82,39 +80,23 @@ export function useChatElectronPreview({ active, editingQueuedTurn = false, acto
   const runId = eligible && !activeRun && worktree && latestRun && isCurrentChatElectronPreviewRun(latestRun)
     && marker && !marker.backgroundTargetId ? latestRun.id : null;
   const [available, setAvailable] = useState(false);
-  const [verificationAvailable, setVerificationAvailable] = useState(false);
   const [retry, setRetry] = useState(0);
   const [result, setResult] = useState<{ key: string; status: PreviewStatus } | null>(null);
-  const availability = useRef<Promise<InvokeResponse<"chat:electron-preview-available">> | null>(null);
+  const availability = useRef<Promise<boolean> | null>(null);
   const attempt = useRef<PreviewAttempt | null>(null);
 
   // react-doctor-disable-next-line react-doctor/no-fetch-in-effect -- Availability is a bounded capability read from the native process.
   useEffect(() => {
     if (!eligible || !window.operator?.invoke) return;
     let current = true;
-    function readAvailability(): Promise<InvokeResponse<"chat:electron-preview-available">> {
-      return invoke("chat:electron-preview-available", {}).catch((error: unknown) => {
+    availability.current ??= invoke("chat:electron-preview-available", {})
+      .then(response => response.available)
+      .catch((error: unknown) => {
         console.warn("[electron-preview] capability unavailable", error instanceof Error ? error.name : "UnknownError");
-        return { available: false };
+        return false;
       });
-    }
-    function loadCapability(refresh?: boolean) {
-      if (refresh || !availability.current) availability.current = readAvailability();
-      const request = availability.current;
-      void request.then(value => {
-        if (current && availability.current === request) {
-          setAvailable(value.available);
-          setVerificationAvailable(value.verificationAvailable === true);
-        }
-      });
-    }
-    const refresh = () => loadCapability(true);
-    loadCapability();
-    window.addEventListener("focus", refresh);
-    return () => {
-      current = false;
-      window.removeEventListener("focus", refresh);
-    };
+    void availability.current.then(value => { if (current) setAvailable(value); });
+    return () => { current = false; };
   }, [eligible]);
 
   const key = runId ? JSON.stringify([chat.id, runId, retry]) : null;
@@ -136,12 +118,6 @@ export function useChatElectronPreview({ active, editingQueuedTurn = false, acto
   }, [available, chat.id, key, runId]);
 
   const canPreview = available && eligible && worktree !== null;
-  const verification = useMacVerification({
-    busy: Boolean(activeRun),
-    editingQueuedTurn,
-    candidate: verificationAvailable && eligible && worktree && latestRun?.driverKind === "codex"
-      ? { chatId: chat.id, run: latestRun, worktree } : null,
-  });
   const action: ComposerMentionAction | undefined = canPreview && !activeRun && onDraft ? {
     label: "Request Electron preview",
     kind: "preview",
@@ -158,7 +134,5 @@ export function useChatElectronPreview({ active, editingQueuedTurn = false, acto
       ) : null}
     </div>
   ) : null;
-  return { action, available: canPreview, feedback,
-    verificationAction: verification.action, verificationFeedback: verification.feedback,
-    verificationDraft: verification.draft };
+  return { action, available: canPreview, feedback };
 }

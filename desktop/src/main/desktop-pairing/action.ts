@@ -1,13 +1,13 @@
 import { sign } from "node:crypto";
 import { desktopPairingActionProofMessage } from "@matrix-os/contracts";
 import type { createPairingKeyStore } from "./key-store";
-import { createPairingTransport, matchingPairingState, PairingBadGatewayError, type PairingAuth } from "./transport";
+import { createPairingTransport, matchingPairingState, type PairingAuth } from "./transport";
 
 const CHECK_INTERVAL_MS = 3_000;
 const MAX_TRACKED_ACTIONS = 4;
 
 export interface MacActionPairingLease {
-  check(signal?: AbortSignal, retryBadGateway?: () => boolean): Promise<boolean>;
+  check(signal?: AbortSignal): Promise<boolean>;
   close(): void;
 }
 
@@ -83,30 +83,25 @@ export function createMacActionPairing(options: {
 
       const authority = transport;
       let pending: Promise<boolean> | undefined;
-      async function readCurrent(signal?: AbortSignal, retryBadGateway?: () => boolean): Promise<boolean> {
+      async function readCurrent(): Promise<boolean> {
         try {
-          const current = await authority.read().catch((error: unknown) => {
-            if (!(error instanceof PairingBadGatewayError) || worker.signal.aborted || signal?.aborted
-              || !retryBadGateway?.()) throw error;
-            return authority.read();
-          });
-          return matchingPairingState(state, current) || revoke();
+          return matchingPairingState(state, await authority.read()) || revoke();
         } catch (error: unknown) {
           return revoke(error);
         }
       }
 
-      function getPendingRead(signal?: AbortSignal, retryBadGateway?: () => boolean) {
-        return pending ??= readCurrent(signal, retryBadGateway).finally(() => { pending = undefined; });
+      function getPendingRead() {
+        return pending ??= readCurrent().finally(() => { pending = undefined; });
       }
 
-      async function check(signal?: AbortSignal, retryBadGateway?: () => boolean): Promise<boolean> {
+      async function check(signal?: AbortSignal): Promise<boolean> {
         if (worker.signal.aborted || signal?.aborted) return false;
         // A poll already in flight may have read the row before this action boundary.
         // Wait for it to settle, then use a read initiated after entering the boundary.
         if (pending && !await waitForRead(pending, signal)) return false;
         if (worker.signal.aborted || signal?.aborted) return false;
-        if (!await waitForRead(getPendingRead(signal, retryBadGateway), signal) || worker.signal.aborted) return false;
+        if (!await waitForRead(getPendingRead(), signal) || worker.signal.aborted) return false;
         try {
           authority.assertCurrent();
           return true;

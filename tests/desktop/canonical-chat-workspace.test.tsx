@@ -192,126 +192,6 @@ describe("CanonicalChatWorkspace", () => {
   });
 
   it.each([
-    ["mention", "@mac", "completed"],
-    ["slash", "/mac-verification", "completed"],
-    ["failed run", "@mac", "failed"],
-  ] as const)("uses Mac Verification with an optional change request and binds the result to the accepted run (%s)", async (_mode, trigger, outcome) => {
-    useConnection.setState({ status: "signed-in", userId: snapshot.chat.ownerScope.ownerId });
-    const ipc = vi.fn(async (channel: string) => {
-      if (channel === "chat:electron-preview-available") return { available: false, verificationAvailable: true };
-      if (channel === "chat:electron-preview-run") return { status: "returned" };
-      return { available: false };
-    });
-    window.operator = { ...window.operator, invoke: ipc };
-    const routeClient = client();
-    const executionRoot = { kind: "worktree", projectId: "matrix-os", worktreeId: "wt_00000000000a" } as const;
-    const run = {
-      ...snapshot.runs[0]!, status: "completed" as const, completedAt: new Date().toISOString(),
-      executionRoot,
-    };
-    const updatedRun = { ...run, id: "run_mac_verification_updated", turnId: "cturn_mac_verification_updated", status: outcome };
-    const admittedRecord = { ...record, chat: { ...record.chat, revision: record.chat.revision + 1 } };
-    vi.mocked(routeClient.getDetail).mockResolvedValue({
-      record, messages: snapshot.messages, turns: snapshot.turns, runs: [run], activities: [],
-    });
-    vi.mocked(routeClient.admitTurn).mockImplementation(async (_chatId, request) => ({
-      record: admittedRecord,
-      message: { ...snapshot.messages[0]!, turnId: updatedRun.turnId },
-      turn: { ...snapshot.turns[0]!, id: updatedRun.turnId, clientRequestId: request.clientRequestId }, run: updatedRun, admission: "accepted",
-    }));
-    render(<CanonicalChatWorkspace client={routeClient} projectId="matrix-os" initialChatId={snapshot.chat.id}
-      initialView="conversation" active catalog={providerCatalog} />);
-
-    const editor = await screen.findByRole("textbox", { name: "Reply to chat" });
-    await setSharedComposerText(editor, `Shorten the sign-in label. ${trigger}`);
-    fireEvent.click(await screen.findByRole("option", { name: "Mac Verification", exact: true }));
-    expect(await screen.findByText("Mac verification will run after this message.")).toBeTruthy();
-    await waitFor(() => expect(editor.textContent?.trim()).toBe("Shorten the sign-in label."));
-    expect(routeClient.admitTurn).not.toHaveBeenCalled();
-    expect(ipc.mock.calls.some(([channel]) => channel === "chat:electron-preview-run")).toBe(false);
-    fireEvent.click(screen.getByRole("button", { name: "Send" }));
-    await waitFor(() => expect(routeClient.admitTurn).toHaveBeenCalledWith(snapshot.chat.id,
-      expect.objectContaining({ executionRoot, parts: [{ type: "text", text: "Shorten the sign-in label." }] }),
-      { chatScope: "project" }));
-    if (outcome === "failed") {
-      expect(await screen.findByText("Mac verification skipped because the requested worktree run did not finish as expected.")).toBeTruthy();
-      expect(ipc.mock.calls.some(([channel]) => channel === "chat:electron-preview-run")).toBe(false);
-      return;
-    }
-    expect(await screen.findByText("Mac verification returned to this Chat.")).toBeTruthy();
-    expect(ipc.mock.calls.filter(([channel]) => channel === "chat:electron-preview-run")).toEqual([
-      ["chat:electron-preview-run", { chatId: snapshot.chat.id, runId: updatedRun.id, requestKind: "verification" }],
-    ]);
-  });
-
-  it.each([false, true])("keeps Mac Verification tied to the current send when a run starts (sent: %s)", async (sent) => {
-    useConnection.setState({ status: "signed-in", userId: snapshot.chat.ownerScope.ownerId });
-    const ipc = vi.fn(async (channel: string) => channel === "chat:electron-preview-run"
-      ? { status: "returned" } : { available: false, verificationAvailable: true });
-    window.operator = { ...window.operator, invoke: ipc };
-    const routeClient = client();
-    const executionRoot = { kind: "worktree", projectId: "matrix-os", worktreeId: "wt_00000000000a" } as const;
-    const run = { ...snapshot.runs[0]!, completedAt: new Date().toISOString(), executionRoot };
-    const running = {
-      ...run, id: "run_mac_verification_other", turnId: "cturn_mac_verification_other",
-      status: "running" as const, completedAt: undefined,
-    };
-    const activeRecord = {
-      ...record, chat: { ...record.chat, revision: record.chat.revision + 1 },
-      activeRun: { runId: running.id, turnId: running.turnId, status: running.status },
-    };
-    const detail = { record, messages: snapshot.messages, turns: snapshot.turns, runs: [run], activities: [] };
-    vi.mocked(routeClient.getDetail).mockResolvedValue(detail);
-    const admission = Promise.withResolvers<Awaited<ReturnType<typeof routeClient.admitTurn>>>();
-    if (sent) vi.mocked(routeClient.admitTurn).mockReturnValue(admission.promise);
-    const listeners = new Set<(event: CanonicalChatInvalidation) => void>();
-    const eventSource: Pick<CanonicalChatEventSource, "subscribe"> = {
-      subscribe(listener) {
-        listeners.add(listener);
-        return { dispose: () => { listeners.delete(listener); } };
-      },
-    };
-    render(<CanonicalChatWorkspace client={routeClient} projectId="matrix-os" initialChatId={snapshot.chat.id}
-      initialView="conversation" active catalog={providerCatalog} eventSource={eventSource} />);
-
-    const editor = await screen.findByRole("textbox", { name: "Reply to chat" });
-    await setSharedComposerText(editor, "Shorten the sign-in label. @mac");
-    fireEvent.click(await screen.findByRole("option", { name: "Mac Verification", exact: true }));
-    expect(await screen.findByText("Mac verification will run after this message.")).toBeTruthy();
-    await waitFor(() => expect(editor.textContent?.trim()).toBe("Shorten the sign-in label."));
-    if (sent) {
-      fireEvent.click(screen.getByRole("button", { name: "Send" }));
-      await waitFor(() => expect(routeClient.admitTurn).toHaveBeenCalledOnce());
-    }
-    vi.mocked(routeClient.getDetail).mockResolvedValue({ ...detail, record: activeRecord, runs: [run, running] });
-    await act(async () => listeners.forEach(listener => listener({ type: "chat.full_refresh", cursor: 2 })));
-    expect(ipc.mock.calls.some(([channel]) => channel === "chat:electron-preview-run")).toBe(false);
-    if (sent) {
-      expect(await screen.findByRole("button", { name: "Stop" })).toBeTruthy();
-      admission.resolve({ record: activeRecord, message: { ...snapshot.messages[0]!, turnId: running.turnId },
-        turn: { ...snapshot.turns[0]!, id: running.turnId, clientRequestId: vi.mocked(routeClient.admitTurn).mock.calls[0]![1].clientRequestId }, run: running, admission: "accepted" });
-      expect(await screen.findByText("Waiting for the worktree run…")).toBeTruthy();
-      const completed = { ...running, status: "completed" as const, completedAt: new Date().toISOString() };
-      vi.mocked(routeClient.getDetail).mockResolvedValue({ ...detail, runs: [run, completed],
-        record: { ...record, chat: { ...record.chat, revision: record.chat.revision + 2 } } });
-      await act(async () => listeners.forEach(listener => listener({ type: "chat.full_refresh", cursor: 3 })));
-      expect(await screen.findByText("Mac verification returned to this Chat.")).toBeTruthy();
-      expect(ipc.mock.calls.filter(([channel]) => channel === "chat:electron-preview-run")).toEqual([
-        ["chat:electron-preview-run", { chatId: snapshot.chat.id, runId: running.id, requestKind: "verification" }],
-      ]);
-      return;
-    }
-    expect(screen.queryByText("Mac verification will run after this message.")).toBeNull();
-    expect(editor.textContent?.trim()).toBe("Shorten the sign-in label.");
-    fireEvent.click(screen.getByRole("button", { name: "Send" }));
-    await waitFor(() => expect(routeClient.queueTurn).toHaveBeenCalledWith(
-      snapshot.chat.id, expect.objectContaining({ parts: [{ type: "text", text: "Shorten the sign-in label." }] }),
-    ));
-    expect(routeClient.admitTurn).not.toHaveBeenCalled();
-    expect(ipc.mock.calls.some(([channel]) => channel === "chat:electron-preview-run")).toBe(false);
-  });
-
-  it.each([
     ["one-time", "original"],
     ["one-time", "altered"],
     ["background", "original"],
@@ -1698,12 +1578,7 @@ describe("CanonicalChatWorkspace", () => {
     expect((steer as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it.each(["@mac", "/mac-verification"])("saves a queued edit without offering Mac Verification (%s) after its Run ends", async (trigger) => {
-    useConnection.setState({ status: "signed-in", userId: snapshot.chat.ownerScope.ownerId });
-    const ipc = vi.fn(async (_channel: string) => ({ available: false, verificationAvailable: true }));
-    window.operator = { ...window.operator, invoke: ipc };
-    const executionRoot = { kind: "worktree", projectId: "matrix-os", worktreeId: "wt_00000000000a" } as const;
-    const run = { ...snapshot.runs[0]!, completedAt: new Date().toISOString(), executionRoot };
+  it("saves an edited queued turn even after its active Run has ended", async () => {
     const queuedTurn = {
       id: "qturn_workspace_edit_after_run",
       chatId: snapshot.chat.id,
@@ -1722,7 +1597,7 @@ describe("CanonicalChatWorkspace", () => {
       record,
       messages: snapshot.messages,
       turns: snapshot.turns,
-      runs: [run],
+      runs: snapshot.runs,
       activities: snapshot.activities,
       queuedTurns: [queuedTurn],
     });
@@ -1746,17 +1621,8 @@ describe("CanonicalChatWorkspace", () => {
     );
 
     const editor = await screen.findByRole("textbox", { name: "Reply to chat" });
-    await setSharedComposerText(editor, trigger);
-    expect(await screen.findByRole("option", { name: "Mac Verification", exact: true })).toBeTruthy();
-    await setSharedComposerText(editor, "");
     fireEvent.pointerDown(screen.getByRole("button", { name: "More actions for Original queued turn" }), { button: 0, ctrlKey: false });
     fireEvent.click(await screen.findByRole("menuitem", { name: "Edit Original queued turn" }));
-    await waitFor(() => expect(editor.textContent).toBe("Original queued turn"));
-    act(() => editor.focus());
-    await setSharedComposerText(editor, `Edited after Run ${trigger}`);
-    fireEvent.keyDown(editor, { key: "Enter" });
-    expect(screen.queryByText("Mac verification will run after this message.")).toBeNull();
-    expect(editor.textContent).toBe(`Edited after Run ${trigger}`);
     await setSharedComposerText(editor, "Edited after Run");
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
 
@@ -1766,7 +1632,6 @@ describe("CanonicalChatWorkspace", () => {
       expect.objectContaining({ parts: [{ type: "text", text: "Edited after Run" }] }),
     ));
     expect(routeClient.admitTurn).not.toHaveBeenCalled();
-    expect(ipc.mock.calls.some(([channel]) => channel === "chat:electron-preview-run")).toBe(false);
   });
 
   it("leaves queued-edit mode when a failed save reloads a Queue that no longer contains the turn", async () => {

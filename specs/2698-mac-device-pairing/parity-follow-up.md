@@ -11,10 +11,6 @@
 
 The existing device-bound actions keep short-lived native consent, owner/Computer/Chat/worktree checks, idempotent receipts and Stop. The selected-terminal snapshot uses the same authorization and an explicit Send from Chat. The local watch previews the current screen in Electron Desktop. Remote read delivery, terminal input and takeover need a scoped control session.
 
-## Mac Verification Skill
-
-The [Mac Verification Skill design](./mac-verification-skill.md) covers verification of the current worktree, optional new edits, and explicit Mac Full Access without a popup for each permitted request.
-
 ## Local GUI
 
 The existing Electron preview executor is a suitable first adapter for an isolated Matrix-owned window. It can validate the candidate build, act on a known control, and return scoped screenshot evidence to the original Chat. Use a typed operation tied to a source run and window for subsequent experiments. Wider desktop access would require a separate native permission and consent flow using macOS ScreenCaptureKit for window capture and Accessibility for input. Approve only a selected window under a visible, revocable local session, with per-action validation of its identity.

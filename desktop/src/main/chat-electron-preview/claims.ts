@@ -1,19 +1,9 @@
-import { createHash } from "node:crypto";
 import { lstat, mkdir, readdir, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { ChatElectronPreviewRequest } from "./transport";
 
 const CLAIM_NAME = /^[a-f0-9]{64}$/;
 const CLAIM_TTL = 24 * 60 * 60 * 1000;
 const MAX_CLAIMS = 512;
-
-export function previewRequestKey(request: ChatElectronPreviewRequest): string {
-  const scope = [request.scopeKey, request.chatId, request.runId];
-  if (request.requestKind === "verification") {
-    scope.push(request.requestKind, request.projectId, request.worktreeId, request.baseSha, request.sourceSha256);
-  }
-  return createHash("sha256").update(JSON.stringify(scope)).digest("hex");
-}
 
 function missing(error: unknown): boolean {
   return (error as NodeJS.ErrnoException | null)?.code === "ENOENT";

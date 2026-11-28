@@ -1,21 +1,14 @@
-import { setTimeout as delay } from "node:timers/promises";
+import { createHash } from "node:crypto";
 import type { ChatElectronPreviewReply, ChatElectronPreviewTarget } from "../../shared/chat-electron-preview-ipc";
 import type { MacActionPairing, MacActionPairingLease } from "../desktop-pairing/action";
 import type { BeginMacActivity, MacActivityHandle, MacActivityPhase } from "../mac-activity/activity";
-import { ChatElectronPreviewTransportInterruptedError, type ChatElectronPreviewBackgroundBinding,
-  type ChatElectronPreviewRequest } from "./transport";
-import { previewRequestKey } from "./claims";
+import type { ChatElectronPreviewBackgroundBinding, ChatElectronPreviewRequest } from "./transport";
 
 type BackgroundPreview = ChatElectronPreviewBackgroundBinding & { pairing?: MacActionPairingLease };
-const DELIVERY_RETRY_MS = 500;
 
 interface PreviewResult {
   png: Buffer;
   testSummary: string;
-}
-
-interface ScopedApproval {
-  check(signal: AbortSignal, retryBadGateway?: () => boolean): Promise<boolean>;
 }
 
 interface Dependencies {
@@ -25,7 +18,7 @@ interface Dependencies {
   isCurrent(request: ChatElectronPreviewRequest): boolean;
   wasHandled(key: string): Promise<boolean>;
   claim(key: string): Promise<boolean>;
-  approve(request: ChatElectronPreviewRequest, signal: AbortSignal): Promise<boolean | ScopedApproval>;
+  approve(request: ChatElectronPreviewRequest, signal: AbortSignal): Promise<boolean>;
   execute(request: ChatElectronPreviewRequest, signal: AbortSignal): Promise<PreviewResult>;
   returnResult(request: ChatElectronPreviewRequest, result: PreviewResult | { error: "build-failed" }, signal: AbortSignal): Promise<void>;
   beginActivity?: BeginMacActivity;
@@ -44,7 +37,6 @@ function matchesApproval(approved: ChatElectronPreviewRequest, candidate: ChatEl
     && approved.worktreeId === candidate.worktreeId && approved.expiresAt === candidate.expiresAt
     && approved.baseSha === candidate.baseSha && approved.sourceSha256 === candidate.sourceSha256
     && approved.label === candidate.label && approved.operation === candidate.operation
-    && approved.requestKind === candidate.requestKind
     && approved.backgroundTargetId === candidate.backgroundTargetId;
 }
 
@@ -60,46 +52,18 @@ export function createChatElectronPreviewService(deps: Dependencies) {
     let pairing: MacActionPairingLease | null | undefined;
     let completion: MacActivityPhase = "failed";
     let approvalSignal = signal;
-    let scopedApproval: ScopedApproval | undefined;
 
-    async function pairingIsCurrent(boundarySignal: AbortSignal, retryBadGateway?: () => boolean): Promise<boolean> {
-      if (boundarySignal.aborted || (pairing && !await pairing.check(boundarySignal, retryBadGateway))) return false;
+    async function pairingIsCurrent(boundarySignal: AbortSignal): Promise<boolean> {
+      if (boundarySignal.aborted || (pairing && !await pairing.check(boundarySignal))) return false;
       // A freshly paired device cannot inherit permission from an older background grant.
       if (background?.pairing && !await background.pairing.check(boundarySignal)) return false;
-      // A fresh action pairing cannot replace the grant that skipped native consent.
-      if (scopedApproval && !await scopedApproval.check(boundarySignal, retryBadGateway)) return false;
       return !boundarySignal.aborted;
-    }
-
-    async function deliver(current: ChatElectronPreviewRequest, result: PreviewResult | { error: "build-failed" }) {
-      let pairingRetryAvailable = true;
-      const retryBadGateway = current.requestKind === "verification" ? () => {
-        if (!pairingRetryAvailable) return false;
-        pairingRetryAvailable = false;
-        return true;
-      } : undefined;
-      for (let attempt = 0; ; attempt++) {
-        if (!await pairingIsCurrent(signal, retryBadGateway) || signal.aborted || !deps.isCurrent(current)) return false;
-        if (attempt === 0) activity?.update("returning");
-        try {
-          // Re-check the exact Chat and source before writing and reconcile a receipt
-          // that may already have been accepted. Do not repeat the local build.
-          await deps.returnResult(current, result, signal);
-          return true;
-        } catch (error: unknown) {
-          if (attempt !== 0 || current.requestKind !== "verification"
-            || !(error instanceof ChatElectronPreviewTransportInterruptedError)) throw error;
-          await delay(DELIVERY_RETRY_MS, undefined, { signal });
-        }
-      }
     }
 
     try {
       const request = await read();
       if (!request || !deps.isCurrent(request) || signal.aborted) return { status: "unavailable" };
-      if (request.requestKind !== target.requestKind) return { status: "unavailable" };
-      if (request.requestKind === "verification" && !deps.acquireActionPairing) return { status: "unavailable" };
-      const key = previewRequestKey(request);
+      const key = createHash("sha256").update(JSON.stringify([request.scopeKey, request.chatId, request.runId])).digest("hex");
       if (await deps.wasHandled(key)) return { status: "already-handled" };
       const remaining = request.expiresAt - Date.now();
       if (remaining <= 0 || signal.aborted || !deps.isCurrent(request)) return { status: "unavailable" };
@@ -107,7 +71,6 @@ export function createChatElectronPreviewService(deps: Dependencies) {
       activity = deps.beginActivity?.("preview", request.worktreeId);
       activity?.update("awaiting-approval");
       const approved = await deps.approve(request, approvalSignal);
-      if (typeof approved === "object") scopedApproval = approved;
       completion = "revoked";
       if (approvalSignal.aborted || !deps.isCurrent(request)) return { status: "unavailable" };
       if (approved && deps.acquireActionPairing) {
@@ -145,16 +108,20 @@ export function createChatElectronPreviewService(deps: Dependencies) {
           return { status: "unavailable" };
         }
         deps.reportError?.(error);
-        if (!await deliver(current, { error: "build-failed" })) {
+        if (!await pairingIsCurrent(signal) || signal.aborted || !deps.isCurrent(current)) {
           completion = "revoked";
           return { status: "unavailable" };
         }
+        activity?.update("returning");
+        await deps.returnResult(current, { error: "build-failed" }, signal);
         return { status: "failed" };
       }
-      if (!await deliver(current, result)) {
+      if (!await pairingIsCurrent(signal) || signal.aborted || !deps.isCurrent(current)) {
         completion = "revoked";
         return { status: "unavailable" };
       }
+      activity?.update("returning");
+      await deps.returnResult(current, result, signal);
       completion = "returned";
       return { status: "returned" };
     } catch (error: unknown) {

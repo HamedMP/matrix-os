@@ -497,10 +497,7 @@ describe("SharedChatComposer", () => {
     await pickWatch();
 
     await waitFor(() => expect(editor.textContent).toBe("Keep this draft "));
-    expect(select.mock.calls).toEqual([
-      ["Keep this draft @watch", "Keep this draft "],
-      ["Keep this draft @", "Keep this draft "],
-    ]);
+    expect(select.mock.calls).toEqual([["Keep this draft @watch"], ["Keep this draft @"]]);
   });
 
   it("records a safe diagnostic when remote resource search fails", async () => {

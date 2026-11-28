@@ -1,10 +1,8 @@
 import { z } from "zod/v4";
-import { CanonicalChatIdSchema, CanonicalChatRunIdSchema } from "@matrix-os/contracts";
 
 export const ChatElectronPreviewTarget = z.strictObject({
-  chatId: CanonicalChatIdSchema,
-  runId: CanonicalChatRunIdSchema,
-  requestKind: z.literal("verification").optional(),
+  chatId: z.string().regex(/^chat_[A-Za-z0-9_-]{1,128}$/),
+  runId: z.string().regex(/^run_[A-Za-z0-9_-]{1,128}$/),
 });
 
 export const ChatElectronPreviewReply = z.strictObject({
@@ -14,7 +12,7 @@ export const ChatElectronPreviewReply = z.strictObject({
 export const CHAT_ELECTRON_PREVIEW_INVOKE = {
   "chat:electron-preview-available": {
     request: z.strictObject({}),
-    response: z.strictObject({ available: z.boolean(), verificationAvailable: z.boolean().optional() }),
+    response: z.strictObject({ available: z.boolean() }),
   },
   "chat:electron-preview-run": {
     request: ChatElectronPreviewTarget,

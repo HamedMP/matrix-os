@@ -255,16 +255,13 @@ export function SharedChatComposer({
   const filteredResources = resourceQuery === null ? [] : availableResources
     .filter((resource) => resource.label.toLocaleLowerCase().includes(resourceQuery));
   const queryToken = resourceQuery === null ? null : `@${resourceMatch?.[1] ?? ""}`;
-  const canUseMacActions = !referenceTokens.length && !disabled && !busy && !speechActive && !projectSkillDraft.paths.length;
-  const filteredMentionActions = resourceQuery !== null && canUseMacActions
+  const filteredMentionActions = resourceQuery !== null
+    && !referenceTokens.length && !disabled && !busy && !speechActive && !projectSkillDraft.paths.length
     ? (mentionActions ?? []).filter(action => (action.consumeTrigger || value.trim() === queryToken)
       && `${action.label} ${action.keywords}`.toLowerCase().includes(resourceQuery))
     : [];
-  const filteredNativeSkills = slashQuery !== null && canUseMacActions
-    ? (mentionActions ?? []).filter(action => action.slashCommand?.includes(slashQuery))
-    : [];
   const suggestionCount = slashMenuOpen
-    ? filteredNativeSkills.length + filteredSlashEntries.length
+    ? filteredSlashEntries.length
     : resourceMenuOpen
       ? filteredMentionActions.length + filteredResources.length + (canAttach ? 1 : 0)
       : 0;
@@ -284,27 +281,9 @@ export function SharedChatComposer({
       projectSkill: { projectId: projectSlashScope.projectId, isCurrent: projectSkillDraft.isCurrent, onAccepted: projectSkillDraft.clear },
     };
   };
-  const applyNativeAction = (action: ComposerMentionAction, trigger: string | null, end: number) => {
-    const current = editorRef.current?.readValue();
-    if (!current || current.value !== value || current.tokens.length) return;
-    setDismissedSuggestionKey(suggestionKey);
-    if (action.consumeTrigger && trigger) {
-      editorRef.current?.removeTrigger(trigger, end);
-      const remaining = editorRef.current?.readValue().value;
-      if (remaining !== undefined && remaining !== current.value) action.select(current.value, remaining);
-    } else {
-      action.select(current.value);
-    }
-  };
   const applySuggestion = (index: number) => {
     if (slashQuery !== null) {
-      const skill = filteredNativeSkills[index];
-      if (skill && slashMatch) {
-        const suffix = value.slice(slashMatch.end).match(/^[a-z0-9_.-]*/i)?.[0] ?? "";
-        applyNativeAction(skill, slashMatch.token + suffix, slashMatch.end + suffix.length);
-        return;
-      }
-      const entry = filteredSlashEntries[index - filteredNativeSkills.length];
+      const entry = filteredSlashEntries[index];
       if (entry) {
         if (entry.kind === "project_skill") {
           if (!slashMatch || !projectSkillDraft.select(entry.path)) return;
@@ -329,7 +308,11 @@ export function SharedChatComposer({
     }
     const action = filteredMentionActions[index];
     if (resourceMenuOpen && action) {
-      applyNativeAction(action, queryToken, cursor);
+      const current = editorRef.current?.readValue();
+      if (!current || current.value !== value || current.tokens.length) return;
+      setDismissedSuggestionKey(suggestionKey);
+      if (action.consumeTrigger && queryToken) editorRef.current?.removeTrigger(queryToken, cursor);
+      action.select(current.value);
       return;
     }
     const resourceIndex = index - filteredMentionActions.length;
@@ -457,16 +440,15 @@ export function SharedChatComposer({
           <p className="px-2 pb-1 text-[11px] font-semibold uppercase tracking-[0.14em]" style={{ color: "var(--text-tertiary)" }}>
             {projectSkills.catalog ? "Project skills & commands" : "Skills & commands"}
           </p>
-          {!filteredSlashEntries.length && !filteredNativeSkills.length ? <p role="status" className="px-2 py-2 text-xs" style={{color:"var(--text-secondary)"}}>{chatSlashStatusMessage({loading:slashLoading,instance,entryCount:slashEntries.length,projectSkills:projectSkills.catalog})}</p> : null}
-          <ComposerMentionActions actions={filteredNativeSkills} selectedIndex={activeSuggestionIndex} onSelect={applySuggestion} />
+          {!filteredSlashEntries.length ? <p role="status" className="px-2 py-2 text-xs" style={{color:"var(--text-secondary)"}}>{chatSlashStatusMessage({loading:slashLoading,instance,entryCount:slashEntries.length,projectSkills:projectSkills.catalog})}</p> : null}
           {filteredSlashEntries.map((entry, index) => (
             <button
               key={`${entry.kind}:${entry.id}`}
               type="button"
               role="option"
-              aria-selected={activeSuggestionIndex === index + filteredNativeSkills.length}
+              aria-selected={activeSuggestionIndex === index}
               className="grid min-h-10 w-full grid-cols-[1rem_minmax(12rem,16rem)_minmax(0,1fr)] items-center gap-2 rounded-lg px-2 text-left hover:bg-[var(--bg-hover)] aria-selected:bg-[var(--bg-hover)]"
-              onClick={() => applySuggestion(index + filteredNativeSkills.length)}
+              onClick={() => applySuggestion(index)}
             >
               <span data-slot="skill-command-icon" className="flex items-center justify-center" style={{ color: "var(--text-tertiary)" }}>
                 {entry.kind !== "command" ? <Box size={15} aria-hidden /> : <SquareTerminal size={15} aria-hidden />}

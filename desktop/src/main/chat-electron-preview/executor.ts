@@ -1,20 +1,20 @@
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import {
+  CHAT_ELECTRON_PREVIEW_BASE_LABEL,
   CHAT_ELECTRON_PREVIEW_SOURCE,
-  ChatElectronPreviewLabelSchema,
   ChatElectronPreviewMarkerSchema,
   type ChatElectronPreviewMarker,
 } from "../../shared/chat-electron-preview";
 import { capturePreviewScript } from "./executor-capture";
-import { MAX_SIGN_IN_SOURCE_BYTES, verifiedSignInSource } from "./source";
-import type { ChatElectronPreviewTarget } from "../../shared/chat-electron-preview-ipc";
 
-export { verifiedSignInSource } from "./source";
+const labelMarkup = (label: string) => `<span className="signin-eyebrow">${label}</span>`;
+const maxSourceBytes = 64 * 1024;
 const maxPngBytes = 2 * 1024 * 1024;
-const localPath = [process.env.PATH, "/usr/local/bin", "/opt/homebrew/bin", "/usr/bin", "/bin"].filter(Boolean).join(":");
+const localPath = process.env.PATH ?? "/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin";
 
 export interface ChatElectronPreviewExecution {
   checkout: string;
@@ -22,9 +22,26 @@ export interface ChatElectronPreviewExecution {
   baseSha: string;
   sourceSha256: string;
   label: string;
-  requestKind?: ChatElectronPreviewTarget["requestKind"];
   operation?: ChatElectronPreviewMarker["operation"];
   signal: AbortSignal;
+}
+
+function assertLabel(label: string) {
+  if (!ChatElectronPreviewMarkerSchema.shape.label.safeParse(label).success) throw new Error("Unsupported preview label");
+}
+
+export function verifiedSignInSource(base: Buffer, label: string, sourceSha256: string): Buffer {
+  assertLabel(label);
+  const original = Buffer.from(labelMarkup(CHAT_ELECTRON_PREVIEW_BASE_LABEL));
+  const start = base.indexOf(original);
+  if (base.length > maxSourceBytes || start < 0 || base.indexOf(original, start + original.length) !== -1) {
+    throw new Error("Unsupported preview source");
+  }
+  const patched = Buffer.concat([
+    base.subarray(0, start), Buffer.from(labelMarkup(label)), base.subarray(start + original.length),
+  ]);
+  if (createHash("sha256").update(patched).digest("hex") !== sourceSha256) throw new Error("Preview source checksum mismatch");
+  return patched;
 }
 
 function localEnvironment(home: string, temp: string): NodeJS.ProcessEnv {
@@ -187,10 +204,7 @@ async function capturePreview(
 export async function runChatElectronPreview(request: ChatElectronPreviewExecution): Promise<{ png: Buffer; testSummary: string }> {
   const { baseSha, sourceSha256, label, operation, electronPath, signal } = request;
   signal.throwIfAborted();
-  const verification = request.requestKind === "verification";
-  if (!(verification ? ChatElectronPreviewLabelSchema : ChatElectronPreviewMarkerSchema.shape.label).safeParse(label).success) {
-    throw new Error("Unsupported preview label");
-  }
+  assertLabel(label);
   if (!ChatElectronPreviewMarkerSchema.shape.operation.safeParse(operation).success) {
     throw new Error("Unsupported Electron preview interaction");
   }
@@ -211,13 +225,13 @@ export async function runChatElectronPreview(request: ChatElectronPreviewExecuti
   try {
     await git(["worktree", "add", "--detach", "--", worktree, baseSha], checkout, signal);
     const source = join(worktree, CHAT_ELECTRON_PREVIEW_SOURCE);
-    const base = await readBoundedFile(source, MAX_SIGN_IN_SOURCE_BYTES, "preview source");
-    const candidate = verifiedSignInSource(base, label, sourceSha256, verification);
+    const base = await readBoundedFile(source, maxSourceBytes, "preview source");
+    const candidate = verifiedSignInSource(base, label, sourceSha256);
     await writeFile(source, candidate);
     const testSummary = await testAndBuild(worktree, root, signal);
     // The trusted build may generate ignored outputs. Recheck the bound input
     // after the build as well, before sending anything to the Chat.
-    if (!(await readBoundedFile(source, MAX_SIGN_IN_SOURCE_BYTES, "preview source")).equals(candidate)) {
+    if (!(await readBoundedFile(source, maxSourceBytes, "preview source")).equals(candidate)) {
       throw new Error("Preview source changed during build");
     }
     const png = await capturePreview(worktree, root, request);
