@@ -25,9 +25,10 @@ export function managedGoogleRouteDescriptorDigest(value: unknown): string {
  * env reads, network, lease mutation or relay installation. Generation/account evidence is operator
  * supplied and must be separately reviewed/revalidated; the hash comes from the ACTUAL stable Workers
  * credential. Neither gateway auth nor ephemeral Matrix leases identify that upstream credential.
+ * The Preview transport does not apply the gateway request controls required by this descriptor.
  * Anthropic's current implicit stored-BYOK/Unified-Billing selection is deliberately unrepresentable. */
 export function buildCloudflareManagedGoogleRouteDescriptor(input: {
-  config: Pick<FundedRelayConfig, 'gatewayBaseUrl' | 'workersAiToken' | 'reservationMode'>;
+  config: Pick<FundedRelayConfig, 'gatewayBaseUrl' | 'workersAiToken' | 'reservationMode' | 'cloudflarePreview'>;
   /** Trusted deployment URL used by the host broker, not request Host or model input. */
   relayBaseUrl: string; api: 'openai-completions' | 'anthropic-messages' | 'openai-responses';
   modelId: string; review: unknown; now: Date;
@@ -35,7 +36,7 @@ export function buildCloudflareManagedGoogleRouteDescriptor(input: {
   const review = CloudflareManagedGoogleRouteReviewSchema.safeParse(input.review);
   const at = input.now.getTime();
   if (!review.success || !Number.isSafeInteger(at) || input.api !== 'openai-completions'
-    || input.config.reservationMode !== 'usage' || !isManagedWorkersAiModel(input.modelId)
+    || input.config.reservationMode !== 'usage' || input.config.cloudflarePreview || !isManagedWorkersAiModel(input.modelId)
     || at < Date.parse(review.data.evidence.reviewedAt) || at >= Date.parse(review.data.evidence.expiresAt)) return null;
   const actualGateway = gateway.exec(input.config.gatewayBaseUrl);
   const actualRelay = relayEndpoint(input.relayBaseUrl); const token = input.config.workersAiToken;

@@ -9,22 +9,25 @@ import { MANAGED_WORKERS_AI_MODEL_IDS } from '../../packages/contracts/src/funde
 const now = new Date('2026-10-22T12:00:00.000Z');
 const account = 'a'.repeat(32); const model = '@cf/zai-org/glm-5.3-flash';
 const key = 'synthetic-stable-workers-token-not-a-real-credential';
-const upstream = `https://api.cloudflare.com/client/v4/accounts/${account}/ai/run/${model}`;
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
-function config() { return resolveFundedRelayConfig({ MATRIX_FUNDED_AI_ENABLED: 'true', MATRIX_FUNDED_AI_RESERVATION_MODE: 'usage',
+function config(overrides: NodeJS.ProcessEnv = {}) { return resolveFundedRelayConfig({ MATRIX_FUNDED_AI_ENABLED: 'true', MATRIX_FUNDED_AI_RESERVATION_MODE: 'usage',
   CLOUDFLARE_AI_GATEWAY_URL: `https://gateway.ai.cloudflare.com/v1/${account}/gateway-one/anthropic`,
   CLOUDFLARE_AI_GATEWAY_TOKEN: 'synthetic-gateway-only-token-not-a-provider-key', CLOUDFLARE_WORKERS_AI_TOKEN: key,
   PLATFORM_INTERNAL_URL: 'https://platform.example.invalid', AI_RELAY_CONTROL_TOKEN: 'synthetic-relay-control-token-not-a-provider-key',
-  AI_RELAY_METADATA_SECRET: 'synthetic-private-metadata-key-not-a-provider-key' })!; }
-export function review() { return { routeId: 'managed_route_one', routeRevision: 1,
-  evidence: { referenceDigest: 'b'.repeat(64), accountSettingsReferenceDigest: 'c'.repeat(64),
-    reviewedAt: '2026-10-21T12:00:00.000Z', expiresAt: '2026-10-29T12:00:00.000Z' },
-  relay: { endpoint: 'https://relay.example.invalid/v1/chat/completions', api: 'openai-completions' },
-  upstream: { endpoint: upstream, api: 'cloudflare-workers-ai-run', nativeModelId: model, canonicalModelId: model },
-  cloudflare: { accountId: account, gatewayId: 'gateway-one', credentialMode: 'workers-ai-api-token' },
-  credential: { generation: '123e4567-e89b-42d3-a456-426614174000', fingerprint: hash(key) },
-  recipientChain: [{ recipientId: 'cloudflare', accountId: account, endpoint: upstream }],
-  controlPolicyVersion: MANAGED_GOOGLE_CONTROL_POLICY_VERSION };
+  AI_RELAY_METADATA_SECRET: 'synthetic-private-metadata-key-not-a-provider-key', ...overrides })!; }
+export function review(modelId = model) {
+  const upstream = `https://api.cloudflare.com/client/v4/accounts/${account}/ai/run/${modelId}`;
+  return {
+    routeId: 'managed_route_one', routeRevision: 1,
+    evidence: { referenceDigest: 'b'.repeat(64), accountSettingsReferenceDigest: 'c'.repeat(64),
+      reviewedAt: '2026-10-21T12:00:00.000Z', expiresAt: '2026-10-29T12:00:00.000Z' },
+    relay: { endpoint: 'https://relay.example.invalid/v1/chat/completions', api: 'openai-completions' },
+    upstream: { endpoint: upstream, api: 'cloudflare-workers-ai-run', nativeModelId: modelId, canonicalModelId: modelId },
+    cloudflare: { accountId: account, gatewayId: 'gateway-one', credentialMode: 'workers-ai-api-token' },
+    credential: { generation: '123e4567-e89b-42d3-a456-426614174000', fingerprint: hash(key) },
+    recipientChain: [{ recipientId: 'cloudflare', accountId: account, endpoint: upstream }],
+    controlPolicyVersion: MANAGED_GOOGLE_CONTROL_POLICY_VERSION,
+  };
 }
 const input = () => ({ config: config(), relayBaseUrl: 'https://relay.example.invalid', api: 'openai-completions' as const, modelId: model, review: review(), now });
 
@@ -38,11 +41,21 @@ describe('pure actual Cloudflare Workers Google route descriptor', () => {
     expect(JSON.stringify(result)).not.toContain(value.config.gatewayToken);
   });
   it.each(MANAGED_WORKERS_AI_MODEL_IDS)('describes exact configured dispatch facts for %s only after a matching review', modelId => {
-    const value = input(); value.modelId = modelId;
-    value.review.upstream = { ...value.review.upstream, nativeModelId: modelId, canonicalModelId: modelId,
-      endpoint: `https://api.cloudflare.com/client/v4/accounts/${account}/ai/run/${modelId}` };
-    value.review.recipientChain[0]!.endpoint = value.review.upstream.endpoint;
+    const value = { ...input(), modelId, review: review(modelId) };
     expect(buildCloudflareManagedGoogleRouteDescriptor(value)?.descriptor.upstream).toEqual(value.review.upstream);
+  });
+  it('refuses to qualify a cohort model when the relay dispatches through Cloudflare Preview', () => {
+    const modelId = '@cf/zai-org/glm-5.3';
+    const value = { ...input(), modelId, review: review(modelId) };
+    expect(buildCloudflareManagedGoogleRouteDescriptor(value)).not.toBeNull();
+
+    value.config = config({ MATRIX_FUNDED_AI_PRICING_REGISTRY_ENABLED: 'true',
+      MATRIX_FUNDED_AI_CLOUDFLARE_PREVIEW_BINDING: JSON.stringify({
+        ownerId: 'preview-owner', machineId: 'preview-machine', runtimeSlot: 'pv-3659-01234567',
+      }),
+    });
+    expect(value.config.cloudflarePreview).toBeDefined();
+    expect(buildCloudflareManagedGoogleRouteDescriptor(value)).toBeNull();
   });
   it.each(['anthropic', 'responses', 'unknown-model', 'missing-key', 'wrong-reservation', 'temporary-key'] as const)('does not manufacture a proof for %s', failure => {
     const value = input();
