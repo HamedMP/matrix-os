@@ -7,6 +7,7 @@
  * accepts one and rejects the other, and saves. The saved bytes are read
  * back with the engine.
  */
+import type { SheetsBridge } from "../../../home/apps/sheets/src/ui/bridge";
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { readFileSync } from "node:fs";
 import React from "react";
@@ -123,6 +124,22 @@ async function mountApp(bridge: FakeMatrixOS | null) {
   return view;
 }
 
+/**
+ * The journey mounts the same SheetsApp the entry renders, with autosave pushed out of
+ * reach: on a loaded machine the journey outlasts the default delay and autosave adds
+ * saves the explicit Save assertion does not expect.
+ */
+async function mountJourney(bridge: FakeMatrixOS) {
+  (window as Win).MatrixOS = bridge;
+  const [{ SheetsApp }, { ToastProvider }] = await Promise.all([
+    import("../../../home/apps/sheets/src/ui/SheetsApp"),
+    import("../../../home/apps/_shared/office-ui"),
+  ]);
+  const view = render(<ToastProvider><SheetsApp bridge={bridge as unknown as SheetsBridge} sessionDeps={{ autosaveDelayMs: 600_000 }} /></ToastProvider>);
+  await settle();
+  return view;
+}
+
 function grid(container: HTMLElement): HTMLElement {
   return container.querySelector<HTMLElement>("[role='grid']")!;
 }
@@ -152,7 +169,7 @@ describe("Sheets app journey", () => {
     const os = new FakeMatrixOS();
     os.put(MODEL_PATH, fixture("model.xlsx"));
     os.pendingRequest = { path: MODEL_PATH, requestedAt: "2026-11-20T09:59:00.000Z", nonce: "n-1" };
-    const { container } = await mountApp(os);
+    const { container } = await mountJourney(os);
 
     // Opened from the Files request: title, tabs, recent file.
     const tabs = within(await screen.findByRole("tablist", { name: "Sheets" }, { timeout: 5000 }));
