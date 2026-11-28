@@ -47,10 +47,10 @@ async function fixture(stopped: boolean) {
     registry = new BotRuntimeRegistry();
     lifecycle = await createGooglePilotCopyLifecycle({ database: repository.kysely, ownerId: owner.ownerId, storage: history.googleCopies!, repository, registry,
         fence, pendingCount: () => 0 });
-    const stop = vi.fn(async () => {
+    const stop = vi.fn(async (input: {chatId:string;runId:string}) => {
         if (!stopped)
             throw new Error('No actual stop evidence');
-        await lifecycle!.onStopped({ version: 1, ownerId: owner.ownerId, chatId: 'chat_one', runId: 'run_one', runtimeHandle: `runtime_${'a'.repeat(32)}`, executionGeneration: '1', stoppedAt: new Date().toISOString() });
+        await lifecycle!.onStopped({ version: 1, ownerId: owner.ownerId, chatId: input.chatId, runId: input.runId, runtimeHandle: `runtime_${'a'.repeat(32)}`, executionGeneration: '1', stoppedAt: new Date().toISOString() });
     });
     lifecycle.bindManaged({ stopAndDrain: stop });
     return { repository, contexts, fence, stop, history };
@@ -107,7 +107,7 @@ describe('durable exact-owner pilot copy cleanup', () => {
         let release!: () => void;
         let entered!: () => void;
         const waiting = new Promise<void>(resolve => { entered = resolve; });
-        f.stop.mockImplementation(async () => { entered(); await new Promise<void>(resolve => { release = resolve; }); return original(); });
+        f.stop.mockImplementation(async input => { entered(); await new Promise<void>(resolve => { release = resolve; }); return original(input); });
         const pending = lifecycle!.purgeAccount(command, controller.signal);
         const settled = Promise.allSettled([pending]);
         await waiting;
@@ -122,6 +122,17 @@ describe('durable exact-owner pilot copy cleanup', () => {
         await close;
         expect(f.fence.blocked).toBe(false);
         expect(JSON.stringify(await f.repository.getDetailPage(owner, 'chat_one', { limit: 20 }))).toContain('synthetic Google-derived result');
+    });
+    it('resolves hashed activity copies to their chat before accepting any run-status deletion proof', async () => {
+        const f=await fixture(true); await admit(f.repository,'two');
+        await sql`UPDATE chat_runs SET driver_kind='matrix_pi' WHERE id='run_two'`.execute(f.repository.kysely);
+        const source=(await f.contexts.sourcesForAccount(owner.ownerId,account))[0]!;
+        await f.contexts.mark({ownerId:owner.ownerId,chatId:'chat_two',googleAccountId:account,consentId:source.consentId,profileId:source.profileId,profileRevision:source.profileRevision,purposeId:source.purposeId,expiresAt:source.expiresAt,retentionDeadline:source.expiresAt});
+        await f.repository.appendRunActivities(owner,'chat_two','run_two',[{id:'event:pilot.tool',chatId:'chat_two',runId:'run_two',occurredAt:new Date().toISOString(),type:'agent.activity',activityId:'tool_pilot',kind:'command',label:'Synthetic',status:'running',summary:'synthetic retained activity'}]);
+        await sql`INSERT INTO chat_runs SELECT (jsonb_populate_record(NULL::chat_runs,to_jsonb(r)||jsonb_build_object('id','run_unknown','driver_kind','codex','attempt',2,'client_request_id','req_unknown','status','failed','outcome','failed','started_at',clock_timestamp(),'completed_at',clock_timestamp()))).* FROM chat_runs r WHERE id='run_two'`.execute(f.repository.kysely);
+        await expect(lifecycle!.purgeAccount(command)).rejects.toThrow();
+        expect(JSON.stringify((await f.repository.kysely.selectFrom('chat_run_events').select('event').where('chat_id','=','chat_two').execute()))).toContain('synthetic retained activity');
+        expect(f.stop.mock.calls.some(([input])=>input.runId==='run_unknown')).toBe(false);
     });
     it('refuses nonmanaged runtime history even with terminal canonical status', async () => {
         const f = await fixture(true);

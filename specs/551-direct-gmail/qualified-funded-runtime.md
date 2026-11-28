@@ -143,3 +143,26 @@ connection/acquisition timeout to 2000 ms; ordinary callers retain their previou
 This bounds stalled handshakes and queued borrowing, not every SQL operation or process
 stop. Operation cancellation checks and actual transaction/handler settlement drain remain
 separate requirements; the driver never destroys the shared pool to simulate cancellation.
+
+The enabled pilot now also requires its integrations transport and successful bot-state
+bootstrap. Startup installs the fixed-path purge poller for the exact host owner, and
+shutdown cancels active inference, drains the actual poll transport, then closes the local
+copy driver before runtime/registry/database teardown. Missing operator runtime pin or
+current machine admission remains a central denial; startup never creates that pin.
+Hashed activity references resolve through their persisted exact mapping before whole-chat
+run admission, including unknown/nonmanaged terminal runs that cannot supply stop proof.
+
+### Final source qualification composition
+
+The owner startup requires its real integrations transport and bot-state bootstrap before
+starting an enabled pilot, then starts the authenticated purge poller. Shutdown cancels
+inference, drains the poller and actual cleanup, and only then closes local services and
+host-owned storage. Hashed activity references resolve through their persisted exact
+mapping during affected-chat discovery; an unknown terminal run cannot be skipped to
+produce a completion receipt. Production policy requires the immutable operator-selected
+actual personal machine; collaborator delegation and unpinned hosts are rejected.
+
+This composition is source-tested. Exact final hosted CI, real Linux stop proof,
+provider-account settings, isolated deployment, five running surfaces and Google review
+remain pending. Dependency remediation has its own linked review and residual advisory
+register; package updates do not attest application or processor compliance.
