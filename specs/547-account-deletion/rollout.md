@@ -48,6 +48,36 @@ Clerk deleting an identity before the job captured its Apple credentials makes a
 
 ## Operations
 
+### Detect orphaned billing owners
+
+Run `pnpm exec tsx scripts/ops/audit-orphaned-billing.ts --gcp-project <project-id>`
+with access to the production platform database, Clerk, and Stripe secrets. Alternatively,
+supply `PLATFORM_DATABASE_URL`, `CLERK_SECRET_KEY`, and `STRIPE_SECRET_KEY` in the environment. The
+command opens an explicitly read-only transaction and never starts platform
+migrations. It reads up to 1,000 subscription rows and checks up to 1,000 owners,
+using five concurrent, timed lookups per provider. A larger inventory fails rather
+than reporting partial success. Canceled and legacy expired rows are excluded.
+The platform normalizes both paused and expired Stripe subscriptions to `ended`,
+so those rows are checked against live Stripe status after the database connection
+closes. Paused owners remain in the audit; confirmed terminal subscriptions are
+excluded. Stripe failures stop the audit rather than silently skipping owners.
+Confirm that database, Clerk, and Stripe credentials belong to the same environment.
+
+The Billing Owner Audit workflow runs every thirty minutes and supports manual
+dispatch. It emits aggregate counts only and fails for confirmed missing owners,
+inconclusive provider responses, incomplete inventory, or configuration failures.
+Billing/platform owners should subscribe to workflow failure notifications. A
+failed lookup is not permission to cancel billing: inspect the customer mapping,
+deletion history, invoice and live subscription before an authorized repair.
+
+Regression acceptance includes deleted trial owners, existing users, provider
+outages, malformed responses, redirects, bounded concurrency, and inventory caps.
+Qualify the workflow manually after merge; its green result is detection evidence,
+not proof that the deletion rollout is enabled. Update the public account-deletion
+documentation separately in `FinnaAI/matrix-os-site` once production behavior is
+qualified. Keep customer identifiers and private incident captures out of this
+repository and its public pull requests.
+
 Watch `[account-deletion]`, `account deletion cleanup failed`, `cleanup_retry` and pending jobs by `next_step`, `attempts`, `next_attempt_at`, `due_at` and lease age. Healthy jobs stop billing immediately, wait until `due_at`, checkpoint cleanup, then purge `encrypted_context` and retain only the keyed owner tombstone and aggregate accounting totals. Log no tokens or decrypted context.
 
 Alert on billing cancellation pending over an hour, jobs overdue over a day, stale leases, unresolved AI accounting, missing integration config, ownership conflicts or Apple provider failures. Missing Apple revocation evidence is an explicit user-facing manual action and does not stall account erasure. Mitigate by restoring dependencies and allowing retries. To roll back admission, set only `ACCOUNT_DELETION_ENABLED=false`; this rejects new user scheduling while status, export, cancellation, signed Clerk webhooks, admission protection, tombstones, and worker processing remain available under `ACCOUNT_DELETION_CONFIGURED=true`. Keep all pinned secrets in place so retries continue. Do not roll back/drop the jobs table, set `ACCOUNT_DELETION_CONFIGURED=false`, or remove the secret while deletion jobs are pending.
