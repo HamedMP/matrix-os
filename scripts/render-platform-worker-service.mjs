@@ -87,6 +87,9 @@ const annotations = { ...sourceAnnotations };
 delete annotations["run.googleapis.com/client-name"];
 delete annotations["run.googleapis.com/client-version"];
 delete annotations["run.googleapis.com/operation-id"];
+// Ingress is a service-level setting; Cloud Run rejects it on a revision template.
+delete annotations["run.googleapis.com/ingress"];
+delete annotations["run.googleapis.com/ingress-status"];
 annotations["autoscaling.knative.dev/minScale"] = "0";
 annotations["autoscaling.knative.dev/maxScale"] = "1";
 annotations["run.googleapis.com/cpu-throttling"] = "false";
