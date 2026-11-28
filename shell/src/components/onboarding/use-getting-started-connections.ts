@@ -28,5 +28,11 @@ export function useGettingStartedConnections(onChanged: () => void) {
     clear(service);
     startConnect(service);
   }, [clear, startConnect]);
-  return { connectApp, connectingService: integrations.connectingService, failedServices: failures.failedServices, appsUnavailable: integrations.appsUnavailable };
+  return {
+    connectApp,
+    connectingService: integrations.connectingService,
+    failedServices: failures.failedServices,
+    appsUnavailable: integrations.appsUnavailable,
+    gmailChoice: integrations.gmailChoice,
+  };
 }

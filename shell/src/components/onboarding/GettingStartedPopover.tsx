@@ -2,7 +2,7 @@
 
 import {
   useGettingStartedVisibility, useGettingStartedPopoverFocus, useGetStartedAnswers, useGetStartedEnded,
-  GettingStartedPill, gettingStartedNextStep, shouldShowGettingStartedPill, usePublishGettingStartedProgress,
+  GmailConnectionChoice, GettingStartedPill, gettingStartedNextStep, shouldShowGettingStartedPill, usePublishGettingStartedProgress,
   openGettingStartedBotChat, retryGettingStartedBots, useGettingStartedBots, gettingStartedRowAction, gettingStartedRowView, type GettingStartedRequest, type GettingStartedRowAction, type GettingStartedRowView,
 } from "@matrix-os/ui";
 import { onboardingChecklist } from "@matrix-os/brand";
@@ -290,7 +290,7 @@ function GettingStartedPopoverContent({
   const [refreshRequest, setRefreshRequest] = useState(0);
   const requestRefresh = useCallback(() => setRefreshRequest((request) => (request + 1) % 1_000_000), []);
   // Rows start an app's own sign-in, like the onboarding widget, and reload when any connection changes.
-  const { connectApp, connectingService, failedServices, appsUnavailable } = useGettingStartedConnections(requestRefresh);
+  const { connectApp, connectingService, failedServices, appsUnavailable, gmailChoice } = useGettingStartedConnections(requestRefresh);
   const [snapshot, setSnapshot] = useState(emptyGettingStartedSnapshot);
   // Spec 635: lead with the steps that fit the owner's Get started answers.
   const getStartedAnswers = useGetStartedAnswers();
@@ -536,6 +536,7 @@ function GettingStartedPopoverContent({
           </div>
         </PopoverPrimitive.Content>
       </PopoverPrimitive.Portal>
+      <GmailConnectionChoice choice={gmailChoice} />
     </PopoverPrimitive.Root>
   );
 }

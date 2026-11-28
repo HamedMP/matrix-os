@@ -1,6 +1,6 @@
 "use client";
 
-import { useGetStartedConnect, useGetStartedConnectFailures, type GetStartedConnect } from "@matrix-os/ui";
+import { GmailConnectionChoice, useGetStartedConnect, useGetStartedConnectFailures, type GetStartedConnect } from "@matrix-os/ui";
 import { useState, type ReactNode } from "react";
 import { getGatewayUrl } from "@/lib/gateway";
 import { useShellConnectionChanges } from "../onboarding-widget/use-shell-connection-changes";
@@ -22,5 +22,8 @@ export function ShellGetStartedConnector({ children }: { children: (connect: Get
     appsUnavailable: integrations.appsUnavailable,
     connectApp: integrations.connectApp,
   });
-  return <>{children(connect)}</>;
+  return <>
+    {children(connect)}
+    <GmailConnectionChoice choice={integrations.gmailChoice} />
+  </>;
 }

@@ -1,5 +1,19 @@
 # Compatible runtime security patches
 
+The frozen root lockfile selects `node-forge@1.4.2` for Expo CLI and has no
+`image-size` dependency. The only local dependency patch registered by the root
+manifest and lockfile is the Electron signing patch for `app-builder-lib@26.15.3`.
+
+`tests/deploy/dependency-security-backports.test.ts` resolves Forge through the
+installed Expo CLI. It exercises the CommonJS entry, both bundled UMD entries,
+and Expo's certificate, CSR and manifest signing functions using synthetic key
+material. Verify the installed graph with the pinned pnpm and a frozen install.
+Exact artifact inventory and live validation remain part of release qualification.
+
+The following checkpoints record earlier candidate graphs and dated test results.
+
+## Earlier dependency reconciliation
+
 ENG-355. Dependency followup to PR2826; this layer is independent of the Gmail feature stack. Keep the base dependency layer and this layer separately reviewable; no history rewriting is required.
 
 The current npm registry reconciliation found additional high/critical families in the installed root graph. This followup applies eligible compatible security patches for the HTTP/database/MCP/auth/WebSocket libraries, parser/utility families and associated toolchain dependencies. Direct dependency minima are updated where owned; transitive overrides stay inside the existing major, and pre1.0 packages stay inside the existing minor. Clerk shared4.x is preserved. Hono and Vite do not receive global peer-rewriting overrides; confirmed pinned WebSocket8 edges are scoped to viem/miniflare. Tiptap React, Markdown, starter/list extensions, core/PM and React's optional bubble/floating-menu dependencies are aligned at3.30.5. The scoped menu overrides avoid selecting newer exact-peer releases against the pinned core. Node-forge1.4.0 removes older advisories but still has an upstream advisory without a fixed release.
@@ -21,3 +35,11 @@ Exact-source remote Electron CI exposed missing ESM exports when React3.22.4 was
 ## HTTP/SDK compatibility followup
 
 Full remote CI found stale assumptions after Hono's eager body-limit/parser change and the MCP patch. The chunked relay regression now proves generic413, zero downstream calls/bytes and bounded input reads; direct relay overflow coverage remains. WhatsApp middleware explicitly preserves genericJSON413 for declared and streamed oversized requests, without authentication/linking/ingestion or operational-error logs on early rejection. Device-flow parser failure injection targets HonoRequest.parseBody (the actual boundary) and still requires invalid_request400 with diagnostic logging. The MCP manifest contract tracks the eligible1.32.0 floor. No request-size limits are raised, auth is not bypassed and provider/device flow behavior is otherwise unchanged.
+
+## October 24 backport checkpoint
+
+The October 24 candidate carried local patches for `image-size@1.2.1` and
+`node-forge@1.4.0` while preserving Metro's image API and Expo's signing API.
+The candidate passed all 40 focused dependency tests and all 10 dependency
+packaging tests after the patches were applied. The lockfile was generated with
+pnpm 10.33.4 and passed a subsequent frozen install in the remote workspace.
