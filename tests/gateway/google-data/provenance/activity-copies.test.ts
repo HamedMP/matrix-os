@@ -136,7 +136,8 @@ describe('registered activity copies', () => {
     expect(await activityCopy(id)).toBeNull();
   });
   it('uses a bounded SQL budget for 500 unchanged registered activities and lets the next owner proceed', async () => {
-    const context = await mark();
+    const deadline = future();
+    const context = await mark({ expiresAt: deadline, retentionDeadline: deadline });
     const events = Array.from({ length: 500 }, (_, index) => ({ ...activity(`activity_${index}`), sequence: index + 1 }));
     await sql`INSERT INTO chat_run_events(id,chat_id,run_id,run_seq,event,occurred_at)
       SELECT v->>'id',${key.chatId},${key.runId},(v->>'sequence')::int,v,(v->>'occurredAt')::timestamptz
