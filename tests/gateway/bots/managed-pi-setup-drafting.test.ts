@@ -76,7 +76,10 @@ it.each(["draft", "interview"] as const)("runs Matrix AI setup %s with zero tool
   const toolPrepare = vi.fn(async () => undefined), toolDispatch = vi.fn(async () => { throw new Error("Unexpected effect"); });
   const createRuntime = vi.fn(async (_request: Parameters<ScopeRuntimeHost["client"]["createRuntime"]>[0]) => ({ runtimeHandle: `runtime_${(++serial).toString(16).padStart(32, "0")}`, executionGeneration: "1" }));
   let actions: ReturnType<typeof createBotBrokerActions>;
-  const host = { available: true, client: { createRuntime, stopRuntime: async () => undefined, renewRuntime: async () => undefined,
+  const stopRuntime = async ({ runtimeHandle }: Parameters<ScopeRuntimeHost["client"]["stopRuntime"]>[0]) => ({
+    runtimeHandle, executionGeneration: "1", state: "stopped" as const,
+  });
+  const host = { available: true, client: { createRuntime, stopRuntime, renewRuntime: async () => undefined,
     runBot: async (request: { runtimeHandle: string; executionGeneration: string; command: { kind: string; runId: string } }) => {
       const frame = (body: Record<string, unknown>) => ({ version: 1, requestId: randomUUID(), runtimeHandle: request.runtimeHandle,
         executionGeneration: request.executionGeneration, runId: request.command.runId, ...body });
