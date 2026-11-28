@@ -70,6 +70,12 @@ export interface FreeRuntimeProvisionerDeps {
   metal: Pick<MetalProvisioner, 'provision'> & Partial<Pick<MetalProvisioner, 'failExpiredProvisioning'>>;
   env?: NodeJS.ProcessEnv;
   now?: () => Date;
+  /**
+   * Runs after admission commits, outside its transaction (ENG-520 launch
+   * guard: expire the owner's open paid Checkout sessions). Failures are
+   * logged; the free owner billing sweep retries.
+   */
+  afterAdmitted?: (clerkUserId: string) => Promise<unknown>;
 }
 
 const CAPACITY_LOCK_KEY = 'matrix:free-tier:runtime-capacity';
@@ -82,10 +88,13 @@ type Admission =
 /**
  * Check creating claims that can still yield a session, all open attempts,
  * paid attempts without a later subscription event, and prebilling intents.
+ * Attempts count in every slot: a paid checkout for a second computer that
+ * survived the owner joining free would charge a free owner (ENG-520 launch
+ * guard). Prebilling intents exist only for the free slot.
  */
 async function paidCheckoutPending(db: PlatformDB, clerkUserId: string, at: Date): Promise<boolean> {
   const attempt = await db.executor.selectFrom('billing_checkout_attempts as a').select('a.id')
-    .where('a.clerk_user_id', '=', clerkUserId).where('a.runtime_slot', '=', FREE_RUNTIME_SLOT)
+    .where('a.clerk_user_id', '=', clerkUserId)
     .where((eb) => eb.or([
       eb('a.status', '=', 'open'),
       eb.and([
@@ -166,6 +175,15 @@ export function createFreeRuntimeProvisioner(deps: FreeRuntimeProvisionerDeps) {
     }
   }
 
+  async function runAfterAdmitted(clerkUserId: string): Promise<void> {
+    if (!deps.afterAdmitted) return;
+    try {
+      await deps.afterAdmitted(clerkUserId);
+    } catch (error: unknown) {
+      console.error('[free-tier] post-admission checkout expiry failed:', error instanceof Error ? error.name : 'unknown');
+    }
+  }
+
   async function admitOrRefuse(clerkUserId: string): Promise<Admission> {
     try {
       return await admit(clerkUserId);
@@ -220,6 +238,7 @@ export function createFreeRuntimeProvisioner(deps: FreeRuntimeProvisionerDeps) {
       // returning a runtime that can never register (no maintenance worker needed).
       await reconcileExpired(input.clerkUserId);
       const admission = await admitOrRefuse(input.clerkUserId);
+      if (admission.kind === 'admitted' || admission.kind === 'existing') await runAfterAdmitted(input.clerkUserId);
       if (admission.kind !== 'admitted') return admission;
       const result = await deps.metal.provision({
         clerkUserId: input.clerkUserId, handle: input.handle, tier: 'free', runtimeSlot: FREE_RUNTIME_SLOT,
@@ -251,6 +270,7 @@ export function createFreeTierRuntime(input: {
   metal: (Pick<MetalProvisioner, 'provision'> & Partial<Pick<MetalProvisioner, 'failExpiredProvisioning'>>) | undefined;
   env?: NodeJS.ProcessEnv;
   log?: (message: string) => void;
+  afterAdmitted?: FreeRuntimeProvisionerDeps['afterAdmitted'];
 }): { config: FreeTierConfig; provisioner?: FreeRuntimeProvisioner } | undefined {
   if (!input.config) return undefined;
   if (!input.metal) {
@@ -262,6 +282,7 @@ export function createFreeTierRuntime(input: {
     config: input.config,
     provisioner: createFreeRuntimeProvisioner({
       db: input.db, config: input.config, metal: input.metal, ...(input.env ? { env: input.env } : {}),
+      ...(input.afterAdmitted ? { afterAdmitted: input.afterAdmitted } : {}),
     }),
   };
 }

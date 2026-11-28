@@ -1,3 +1,4 @@
+import { assertPaidCheckoutAllowed } from "./free-tier/free-checkout-guard.js";
 import { withAccountDeletionAdmission } from './account-deletion/admission.js';
 import { createHash } from "node:crypto";
 import { sql } from "kysely";
@@ -53,6 +54,8 @@ export async function prepareAiCreditCheckoutClaim(
   const expiresAt = new Date(at.getTime() + CHECKOUT_ACTIVE_MS).toISOString();
   const windowStart = new Date(at.getTime() - CHECKOUT_WINDOW_MS).toISOString();
   return withAccountDeletionAdmission(db, input.ownerId, async (trx) => {
+    // Under the owner lock free admission also takes, before any write (ENG-520 launch guard).
+    await assertPaidCheckoutAllowed(trx, input.ownerId);
     const machine = await trx.executor.selectFrom("user_machines").select([
       "clerk_user_id", "runtime_slot", "status", "activation_state", "deleted_at",
     ]).where("machine_id", "=", input.machineId).forUpdate().executeTakeFirst();

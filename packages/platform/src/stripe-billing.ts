@@ -1,5 +1,6 @@
 import Stripe from 'stripe';
 import { createHash } from 'node:crypto';
+import type { FreeOwnerCheckoutRefundStatus } from './billing/stripe-client.js';
 import type {
   StripeBillingClient,
   StripeAiCreditCheckoutSessionInput,
@@ -40,6 +41,12 @@ function checkoutIntegrationIdentifier(
     .map((value) => String.fromCharCode(97 + (value % 26)))
     .join('');
   return `${prefix}-${suffix}`;
+}
+
+function freeOwnerRefundStatus(status: string | null): FreeOwnerCheckoutRefundStatus {
+  return status === 'succeeded' || status === 'failed' || status === 'canceled' || status === 'requires_action'
+    ? status
+    : 'pending';
 }
 
 export function createStripeBillingClient(options: {
@@ -168,6 +175,56 @@ export function createStripeBillingClient(options: {
       return { url: session.url, id: session.id };
     },
 
+    async compensateFreeOwnerCheckout({ sessionId, refundId, refundRound }) {
+      // The SDK client carries the bounded request timeout (MATRIX_STRIPE_API_TIMEOUT_MS).
+      const session = await stripe.checkout.sessions.retrieve(sessionId);
+      const subscriptionId = typeof session.subscription === 'string' ? session.subscription : session.subscription?.id ?? null;
+      if (session.status !== 'complete') {
+        // Never paid: nothing to refund once it can no longer be paid.
+        return { subscriptionId, settled: session.status === 'expired', refund: null };
+      }
+      if (subscriptionId) {
+        const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+        if (subscription.status !== 'canceled' && subscription.status !== 'incomplete_expired') {
+          await stripe.subscriptions.cancel(subscriptionId, { invoice_now: false, prorate: false },
+            { idempotencyKey: `matrix-free-owner-cancel:${subscriptionId}` });
+        }
+      }
+      if (refundId) {
+        const refund = await stripe.refunds.retrieve(refundId);
+        return { subscriptionId, settled: false, refund: { id: refund.id, status: freeOwnerRefundStatus(refund.status) } };
+      }
+      const invoiceId = typeof session.invoice === 'string' ? session.invoice : session.invoice?.id ?? null;
+      if (!invoiceId) {
+        return { subscriptionId, settled: session.payment_status === 'no_payment_required', refund: null };
+      }
+      // Only this session's own invoice: later invoices on the subscription are never touched.
+      const invoice = await stripe.invoices.retrieve(invoiceId);
+      if (invoice.status === 'draft') return { subscriptionId, settled: false, refund: null };
+      if (invoice.status === 'open') {
+        await stripe.invoices.voidInvoice(invoiceId, {}, { idempotencyKey: `matrix-free-owner-void:${invoiceId}` });
+        return { subscriptionId, settled: true, refund: null };
+      }
+      if (invoice.status !== 'paid' || invoice.amount_paid === 0) return { subscriptionId, settled: true, refund: null };
+      const payments = await stripe.invoicePayments.list({ invoice: invoiceId, status: 'paid', limit: 10 });
+      const intent = payments.data.find((payment) => payment.payment.payment_intent)?.payment.payment_intent;
+      const paymentIntentId = typeof intent === 'string' ? intent : intent?.id;
+      if (!paymentIntentId) return { subscriptionId, settled: false, refund: null };
+      try {
+        const refund = await stripe.refunds.create(
+          { payment_intent: paymentIntentId, metadata: { matrix_reason: 'free_owner_launch_guard' } },
+          { idempotencyKey: `matrix-free-owner-refund:${paymentIntentId}${refundRound > 0 ? `:${refundRound}` : ''}` },
+        );
+        return { subscriptionId, settled: false, refund: { id: refund.id, status: freeOwnerRefundStatus(refund.status) } };
+      } catch (error: unknown) {
+        // Already fully refunded (for example by an operator): nothing left to compensate.
+        if (error instanceof Error && (error as { code?: unknown }).code === 'charge_already_refunded') {
+          return { subscriptionId, settled: true, refund: null };
+        }
+        throw error;
+      }
+    },
+
     async expireCheckoutSession(id) {
       let session: Stripe.Checkout.Session;
       try {
@@ -270,6 +327,7 @@ export function createUnavailableStripeBillingClient(): StripeBillingClient {
     clearSubscriptionAttribution: unavailable,
     createAiCreditCheckoutSession: unavailable,
     expireCheckoutSession: unavailable,
+    compensateFreeOwnerCheckout: unavailable,
     retrieveCheckoutSession: unavailable,
     retrieveRecurringPrice: unavailable,
     createPortalSession: unavailable,

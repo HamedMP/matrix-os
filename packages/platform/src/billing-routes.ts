@@ -66,6 +66,11 @@ import {
   resolvePublicRecurringPrice,
   resolveRuntimePlacement,
 } from './billing/checkout-support.js';
+import {
+  FREE_UPGRADE_UNAVAILABLE_RESPONSE,
+  FreeUpgradeUnavailableError,
+  ownerOnFreePlan,
+} from './free-tier/free-checkout-guard.js';
 
 // S01 / T007: keep the public surface of billing-routes.ts stable for existing consumers.
 export { MATRIX_CARD_TRIAL_DAYS } from './billing/checkout-schemas.js';
@@ -262,6 +267,22 @@ export function createBillingRoutes(options: {
       distinctId: clerkUserId,
       properties: checkoutProperties,
     });
+
+    const refuseFreeOwner = () => {
+      emitTelemetry(BILLING_CHECKOUT_FAILED_EVENT, {
+        distinctId: clerkUserId,
+        properties: { ...checkoutProperties, failure_code: FREE_UPGRADE_UNAVAILABLE_RESPONSE.code, http_status: 409 },
+      });
+      return c.json(FREE_UPGRADE_UNAVAILABLE_RESPONSE, 409);
+    };
+    // ENG-520 launch guard: no paid checkout for a free owner until upgrade (ENG-606)
+    // exists. Checked again under the owner lock when the attempt is claimed.
+    try {
+      if (await ownerOnFreePlan(options.db, clerkUserId)) return refuseFreeOwner();
+    } catch (err: unknown) {
+      console.error('[billing] checkout free plan check failed:', err instanceof Error ? err.name : typeof err);
+      return c.json(BILLING_UNAVAILABLE_RESPONSE, 503);
+    }
 
     const priceId = resolvePriceId(env, parsed.data.planSlug, parsed.data.interval);
     if (!priceId) {
@@ -517,6 +538,7 @@ export function createBillingRoutes(options: {
       });
       return c.json({ url: session.url }, 200);
     } catch (err: unknown) {
+      if (err instanceof FreeUpgradeUnavailableError) return refuseFreeOwner();
       console.error('[billing] checkout creation failed:', err instanceof Error ? err.message : String(err));
       emitTelemetry(BILLING_CHECKOUT_FAILED_EVENT, {
         distinctId: clerkUserId,
@@ -630,6 +652,8 @@ export function createBillingRoutes(options: {
     const parsed = CheckoutPreparationStatusQuerySchema.safeParse(c.req.query());
     if (!parsed.success) return c.json({ error: 'Invalid request' }, 400);
     try {
+      // ENG-520 launch guard: never hand a free owner a payable session URL.
+      if (await ownerOnFreePlan(options.db, clerkUserId)) return c.json(FREE_UPGRADE_UNAVAILABLE_RESPONSE, 409);
       const attempt = await getActiveCheckoutAttempt(options.db, clerkUserId, 'primary');
       if (!attempt || attempt.id !== parsed.data.attemptId) {
         return c.json({ error: 'Checkout unavailable' }, 404);

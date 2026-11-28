@@ -72,6 +72,30 @@ export const MATRIX_FREE_PLAN = {
   substrate: "metal",
 } as const;
 
+/**
+ * Paid checkout refusal for a free plan owner until free to paid upgrade
+ * ships (ENG-520 launch guard; upgrade is ENG-606). Clients match the code and
+ * show this fixed message; they never display the server's error string.
+ */
+export const MATRIX_FREE_UPGRADE_UNAVAILABLE = {
+  code: "free_upgrade_unavailable",
+  message: "Upgrades for free computers are coming soon.",
+} as const;
+
+/** The same refusal for AI credit purchases (Hamed, 2026-11-27: closed until purchased credit is verified on the free funding path). */
+export const MATRIX_FREE_AI_CREDIT_UNAVAILABLE = {
+  code: MATRIX_FREE_UPGRADE_UNAVAILABLE.code,
+  message: "AI credit for free computers is coming soon.",
+} as const;
+
+/** Thrown by AI credit checkout clients when the platform refuses a free owner; renderers show the fixed message. */
+export class FreeAiCreditUnavailableError extends Error {
+  constructor() {
+    super(MATRIX_FREE_AI_CREDIT_UNAVAILABLE.message);
+    this.name = "FreeAiCreditUnavailableError";
+  }
+}
+
 export const MATRIX_HOSTED_BILLING_REGIONS: readonly MatrixHostedBillingRegion[] = [
   {
     slug: "region_fsn1",

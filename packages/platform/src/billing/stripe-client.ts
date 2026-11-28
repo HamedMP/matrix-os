@@ -8,6 +8,8 @@ import type { MarketingAttribution } from './checkout-schemas.js';
 
 export const MAX_STRIPE_API_TIMEOUT_MS = 10_000;
 
+export type FreeOwnerCheckoutRefundStatus = 'pending' | 'requires_action' | 'succeeded' | 'failed' | 'canceled';
+
 export interface StripeCheckoutSessionInput {
   idempotencyKey: string;
   clerkUserId: string;
@@ -79,6 +81,19 @@ export interface StripeBillingClient {
     id: string;
   }>;
   expireCheckoutSession?(id: string): Promise<StripeCheckoutSessionProjection>;
+  /**
+   * ENG-520 launch guard compensation for one blocked Checkout session: cancel
+   * its subscription (no proration, no final invoice), then settle only that
+   * session's own invoice: void it while open, or refund its payment once paid.
+   * With `refundId` the existing refund is polled instead of creating one;
+   * `refundRound` > 0 starts a new refund after a failed one. `settled` is
+   * false while the invoice could still be paid.
+   */
+  compensateFreeOwnerCheckout?(input: { sessionId: string; refundId: string | null; refundRound: number }): Promise<{
+    subscriptionId: string | null;
+    settled: boolean;
+    refund: { id: string; status: FreeOwnerCheckoutRefundStatus } | null;
+  }>;
   retrieveTrackingCheckout?(id: string): Promise<unknown>;
   retrieveTrackingInvoice?(id: string): Promise<unknown>;
   retrieveCheckoutSession(id: string): Promise<StripeCheckoutSessionProjection>;

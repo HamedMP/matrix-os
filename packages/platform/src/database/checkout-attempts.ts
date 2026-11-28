@@ -15,6 +15,7 @@ import {
   type DeveloperToolId,
 } from '../developer-tools.js';
 import { mapCheckoutAttempt } from './billing-records.js';
+import { assertPaidCheckoutAllowed } from '../free-tier/free-checkout-guard.js';
 
 /** Extracted verbatim from packages/platform/src/db.ts (S01 / T007): billing checkout attempt claims and settlement. */
 
@@ -99,7 +100,11 @@ export async function claimCheckoutAttempt(
   transactionAlreadyOpen = false,
 ): Promise<{ attempt: BillingCheckoutAttemptRecord; claimed: boolean; selectionMatches: boolean }> {
   if (!transactionAlreadyOpen) {
-    return withAccountDeletionAdmission(db, record.clerkUserId, (trx) => claimCheckoutAttempt(trx, record, true));
+    return withAccountDeletionAdmission(db, record.clerkUserId, async (trx) => {
+      // Under the owner lock free admission also takes (ENG-520 launch guard).
+      await assertPaidCheckoutAllowed(trx, record.clerkUserId);
+      return claimCheckoutAttempt(trx, record, true);
+    });
   }
   await db.ready;
   const row: BillingCheckoutAttemptsTable = {
@@ -208,6 +213,8 @@ export async function claimCardTrialCheckoutAttempt(
 ): Promise<{ attempt: BillingCheckoutAttemptRecord; claimed: boolean; selectionMatches: boolean }> {
   await db.ready;
   return withAccountDeletionAdmission(db, record.clerkUserId, async (trx) => {
+    // Under the owner lock free admission also takes, before any write (ENG-520 launch guard).
+    await assertPaidCheckoutAllowed(trx, record.clerkUserId);
     await trx.executor
       .insertInto('billing_trial_accounts')
       .values({

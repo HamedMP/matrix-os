@@ -47,6 +47,19 @@ import {
 } from '../billing/stripe-webhook-projection.js';
 
 import type { createBillingRoutes } from '../billing-routes.js';
+import { retireFreeOwnerCheckoutAttempt } from '../free-tier/free-owner-billing.js';
+import { isFreeMetalRuntime } from '../free-tier/free-runtime.js';
+import {
+  applyCompensationRefundEvent,
+  blockedCheckoutHoldsSubscription,
+  compensationForSession,
+  enqueueCheckoutCompensation,
+  FREE_OWNER_CHARGE_COMPENSATION_EVENT,
+  freeOwnerSince,
+  readInvoiceSubscriptionId,
+  rearmCompensationsForSubscription,
+  freeEntitlementToRestoreAfterCompensation,
+} from '../free-tier/free-owner-compensation.js';
 const BILLING_CHECKOUT_COMPLETED_EVENT =
   MATRIX_TELEMETRY_EVENTS.BILLING_CHECKOUT_COMPLETED ?? 'matrix_billing_checkout_completed';
 const BILLING_CHECKOUT_EXPIRED_EVENT =
@@ -67,6 +80,43 @@ export function createStripeWebhookHandler(options: Parameters<typeof createBill
   const env = options.env ?? process.env;
   const now = options.now ?? (() => new Date());
   const persistEntitlement = options.upsertEntitlement ?? upsertBillingEntitlement;
+
+  /**
+   * ENG-520 launch guard, layer 3, strictly attempt-scoped: a completed
+   * Checkout session is compensated only when we recorded it as this owner's
+   * checkout attempt and it completed while they were free, or the guard's
+   * sweep already queued it. Only that session's payment is refunded, by the
+   * free owner billing sweep outside this transaction. Anything else, such as
+   * a former paid owner's historical subscription, flows through unchanged.
+   */
+  async function blockedFreeCheckout(trx: Parameters<typeof enqueueCheckoutCompensation>[0], sessionId: string,
+    sessionOwner: string | null, completedAt: number): Promise<{ attemptId: string; owner: string } | null> {
+    const attempt = await trx.executor.selectFrom('billing_checkout_attempts').select(['id', 'clerk_user_id'])
+      .where('stripe_session_id', '=', sessionId).executeTakeFirst();
+    if (!attempt || (sessionOwner && sessionOwner !== attempt.clerk_user_id)) return null;
+    if (await compensationForSession(trx, sessionId)) return { attemptId: attempt.id, owner: attempt.clerk_user_id };
+    const since = await freeOwnerSince(trx, attempt.clerk_user_id);
+    return since && completedAt >= since.getTime() ? { attemptId: attempt.id, owner: attempt.clerk_user_id } : null;
+  }
+
+  /**
+   * Billing runtime actions (suspend/resume) target the subscription's own
+   * paid runtime only. A former paid or trial owner who joined the free plan
+   * keeps their free metal runtime in the same slot: late events for their old
+   * subscription must never suspend or resume it (ENG-520 launch guard).
+   */
+  async function enqueuePaidRuntimeAction(
+    trx: Parameters<typeof enqueueBillingRuntimeAction>[0],
+    action: Parameters<typeof enqueueBillingRuntimeAction>[1],
+  ): Promise<void> {
+    const machine = await getActiveUserMachineByClerkId(trx, action.clerkUserId, action.runtimeSlot);
+    if (machine && await isFreeMetalRuntime(trx.executor, machine.machineId)) {
+      console.warn('[billing] skipped a billing runtime action for a free runtime');
+      return;
+    }
+    await enqueueBillingRuntimeAction(trx, action);
+  }
+
   return async (c: Context) => {
     const signature = c.req.header('stripe-signature');
     const webhookSecret = env.STRIPE_WEBHOOK_SECRET;
@@ -118,6 +168,12 @@ export function createStripeWebhookHandler(options: Parameters<typeof createBill
           }, env);
         }
 
+        if ((event.type === 'refund.updated' || event.type === 'refund.failed' || event.type === 'charge.refund.updated')
+          && await applyCompensationRefundEvent(trx, event.data.object, webhookProcessedAt.toISOString(),
+            (name, captured) => emitTelemetry(name, captured))) {
+          return { received: true, processed: true };
+        }
+
         const aiCreditResult = await processAiCreditWebhookEvent({
           event, trx, repository: options.fundedAiRepository, at: webhookProcessedAt.toISOString(),
         });
@@ -128,6 +184,33 @@ export function createStripeWebhookHandler(options: Parameters<typeof createBill
         // it `expired`. Both only transition `open` rows.
         if (event.type === 'checkout.session.completed' || event.type === 'checkout.session.expired') {
           const sessionId = readStripeObjectId(event.data.object);
+          const sessionOwner = event.type === 'checkout.session.completed'
+            ? readClerkUserIdFromCheckoutSession(event.data.object)
+            : null;
+          const blocked = sessionId && event.type === 'checkout.session.completed'
+            ? await blockedFreeCheckout(trx, sessionId, sessionOwner, event.created * 1000)
+            : null;
+          if (sessionId && blocked) {
+            const subscription = (event.data.object as { subscription?: unknown }).subscription;
+            const subscriptionId = typeof subscription === 'string'
+              ? subscription
+              : readStripeObjectId(subscription);
+            const at = webhookProcessedAt.toISOString();
+            // Queue first, then void the attempt so it no longer holds the free plan as a pending checkout.
+            const queued = await enqueueCheckoutCompensation(trx, {
+              stripeSessionId: sessionId, checkoutAttemptId: blocked.attemptId, stripeSubscriptionId: subscriptionId, at,
+            });
+            await retireFreeOwnerCheckoutAttempt(trx, sessionId, 'abandoned', at, true);
+            await options.prebilling?.expireCheckout(trx, { stripeSessionId: sessionId, clerkUserId: blocked.owner, now: at });
+            if (queued) {
+              console.error('[billing] ALERT free owner paid a blocked checkout; queued for cancel and refund');
+              emitTelemetry(FREE_OWNER_CHARGE_COMPENSATION_EVENT, {
+                distinctId: blocked.owner,
+                properties: { stripe_event_type: event.type, compensation: 'cancel_and_refund_queued' },
+              });
+            }
+            return { received: true, processed: true };
+          }
           if (sessionId) {
             await resolveCheckoutAttempt(
               trx,
@@ -160,6 +243,15 @@ export function createStripeWebhookHandler(options: Parameters<typeof createBill
             },
           );
           return { received: true, processed: true };
+        }
+
+        if (event.type === 'invoice.paid' || event.type === 'invoice.payment_succeeded') {
+          // A payment on a subscription being compensated re-arms it so the sweep refunds it.
+          const compensatedSubscription = readInvoiceSubscriptionId(event.data.object);
+          if (compensatedSubscription
+            && await rearmCompensationsForSubscription(trx, compensatedSubscription, webhookProcessedAt.toISOString())) {
+            return { received: true, processed: true };
+          }
         }
 
         if (!isSubscriptionEvent(event.type)) {
@@ -208,7 +300,7 @@ export function createStripeWebhookHandler(options: Parameters<typeof createBill
               'resume',
               webhookProcessedAt.toISOString(),
             );
-            await enqueueBillingRuntimeAction(trx, {
+            await enqueuePaidRuntimeAction(trx, {
               clerkUserId: updated.clerkUserId,
               runtimeSlot: updated.runtimeSlot,
               stripeSubscriptionId: updated.stripeSubscriptionId,
@@ -239,7 +331,7 @@ export function createStripeWebhookHandler(options: Parameters<typeof createBill
               || machine?.status === 'suspending'
             );
             if (recoveryRequiresResume) {
-              await enqueueBillingRuntimeAction(trx, {
+              await enqueuePaidRuntimeAction(trx, {
                 clerkUserId: updated.clerkUserId,
                 runtimeSlot: updated.runtimeSlot,
                 stripeSubscriptionId: updated.stripeSubscriptionId,
@@ -262,6 +354,17 @@ export function createStripeWebhookHandler(options: Parameters<typeof createBill
 
         const projection = await projectSubscription(trx, event.data.object, webhookProcessedAt);
         if (!projection) return { received: true, ignored: true };
+        // A subscription from a blocked free checkout is never projected (no paid
+        // entitlement on the free VM); its checkout's compensation cancels it.
+        if (await blockedCheckoutHoldsSubscription(trx, {
+          clerkUserId: projection.clerkUserId,
+          runtimeSlot: projection.runtimeSlot,
+          stripeSubscriptionId: projection.stripeSubscriptionId,
+          subscriptionCreated: (event.data.object as { created?: unknown }).created,
+        })) {
+          await rearmCompensationsForSubscription(trx, projection.stripeSubscriptionId, webhookProcessedAt.toISOString());
+          return { received: true, processed: true };
+        }
 
         const priceCatalog = loadStripePriceCatalog(env);
         const entitlement = deriveStripeEntitlement(projection, {
@@ -319,7 +422,7 @@ export function createStripeWebhookHandler(options: Parameters<typeof createBill
             || machine?.status === 'suspended'
             || machine?.status === 'suspending'
           ) {
-            await enqueueBillingRuntimeAction(trx, {
+            await enqueuePaidRuntimeAction(trx, {
               clerkUserId: projection.clerkUserId,
               runtimeSlot: projection.runtimeSlot,
               stripeSubscriptionId: projection.stripeSubscriptionId,
@@ -332,6 +435,11 @@ export function createStripeWebhookHandler(options: Parameters<typeof createBill
         }
         const summary = await recomputeStripeSummary(trx, projection.clerkUserId, priceCatalog, env, webhookProcessedAt);
         if (summary) await persistEntitlement(trx, summary);
+        // ENG-520: a compensated pre-rollout subscription that is now canceled leaves no paid rights.
+        const restoredFree = await freeEntitlementToRestoreAfterCompensation(trx, {
+          clerkUserId: projection.clerkUserId, stripeSubscriptionId: projection.stripeSubscriptionId, at: webhookProcessedAt,
+        });
+        if (restoredFree) await persistEntitlement(trx, restoredFree);
         if (
           summary
           && projection.prebillingIntentId
@@ -384,7 +492,7 @@ export function createStripeWebhookHandler(options: Parameters<typeof createBill
             'resume',
             webhookProcessedAt.toISOString(),
           );
-          await enqueueBillingRuntimeAction(trx, {
+          await enqueuePaidRuntimeAction(trx, {
             clerkUserId: projection.clerkUserId,
             runtimeSlot: projection.runtimeSlot,
             stripeSubscriptionId: projection.stripeSubscriptionId,

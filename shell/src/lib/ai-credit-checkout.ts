@@ -1,4 +1,4 @@
-import { FUNDED_AI_CHECKOUT_TIMEOUT_MS } from "@matrix-os/contracts";
+import { FUNDED_AI_CHECKOUT_TIMEOUT_MS, FreeAiCreditUnavailableError, MATRIX_FREE_AI_CREDIT_UNAVAILABLE } from "@matrix-os/contracts";
 const MAX_CHECKOUT_RESPONSE_BYTES = 8 * 1024;
 type PackageId = "usd_5" | "usd_10" | "usd_25";
 
@@ -104,6 +104,15 @@ export async function openWebAiCreditCheckout(input: {
       }),
     });
     if (!response.ok) {
+      if (response.status === 409) {
+        // Only the code is read; the server's error string is never shown.
+        const refusal = await readBoundedCheckoutResponse(response);
+        if (refusal && typeof refusal === "object"
+          && (refusal as { code?: unknown }).code === MATRIX_FREE_AI_CREDIT_UNAVAILABLE.code) {
+          throw new FreeAiCreditUnavailableError();
+        }
+        throw new AiCreditCheckoutError();
+      }
       await response.body?.cancel();
       throw new AiCreditCheckoutError();
     }
@@ -114,7 +123,7 @@ export async function openWebAiCreditCheckout(input: {
     if (input.isIdentityCurrent?.() === false) throw new AiCreditCheckoutError();
     navigate(url);
   } catch (error) {
-    if (error instanceof AiCreditCheckoutError) throw error;
+    if (error instanceof AiCreditCheckoutError || error instanceof FreeAiCreditUnavailableError) throw error;
     console.warn("[ai-credit] Checkout request failed:", error instanceof Error ? error.name : typeof error);
     throw new AiCreditCheckoutError();
   }

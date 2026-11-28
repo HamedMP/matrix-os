@@ -34,6 +34,7 @@ import {
 import { createAtsDb, resolveAtsDatabaseUrl, type AtsDB } from './ats-db.js';
 import { startAtsBackgroundWorker } from './ats-background-worker.js';
 import { startGooglePurchaseWorker } from './billing/google-purchases.js';
+import { createFreeOwnerBillingRuntime } from './free-tier/free-owner-billing.js';
 import type { Orchestrator } from './orchestrator.js';
 import type { ClerkAuth } from './clerk-auth.js';
 import {
@@ -1228,7 +1229,11 @@ async function startPlatformServerWithCleanup(
       : undefined,
   });
   registerCustomMcpStartupCleanup(async () => { await metalRuntime?.shutdown(); });
-  const freeTier = createFreeTierRuntime({ db, config: freeTierConfig, metal: metalRuntime?.provisioner });
+  // ENG-520 launch guard: expire free owners' open paid Checkout sessions; cancel and refund late subscriptions.
+  const freeOwnerBilling = createFreeOwnerBillingRuntime({ db, env: appEnv, backgroundWorkersEnabled });
+  registerCustomMcpStartupCleanup(freeOwnerBilling.stop);
+  const freeTier = createFreeTierRuntime({ db, config: freeTierConfig, metal: metalRuntime?.provisioner,
+    ...(freeOwnerBilling.afterAdmitted ? { afterAdmitted: freeOwnerBilling.afterAdmitted } : {}) });
   const app = createPlatformApp({
     accountDeletion,
     db,
@@ -1336,6 +1341,7 @@ async function startPlatformServerWithCleanup(
         await metalShutdown;
         await Promise.allSettled([
           stopGooglePurchaseWorker(),
+          freeOwnerBilling.stop(),
           collaboration?.shutdown(),
           slack.close(),
           whatsappRuntime?.shutdown(),
