@@ -54,6 +54,7 @@ export interface DispatchOptions {
   osViewTools?: OsViewAgentTools;
   ownerAudioTranscriber?: OwnerAudioTranscriber;
   terminalTools?: TerminalAgentKernelTools;
+  documentTools?: KernelConfig["documentTools"];
 }
 
 export interface DispatchContext {
@@ -245,6 +246,7 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
         requestApproval: entry.kernelOverrides?.requestApproval,
         osViewTools: opts.osViewTools,
         terminalTools: opts.terminalTools,
+        documentTools: opts.documentTools,
         ownerAudioTranscriber: opts.ownerAudioTranscriber,
       };
       try {
@@ -398,6 +400,7 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
             env: credentialLaunch.env,
             osViewTools: opts.osViewTools,
             terminalTools: opts.terminalTools,
+            documentTools: opts.documentTools,
             ownerAudioTranscriber: opts.ownerAudioTranscriber,
           };
 

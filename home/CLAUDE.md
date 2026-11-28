@@ -123,7 +123,7 @@ and read the returned `{ text }`. Guard for the API being absent on older hosts;
 catch failures and show an app-safe error. Do not use `gatewayFetch` or raw fetch
 for model calls, and never embed credentials in app code.
 
-The owner grants the exact app identity in `system/app-ai.json`. Discover runnable
+The owner grants the exact app identity in `system/app-ai.json` (until one exists, only the shipped first-party docs and sheets apps have AI by default). Discover runnable
 routes with `MatrixOS.ai.routes()` and pass the selected exact
 `{ harnessId, accountId, accessSourceId, modelId }` to `ai.generate({ prompt, route })`.
 A fixed policy `route` cannot be overridden by app code. Historical `apps` + `model`

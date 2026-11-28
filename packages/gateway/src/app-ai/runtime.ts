@@ -11,6 +11,7 @@ import { requireRequestPrincipal } from "../request-principal.js";
 import { MATRIX_INCLUDED_MODEL_IDS } from "../ai-providers/model-catalog.js";
 import { KernelModelSchema } from "../kernel-settings.js";
 import { readBoundedJsonFileWithIdentity } from "../bounded-json-file.js";
+import { isTrustedFirstPartyApp } from "../app-capabilities/policy.js";
 import { createAppAiRoutes } from "./routes.js";
 import { appAiHarness, projectAppAiAuthorizationRoutes, routeSelection, sameAppAiRoute } from "./connected-routes.js";
 import type { NativeProviderProfileGuard } from "../ai-providers/native-provider-profile-guard.js";
@@ -28,6 +29,17 @@ const PolicySchema = z.strictObject({
     model: KernelModelSchema.optional(),
     route: AppAiRouteSelectionSchema.optional(),
 });
+/**
+ * Shipped first-party apps whose assistants need app AI out of the box. They
+ * receive it only while no owner policy exists and only when the installed
+ * copy is the visible, non-imported first-party app; an owner-written
+ * system/app-ai.json is authoritative and can revoke it.
+ */
+const FIRST_PARTY_AI_DEFAULT_APPS = ["docs", "sheets"] as const;
+async function firstPartyDefaultPolicy(homePath: string): Promise<z.infer<typeof PolicySchema>> {
+    const trusted = await Promise.all(FIRST_PARTY_AI_DEFAULT_APPS.map(async app => (await isTrustedFirstPartyApp(homePath, app)) ? [app] : []));
+    return { apps: trusted.flat() };
+}
 async function readPolicy(homePath: string) {
     const path = join(homePath, "system/app-ai.json");
     try {
@@ -35,7 +47,7 @@ async function readPolicy(homePath: string) {
     }
     catch (error) {
         if (error instanceof Error && (error as NodeJS.ErrnoException).code === "ENOENT")
-            return null;
+            return firstPartyDefaultPolicy(homePath);
         throw error;
     }
     const document = await readBoundedJsonFileWithIdentity(join(homePath, "system/app-ai.json"), 32768);

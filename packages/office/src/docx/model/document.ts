@@ -250,6 +250,7 @@ class DocxDocumentHandle implements DocxDocument {
       throw new OfficeError("invalid_argument", "unknown text view");
     }
     if (options.range !== undefined) return rangeText(this.#index, options.range, view);
+    if (options.blockId !== undefined) return blocksText(this.#index, [this.#index.requireBlock(options.blockId)], view);
     const story = this.#index.story(options.storyId ?? "body");
     if (story === null) {
       throw new OfficeError("stale_reference", "unknown story id", { details: { storyId: String(options.storyId) } });

@@ -5,6 +5,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { shouldRequireApproval, type ApprovalPolicy } from "./approval.js";
 import { createAuditLogger, type AuditLogger } from "./audit.js";
+import { DOCUMENT_APPROVAL_IPC_TOOL_NAMES } from "./tools/documents.js";
 
 export interface HookInput {
   hook_event_name: string;
@@ -287,6 +288,33 @@ export const MANAGED_WRITE_ACTIONS = new Set([
   "xero_accounting_api/update_contact",
   "zoom/create_meeting",
 ]);
+
+/**
+ * Owner approval for document tools that resolve proposals (accept or reject
+ * tracked revisions and pending cell changes). Fails closed: a denial, a
+ * timeout or a broken approval transport all block the call.
+ */
+export function createDocumentApprovalHook(
+  requestApproval: RequestApprovalFn,
+): (input: HookInput) => Promise<HookOutput> {
+  const gated = new Set<string>(DOCUMENT_APPROVAL_IPC_TOOL_NAMES);
+  return async (input) => {
+    if (!input.tool_name || !gated.has(input.tool_name)) return {};
+    try {
+      if (await requestApproval(input.tool_name, input.tool_input)) return {};
+      return {
+        hookSpecificOutput: { permissionDecision: "deny" },
+        systemMessage: `User denied approval for ${input.tool_name}. Leave the proposals for the owner to review.`,
+      };
+    } catch (error: unknown) {
+      console.warn("[hooks] Document approval failed closed:", error instanceof Error ? error.name : "UnknownError");
+      return {
+        hookSpecificOutput: { permissionDecision: "deny" },
+        systemMessage: `Approval unavailable for ${input.tool_name} -- denied. Leave the proposals for the owner to review.`,
+      };
+    }
+  };
+}
 
 interface CustomMcpProjectionFile {
   servers?: Array<{

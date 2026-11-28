@@ -14,6 +14,7 @@ import { registerProjectAgentContextRoute } from "../project-agent-context-route
 import type { createProjectManager } from "../project-manager.js";
 import { requireRequestPrincipal } from "../request-principal.js";
 import { registerFileRoutes } from "./file-routes.js";
+import { registerOfficeDocumentRoutes } from "../office/routes.js";
 
 type ProjectManager = ReturnType<typeof createProjectManager>;
 
@@ -47,14 +48,17 @@ interface ProjectFileOptions {
   executionRoots: ChatExecutionRootResolver | null;
   projects: Pick<ProjectManager, "listManagedProjects">;
   projectOperationAdmission?: LegacyProjectOperationAdmission;
+  /** The document service the kernel tools use; mounted as-is so both share one per-path lock. */
+  officeDocumentRoutes?: Hono;
 }
 
 /**
  * The write fence over the owner's managed projects, or undefined without a
- * collaboration database. Shared by the owner file routes and the app file
- * bridge, so both refuse the same writes. Paths are matched in the home's
- * real location, where folder projects record their roots, so a home
- * reached through a link is fenced like the unlinked home.
+ * collaboration database. Shared by the owner file routes, the app file
+ * bridge and the document service, so all three refuse the same writes.
+ * Paths are matched in the home's real location, where folder projects
+ * record their roots, so a home reached through a link is fenced like the
+ * unlinked home.
  */
 export function createGatewayProjectPathAdmission(
   options: Pick<ProjectFileOptions, "homePath" | "projects" | "projectOperationAdmission">,
@@ -102,6 +106,7 @@ export function registerGatewayProjectFileRoutes(app: Hono, options: ProjectFile
     } : {}),
   });
   registerProjectAgentContextRoute(app, { executionRoots });
+  registerOfficeDocumentRoutes(app, options.officeDocumentRoutes ?? { homePath });
 }
 
 export async function registerGatewayProjectDriveRoutes(

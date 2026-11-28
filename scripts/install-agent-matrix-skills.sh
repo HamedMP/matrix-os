@@ -35,6 +35,7 @@ skills=(
   jev-email-triage
   landing-design
   mac-verification
+  office-documents
   personal-daily-brief
   review-animations
   shadcn

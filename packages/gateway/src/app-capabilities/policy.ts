@@ -50,16 +50,13 @@ export async function readAppCapabilityGrant(homePath: string, app: string): Pro
   return (await readAppCapabilityPolicy(homePath))?.apps[app] ?? null;
 }
 
-/**
- * Owner policy is an explicit restriction/override. Without one, only an
- * owner-built first-party personal app inherits the owner's live integration
- * catalog. Imported/community apps continue to fail closed.
- */
-export async function readAppCapabilityAccess(homePath: string, app: string): Promise<AppCapabilityAccess | null> {
-  const policy = await readAppCapabilityPolicy(homePath);
+interface ResolvedApp { manifest: AppManifest; relativePath: string; imported: boolean }
+
+/** The single installed app the identity names, re-read from its manifest; null when absent or ambiguous. */
+async function resolveInstalledApp(homePath: string, app: string): Promise<ResolvedApp | null> {
   const manifests = await listUniqueAppManifests(join(homePath, "apps"));
   const candidates = manifests.filter(candidate => candidate.relativePath === app || candidate.slug === app);
-  const matches: Array<{ manifest: AppManifest; relativePath: string; imported: boolean }> = [];
+  const matches: ResolvedApp[] = [];
   for (const candidate of candidates) {
     // The index is bounded and briefly cached for discovery. Authorization
     // always re-reads the exact manifest so a trust downgrade takes effect
@@ -74,16 +71,39 @@ export async function readAppCapabilityAccess(homePath: string, app: string): Pr
       imported: hasImportedProvenance(document.value),
     });
   }
-  if (matches.length !== 1) {
+  return matches.length === 1 ? matches[0]! : null;
+}
+
+function isTrustedFirstParty(resolved: ResolvedApp): boolean {
+  const { manifest, imported } = resolved;
+  return !imported && manifest.listingTrust === "first_party" && manifest.scope === "personal" && !manifest.hidden;
+}
+
+/**
+ * True only for a visible, owner-local, first-party personal app that was not
+ * imported or forked. Imported/community apps with the same name fail closed.
+ */
+export async function isTrustedFirstPartyApp(homePath: string, app: string): Promise<boolean> {
+  const resolved = await resolveInstalledApp(homePath, app);
+  return resolved !== null && isTrustedFirstParty(resolved);
+}
+
+/**
+ * Owner policy is an explicit restriction/override. Without one, only an
+ * owner-built first-party personal app inherits the owner's live integration
+ * catalog. Imported/community apps continue to fail closed.
+ */
+export async function readAppCapabilityAccess(homePath: string, app: string): Promise<AppCapabilityAccess | null> {
+  const policy = await readAppCapabilityPolicy(homePath);
+  const resolved = await resolveInstalledApp(homePath, app);
+  if (!resolved) {
     const exactGrant = policy?.apps[app];
     return exactGrant ? { kind: "policy", grant: exactGrant } : null;
   }
-  const { manifest, relativePath, imported } = matches[0]!;
-  const aliases = [...new Set([relativePath, manifest.slug])];
+  const aliases = [...new Set([resolved.relativePath, resolved.manifest.slug])];
   const grants = aliases.flatMap(alias => policy?.apps[alias] ? [policy.apps[alias]] : []);
   if (grants.length > 0) return { kind: "policy", grant: intersectGrants(grants) };
-  if (imported) return null;
-  if (manifest.listingTrust !== "first_party" || manifest.scope !== "personal" || manifest.hidden) return null;
+  if (!isTrustedFirstParty(resolved)) return null;
   return { kind: "trusted-default" };
 }
 
