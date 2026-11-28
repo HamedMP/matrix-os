@@ -70,6 +70,7 @@ interface AppMenuTemplateOptions {
   reloadWindow?(): void;
   /** Opens or focuses the native Terminal window (macOS and Linux only). */
   openTerminalWindow?(): void;
+  openDevicePairing?(): void;
   /** Opens the licence texts of bundled third-party components, when this build ships any. */
   openThirdPartyNotices?(): void;
   /** Each registry action shows its first binding as its accelerator. */
@@ -94,6 +95,7 @@ export function createAppMenuTemplate({
   quitApp,
   reloadWindow,
   openTerminalWindow,
+  openDevicePairing,
   openThirdPartyNotices,
   shortcuts,
   runShortcut,
@@ -160,7 +162,10 @@ export function createAppMenuTemplate({
   const quitKeyFree = !Object.entries(shortcuts).some(([id, bindings]) =>
     (terminalWindow !== undefined || !id.startsWith("terminal-window.")) && bindings?.includes(quitKey));
   const quitAccelerator = quitKeyFree ? { accelerator: quitKey } : {};
-  const settingsItems = item("nav.settings", "Settings…");
+  const settingsItems: MenuItemConstructorOptions[] = [
+    ...item("nav.settings", "Settings…"),
+    ...(openDevicePairing ? [{ label: "Device Pairing…", click: openDevicePairing }] : []),
+  ];
   const closeAppItems = item("app.close", "Close Selected App");
   const newItems: MenuItemConstructorOptions[] = terminalWindow
     ? terminalWindowMenuItems(shortcuts, terminalWindow.command, terminalWindow.close, isMac)

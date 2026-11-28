@@ -51,6 +51,13 @@ function accelerators(template: MenuItemConstructorOptions[], platform: Platform
 }
 
 describe("createAppMenuTemplate", () => {
+  it.each(["darwin", "linux", "win32"] as const)("opens device pairing from the native menu on %s", (platform) => {
+    const openDevicePairing = vi.fn();
+    const template = createAppMenuTemplate(options({ platform, openDevicePairing }));
+    click(find(submenu(template, platform === "darwin" ? "Matrix OS" : "File"), "Device Pairing…"));
+    expect(openDevicePairing).toHaveBeenCalledOnce();
+  });
+
   it("preserves Electron's standard non-terminal Edit menu roles", () => {
     expect(createAppMenuTemplate(options()).some((item) => item.role === "editMenu")).toBe(true);
   });

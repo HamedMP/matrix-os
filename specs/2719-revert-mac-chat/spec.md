@@ -26,3 +26,17 @@ docs PR #367](https://github.com/FinnaAI/matrix-os-site/pull/367) has not landed
 and the published source under `content/docs/` has no Mac Chat guide or entry
 points. Close that candidate PR as part of the rollback. If any of its guidance
 lands before the rollback, remove it through a separate site PR.
+
+## Desktop Link enrollment after the rollback
+
+The ENG-495 follow-up keeps one device identity per owner and Matrix computer.
+An authenticated owner pairs through Desktop's Device Pairing menu. Gateway
+checks the device's signed challenge before recording its key and pairing
+revision. Disconnect revokes that revision. An existing device can reuse its
+stored key. Pairing alone grants no terminal access.
+
+Chat control of Herdr in [#3772](https://github.com/HamedMP/matrix-os/pull/3772)
+uses this identity on Desktop Link. Its integration checks must exercise device
+selection, a test in the selected terminal, the exit code in the originating
+Chat, and denial after revocation. The dedicated Mac Verification requests,
+activity UI, and support kit remain retired.

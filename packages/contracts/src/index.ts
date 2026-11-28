@@ -57,6 +57,7 @@ export * from "#billing-public";
 export * from "#agent-runtime-config";
 export * from "#agent-thread-contracts";
 export * from "#canonical-chat";
+export * from "#desktop-pairing";
 export * from "#canonical-chat-execution-controls";
 export * from "#chat-agents";
 export * from "#chat-agent-context";
