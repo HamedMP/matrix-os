@@ -117,6 +117,16 @@ jobs:
       # Preview-only name, so a production key id can never be inherited from a repository variable.
       MATRIX_COLLABORATION_TICKET_ACTIVE_KEY_ID: ${{ vars.PREVIEW_COLLABORATION_TICKET_ACTIVE_KEY_ID || 'collaboration-preview-v1' }}
       MATRIX_INTERNAL_CLERK_ORG_ID: ${{ vars.MATRIX_INTERNAL_CLERK_ORG_ID }}
+      # Operator switch for the metal substrate and free tier (spec 2691). It applies only to
+      # PREVIEW_METAL_PR_NUMBER; every other PR's revision deploys exactly as before.
+      PREVIEW_METAL_ENABLED: ${{ vars.PREVIEW_METAL_ENABLED || '0' }}
+      PREVIEW_METAL_PR_NUMBER: ${{ vars.PREVIEW_METAL_PR_NUMBER }}
+      PREVIEW_METAL_GOLDEN_VERSION: ${{ vars.PREVIEW_METAL_GOLDEN_VERSION }}
+      PREVIEW_FREE_TIER_MAX_RUNTIMES: ${{ vars.PREVIEW_FREE_TIER_MAX_RUNTIMES || '10' }}
+      PREVIEW_FREE_TIER_INVITE_REQUIRED: ${{ vars.PREVIEW_FREE_TIER_INVITE_REQUIRED || 'true' }}
+      PREVIEW_FREE_TIER_SLEEP_ENABLED: ${{ vars.PREVIEW_FREE_TIER_SLEEP_ENABLED || '1' }}
+      # Daily funded AI spend across all free owners on preview, in micro-USD ($20/day by default).
+      PREVIEW_FREE_TIER_DAILY_FUNDED_SPEND_MICROUSD: ${{ vars.PREVIEW_FREE_TIER_DAILY_FUNDED_SPEND_MICROUSD || '20000000' }}
       CONNECT_COLLABORATION_PREVIEW: ${{ github.event_name == 'workflow_dispatch' && inputs.connect_collaboration_preview && 'true' || 'false' }}
       CONNECT_SLACK_PILOT: ${{ github.event_name == 'workflow_dispatch' && inputs.connect_slack_pilot && 'true' || 'false' }}
       CONNECT_SHARE_PREVIEW: ${{ github.event_name == 'workflow_dispatch' && inputs.connect_share_preview && 'true' || 'false' }}
@@ -189,6 +199,48 @@ jobs:
             if ! [[ "$MATRIX_FUNDED_AI_RELAY_URL" =~ ^https://[^/?#]+/?$ ]]; then
               echo "MATRIX_FUNDED_AI_RELAY_URL must be an HTTPS origin when funded AI is enabled." >&2
               exit 1
+            fi
+          fi
+          case "${PREVIEW_METAL_ENABLED:-0}" in
+            0|1) ;;
+            *)
+              echo "PREVIEW_METAL_ENABLED must be 0 or 1." >&2
+              exit 1
+              ;;
+          esac
+          if [ "${PREVIEW_METAL_ENABLED:-0}" = "1" ]; then
+            if ! [[ "${PREVIEW_METAL_PR_NUMBER:-}" =~ ^[1-9][0-9]{0,8}$ ]]; then
+              echo "PREVIEW_METAL_PR_NUMBER must name the one preview PR that runs metal hosts." >&2
+              exit 1
+            fi
+            if [ "$PREVIEW_METAL_PR_NUMBER" = "${PR_NUMBER:-}" ]; then
+              # Same rule as the platform's metal config and hostd's create contract.
+              if ! [[ "${PREVIEW_METAL_GOLDEN_VERSION:-}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]]; then
+                echo "PREVIEW_METAL_GOLDEN_VERSION must be a golden disk version ([A-Za-z0-9][A-Za-z0-9._-]{0,63})." >&2
+                exit 1
+              fi
+              if ! [[ "${PREVIEW_FREE_TIER_MAX_RUNTIMES:-}" =~ ^[1-9][0-9]{0,3}$ ]]; then
+                echo "PREVIEW_FREE_TIER_MAX_RUNTIMES must be an integer from 1 to 9999." >&2
+                exit 1
+              fi
+              case "${PREVIEW_FREE_TIER_INVITE_REQUIRED:-}" in
+                true|false) ;;
+                *)
+                  echo "PREVIEW_FREE_TIER_INVITE_REQUIRED must be true or false." >&2
+                  exit 1
+                  ;;
+              esac
+              case "${PREVIEW_FREE_TIER_SLEEP_ENABLED:-}" in
+                0|1) ;;
+                *)
+                  echo "PREVIEW_FREE_TIER_SLEEP_ENABLED must be 0 or 1." >&2
+                  exit 1
+                  ;;
+              esac
+              if ! [[ "${PREVIEW_FREE_TIER_DAILY_FUNDED_SPEND_MICROUSD:-}" =~ ^[1-9][0-9]{0,11}$ ]]; then
+                echo "PREVIEW_FREE_TIER_DAILY_FUNDED_SPEND_MICROUSD must be a positive integer of at most 12 digits (micro-USD)." >&2
+                exit 1
+              fi
             fi
           fi
           if ! [[ "${MATRIX_COLLABORATION_TICKET_ACTIVE_KEY_ID:-}" =~ ^[A-Za-z0-9_.-]{1,80}$ ]]; then
@@ -528,6 +580,26 @@ jobs:
             funded_ai_env_bindings="${funded_ai_env_bindings}|MATRIX_FUNDED_AI_MODEL_PROBE_DAILY_LIMIT=${MATRIX_FUNDED_AI_MODEL_PROBE_DAILY_LIMIT}|MATRIX_FUNDED_AI_MODEL_PROBE_MINUTE_LIMIT=${MATRIX_FUNDED_AI_MODEL_PROBE_MINUTE_LIMIT}"
             funded_ai_secret_bindings=",AI_RELAY_CONTROL_TOKEN=ai-relay-control-token:latest,AI_FUNDED_CREDENTIAL_HASH_SECRET=ai-funded-credential-hash-secret:latest"
           fi
+          # Empty unless the operator switch targets this PR, so other PRs deploy unchanged.
+          metal_env_bindings=""
+          metal_secret_bindings=""
+          if [ "${PREVIEW_METAL_ENABLED:-0}" = "1" ] && [ -n "${PREVIEW_METAL_PR_NUMBER:-}" ] &&
+             [ "${PREVIEW_METAL_PR_NUMBER}" = "$PR_NUMBER" ]; then
+            # Rechecked here: these values are spliced into a '|'-delimited binding list.
+            if ! [[ "${PREVIEW_METAL_GOLDEN_VERSION:-}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]] ||
+               ! [[ "${PREVIEW_FREE_TIER_MAX_RUNTIMES:-}" =~ ^[1-9][0-9]{0,3}$ ]] ||
+               ! [[ "${PREVIEW_FREE_TIER_INVITE_REQUIRED:-}" =~ ^(true|false)$ ]] ||
+               ! [[ "${PREVIEW_FREE_TIER_SLEEP_ENABLED:-}" =~ ^[01]$ ]] ||
+               ! [[ "${PREVIEW_FREE_TIER_DAILY_FUNDED_SPEND_MICROUSD:-}" =~ ^[1-9][0-9]{0,11}$ ]]; then
+              echo "Preview metal settings are invalid; refusing to deploy." >&2
+              exit 1
+            fi
+            metal_env_bindings="|METAL_HOSTS_ENABLED=1|METAL_GOLDEN_VERSION=${PREVIEW_METAL_GOLDEN_VERSION}"
+            metal_env_bindings="${metal_env_bindings}|MATRIX_FREE_TIER_ENABLED=1|MATRIX_FREE_TIER_MAX_RUNTIMES=${PREVIEW_FREE_TIER_MAX_RUNTIMES}|MATRIX_FREE_TIER_INVITE_REQUIRED=${PREVIEW_FREE_TIER_INVITE_REQUIRED}"
+            metal_env_bindings="${metal_env_bindings}|MATRIX_FREE_TIER_SLEEP_ENABLED=${PREVIEW_FREE_TIER_SLEEP_ENABLED}|MATRIX_FREE_TIER_DAILY_FUNDED_SPEND_MICROUSD=${PREVIEW_FREE_TIER_DAILY_FUNDED_SPEND_MICROUSD}"
+            # hostd credentials are Secret Manager bindings only, never plain env vars.
+            metal_secret_bindings=",METAL_HOSTD_API_TOKEN=metal-hostd-api-token-preview:latest,METAL_HOSTD_INGRESS_TOKEN=metal-hostd-ingress-token-preview:latest,METAL_HOSTD_CA_PEM=metal-hostd-ca-pem-preview:latest"
+          fi
           PREVIEW_SPEECH_NOT_AFTER="$(date -u -d '+24 hours' '+%Y-%m-%dT%H:%M:%S.000Z')"
           deploy_preview() {
             local api_origin="$1"
@@ -558,8 +630,8 @@ jobs:
               --tag "pr-${PR_NUMBER}" \
               --no-traffic \
               --allow-unauthenticated \
-              --set-env-vars "^|^PLATFORM_RUNTIME_MODE=cloud_run|PLATFORM_PORT=8080|PLATFORM_PREVIEW=true|CUSTOMER_VPS_ENABLED=true|MATRIX_INTERNAL_CLERK_ORG_ID=${MATRIX_INTERNAL_CLERK_ORG_ID:-}|CUSTOMER_VPS_IMAGE_VERSION=dev|CUSTOMER_VPS_CLOUD_INIT_PATH=distro/customer-vps/cloud-init.yaml|AUTH_SHELL_HOST=127.0.0.1|AUTH_SHELL_PORT=3200|MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED=false|MATRIX_STRIPE_BILLING_ENABLED=true|MATRIX_CARD_TRIALS_ENABLED=${MATRIX_CARD_TRIALS_ENABLED}|MATRIX_CARD_TRIAL_DAYS=${MATRIX_CARD_TRIAL_DAYS}|MATRIX_STARTER_TRIAL_DAYS=${MATRIX_STARTER_TRIAL_DAYS}|PLATFORM_PUBLIC_URL=${PREVIEW_PUBLIC_URL}|MATRIX_API_ORIGIN=${api_origin}|MATRIX_APP_URL=${PREVIEW_PUBLIC_URL}|MATRIX_APP_ORIGIN=${PREVIEW_PUBLIC_URL}|MATRIX_APP_DOMAIN_HOSTS=${app_domain_hosts}|CUSTOMER_VPS_TLS_VERIFY=false|CUSTOM_MCP_ENABLED=${CUSTOM_MCP_ENABLED}|MCP_OAUTH_CALLBACK_URL=${api_origin}/api/mcp-servers/oauth/callback|MATRIX_PLATFORM_SPEECH_RUNTIME_ENABLED=true|PLATFORM_SPEECH_ENABLED=true|PLATFORM_SPEECH_PROVIDER=openai|PLATFORM_SPEECH_MODEL=gpt-4o-mini-transcribe|PLATFORM_SPEECH_POLICY_REVISION=preview-speech-v1|PLATFORM_SPEECH_PREVIEW_NO_CHARGE=true|PLATFORM_SPEECH_PREVIEW_MAX_OPERATIONS_PER_RUNTIME=25|PLATFORM_SPEECH_PREVIEW_NOT_AFTER=${PREVIEW_SPEECH_NOT_AFTER}|PLATFORM_SPEECH_OWNER_AUDIO_ENABLED=false${collaboration_env_bindings}${funded_ai_env_bindings}${SLACK_PREVIEW_ENV_BINDINGS:-}" \
-              --set-secrets "PLATFORM_DATABASE_URL=${SLACK_PREVIEW_DATABASE_SECRET_BINDING:-platform-database-url-staging:latest},PLATFORM_SECRET=${platform_secret_binding},MATRIX_SUPPORT_SSH_PUBLIC_KEY=matrix-support-ssh-public-key-preview:latest,GOLDEN_SNAPSHOT_OPERATOR_SECRET=golden-snapshot-operator-secret-preview:latest,PLATFORM_JWT_SECRET=platform-preview-jwt-secret:latest,EDGE_ROUTER_SECRET=edge-router-preview-secret:latest,CLERK_SECRET_KEY=clerk-secret-key:latest,NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=next-public-clerk-publishable-key:latest,R2_BUNDLES_ACCOUNT_ID=r2-bundles-account-id:latest,R2_BUNDLES_BUCKET=r2-bundles-bucket:latest,R2_BUNDLES_ENDPOINT=r2-bundles-endpoint:latest,R2_BUNDLES_ACCESS_KEY_ID=r2-bundles-access-key-id:latest,R2_BUNDLES_SECRET_ACCESS_KEY=r2-bundles-secret-access-key:latest,STRIPE_SECRET_KEY=stripe-secret-key-test:latest,STRIPE_WEBHOOK_SECRET=stripe-webhook-secret-test:latest,STRIPE_PRICE_MATRIX_STARTER_MONTHLY=stripe-price-matrix-starter-monthly-test:latest,STRIPE_PRICE_MATRIX_STARTER_ANNUAL=stripe-price-matrix-starter-annual-test:latest,STRIPE_PRICE_MATRIX_BUILDER_MONTHLY=stripe-price-matrix-builder-monthly-test:latest,STRIPE_PRICE_MATRIX_BUILDER_ANNUAL=stripe-price-matrix-builder-annual-test:latest,STRIPE_PRICE_MATRIX_MAX_MONTHLY=stripe-price-matrix-max-monthly-test:latest,STRIPE_PRICE_MATRIX_MAX_ANNUAL=stripe-price-matrix-max-annual-test:latest,STRIPE_LEGACY_PRICE_CATALOG_JSON=stripe-legacy-price-catalog-json-test:latest,PLATFORM_SPEECH_OPENAI_API_KEY=platform-speech-openai-api-key-preview:latest,PLATFORM_SPEECH_SECRET=platform-speech-secret-preview:latest,MATRIX_COLLABORATION_TICKET_KEYS=collaboration-ticket-keys-preview:latest${custom_mcp_secret_bindings}${funded_ai_secret_bindings}${SLACK_PREVIEW_SECRET_BINDINGS:-}" \
+              --set-env-vars "^|^PLATFORM_RUNTIME_MODE=cloud_run|PLATFORM_PORT=8080|PLATFORM_PREVIEW=true|CUSTOMER_VPS_ENABLED=true|MATRIX_INTERNAL_CLERK_ORG_ID=${MATRIX_INTERNAL_CLERK_ORG_ID:-}|CUSTOMER_VPS_IMAGE_VERSION=dev|CUSTOMER_VPS_CLOUD_INIT_PATH=distro/customer-vps/cloud-init.yaml|AUTH_SHELL_HOST=127.0.0.1|AUTH_SHELL_PORT=3200|MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED=false|MATRIX_STRIPE_BILLING_ENABLED=true|MATRIX_CARD_TRIALS_ENABLED=${MATRIX_CARD_TRIALS_ENABLED}|MATRIX_CARD_TRIAL_DAYS=${MATRIX_CARD_TRIAL_DAYS}|MATRIX_STARTER_TRIAL_DAYS=${MATRIX_STARTER_TRIAL_DAYS}|PLATFORM_PUBLIC_URL=${PREVIEW_PUBLIC_URL}|MATRIX_API_ORIGIN=${api_origin}|MATRIX_APP_URL=${PREVIEW_PUBLIC_URL}|MATRIX_APP_ORIGIN=${PREVIEW_PUBLIC_URL}|MATRIX_APP_DOMAIN_HOSTS=${app_domain_hosts}|CUSTOMER_VPS_TLS_VERIFY=false|CUSTOM_MCP_ENABLED=${CUSTOM_MCP_ENABLED}|MCP_OAUTH_CALLBACK_URL=${api_origin}/api/mcp-servers/oauth/callback|MATRIX_PLATFORM_SPEECH_RUNTIME_ENABLED=true|PLATFORM_SPEECH_ENABLED=true|PLATFORM_SPEECH_PROVIDER=openai|PLATFORM_SPEECH_MODEL=gpt-4o-mini-transcribe|PLATFORM_SPEECH_POLICY_REVISION=preview-speech-v1|PLATFORM_SPEECH_PREVIEW_NO_CHARGE=true|PLATFORM_SPEECH_PREVIEW_MAX_OPERATIONS_PER_RUNTIME=25|PLATFORM_SPEECH_PREVIEW_NOT_AFTER=${PREVIEW_SPEECH_NOT_AFTER}|PLATFORM_SPEECH_OWNER_AUDIO_ENABLED=false${collaboration_env_bindings}${funded_ai_env_bindings}${metal_env_bindings}${SLACK_PREVIEW_ENV_BINDINGS:-}" \
+              --set-secrets "PLATFORM_DATABASE_URL=${SLACK_PREVIEW_DATABASE_SECRET_BINDING:-platform-database-url-staging:latest},PLATFORM_SECRET=${platform_secret_binding},MATRIX_SUPPORT_SSH_PUBLIC_KEY=matrix-support-ssh-public-key-preview:latest,GOLDEN_SNAPSHOT_OPERATOR_SECRET=golden-snapshot-operator-secret-preview:latest,PLATFORM_JWT_SECRET=platform-preview-jwt-secret:latest,EDGE_ROUTER_SECRET=edge-router-preview-secret:latest,CLERK_SECRET_KEY=clerk-secret-key:latest,NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=next-public-clerk-publishable-key:latest,R2_BUNDLES_ACCOUNT_ID=r2-bundles-account-id:latest,R2_BUNDLES_BUCKET=r2-bundles-bucket:latest,R2_BUNDLES_ENDPOINT=r2-bundles-endpoint:latest,R2_BUNDLES_ACCESS_KEY_ID=r2-bundles-access-key-id:latest,R2_BUNDLES_SECRET_ACCESS_KEY=r2-bundles-secret-access-key:latest,STRIPE_SECRET_KEY=stripe-secret-key-test:latest,STRIPE_WEBHOOK_SECRET=stripe-webhook-secret-test:latest,STRIPE_PRICE_MATRIX_STARTER_MONTHLY=stripe-price-matrix-starter-monthly-test:latest,STRIPE_PRICE_MATRIX_STARTER_ANNUAL=stripe-price-matrix-starter-annual-test:latest,STRIPE_PRICE_MATRIX_BUILDER_MONTHLY=stripe-price-matrix-builder-monthly-test:latest,STRIPE_PRICE_MATRIX_BUILDER_ANNUAL=stripe-price-matrix-builder-annual-test:latest,STRIPE_PRICE_MATRIX_MAX_MONTHLY=stripe-price-matrix-max-monthly-test:latest,STRIPE_PRICE_MATRIX_MAX_ANNUAL=stripe-price-matrix-max-annual-test:latest,STRIPE_LEGACY_PRICE_CATALOG_JSON=stripe-legacy-price-catalog-json-test:latest,PLATFORM_SPEECH_OPENAI_API_KEY=platform-speech-openai-api-key-preview:latest,PLATFORM_SPEECH_SECRET=platform-speech-secret-preview:latest,MATRIX_COLLABORATION_TICKET_KEYS=collaboration-ticket-keys-preview:latest${custom_mcp_secret_bindings}${funded_ai_secret_bindings}${metal_secret_bindings}${SLACK_PREVIEW_SECRET_BINDINGS:-}" \
               --cpu 1 --memory 1Gi --concurrency 10 --timeout 300 --min-instances 0 --max-instances 2 \
               --quiet
           }
@@ -657,6 +729,67 @@ jobs:
           echo "PREVIEW_URL=$url" >> "$GITHUB_ENV"
           echo "PREVIEW_PUBLIC_URL=$PREVIEW_PUBLIC_URL" >> "$GITHUB_ENV"
           echo "PREVIEW_API_ORIGIN=$PREVIEW_API_ORIGIN" >> "$GITHUB_ENV"
+          echo "PREVIEW_REVISION=$revision" >> "$GITHUB_ENV"
+          echo "PREVIEW_IMAGE_DIGEST=$expected_digest_image" >> "$GITHUB_ENV"
+
+      # Spec 2691 metal: the sleeper, stale-provisioning reaper and VM teardown
+      # drainer run only in a background-worker process, and preview web
+      # revisions run with workers off. When this revision enables metal and the
+      # free-tier sleeper, run a private singleton worker for this PR
+      # (PLATFORM_ROLE=worker, PLATFORM_WORKER_SCOPE=metal: only the metal passes,
+      # /health only) from the exact same revision configuration. A redeploy
+      # without them removes this PR's worker.
+      - name: Deploy preview metal maintenance worker
+        if: steps.config.outputs.configured == 'true'
+        run: |
+          set -euo pipefail
+          worker_service="${CLOUD_RUN_PREVIEW_SERVICE}-worker-pr${PR_NUMBER}"
+          worker_exists() {
+            # Errors other than "not found" fail the step: never leak a worker silently.
+            [ -n "$(gcloud run services list --project "$GCP_PROJECT_ID" --region "$GCP_REGION" \
+              --filter="metadata.name=${worker_service}" --format='value(metadata.name)')" ]
+          }
+          revision_json="$(gcloud run revisions describe "$PREVIEW_REVISION" \
+            --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json)"
+          env_enabled() {
+            jq -e --arg name "$1" '[.spec.containers[0].env[]? | select(.name == $name) | .value] | any(. == "1" or . == "true")' \
+              <<< "$revision_json" >/dev/null
+          }
+          if ! env_enabled METAL_HOSTS_ENABLED || ! env_enabled MATRIX_FREE_TIER_SLEEP_ENABLED; then
+            echo "Metal or the free-tier sleeper is off on this preview revision; no maintenance worker."
+            if worker_exists; then
+              gcloud run services delete "$worker_service" \
+                --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet
+              echo "Deleted this PR's previous preview metal worker."
+            fi
+            exit 0
+          fi
+          worker_manifest="$(mktemp --suffix=.json)"
+          trap 'rm -f "$worker_manifest"' EXIT
+          jq --arg image "$PREVIEW_IMAGE_DIGEST" '.spec.containers[0].image = $image' <<< "$revision_json" \
+            | node scripts/render-platform-worker-service.mjs "$worker_service" --role-worker --metal-scope \
+            | jq --arg pr "$PR_NUMBER" '.metadata.labels = ((.metadata.labels // {}) + {"matrix-preview-pr": $pr})' \
+            > "$worker_manifest"
+          if worker_exists; then
+            existing_iam="$(gcloud run services get-iam-policy "$worker_service" \
+              --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json)"
+            if jq -e 'any(.bindings[]?; any(.members[]?; . == "allUsers" or . == "allAuthenticatedUsers"))' \
+              <<< "$existing_iam" >/dev/null; then
+              echo "Preview worker service unexpectedly permits public invocation." >&2
+              exit 1
+            fi
+          fi
+          gcloud run services replace "$worker_manifest" \
+            --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet >/dev/null
+          worker_json="$(gcloud run services describe "$worker_service" \
+            --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json)"
+          if [ "$(jq -r '.metadata.annotations["run.googleapis.com/ingress"] // empty' <<< "$worker_json")" != "internal" ] || \
+             [ "$(jq -r '.metadata.annotations["run.googleapis.com/minScale"] // empty' <<< "$worker_json")" != "1" ] || \
+             [ "$(jq -r '.metadata.annotations["run.googleapis.com/maxScale"] // empty' <<< "$worker_json")" != "1" ] || \
+             [ "$(jq -r 'any(.status.conditions[]?; .type == "Ready" and .status == "True")' <<< "$worker_json")" != "true" ]; then
+            echo "Preview metal worker is not ready as a private singleton." >&2
+            exit 1
+          fi
 
       - name: Comment preview URL on PR
         if: steps.config.outputs.configured == 'true' && github.event_name == 'pull_request'
@@ -717,6 +850,15 @@ jobs:
         if: steps.config.outputs.configured == 'true'
         run: |
           set -euo pipefail
+          # This PR's preview metal worker goes with its revisions. Listing errors
+          # fail the step instead of leaking an always-on worker.
+          worker_service="${CLOUD_RUN_PREVIEW_SERVICE}-worker-pr${PR_NUMBER}"
+          if [ -n "$(gcloud run services list --project "$GCP_PROJECT_ID" --region "$GCP_REGION" \
+            --filter="metadata.name=${worker_service}" --format='value(metadata.name)')" ]; then
+            gcloud run services delete "$worker_service" \
+              --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet
+            echo "Deleted preview metal worker for PR ${PR_NUMBER}"
+          fi
           revisions="$(gcloud run services describe "$CLOUD_RUN_PREVIEW_SERVICE" \
             --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format json |
             jq -r --arg tag "pr-${PR_NUMBER}" \
@@ -838,6 +980,15 @@ jobs:
       CUSTOM_MCP_ENABLED: ${{ inputs.custom_mcp }}
       CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
       EXPECTED_HEAD_SHA: ${{ needs.select-share-preview.outputs.head_sha }}
+      # Same metal switch as the preview job, so this redeploy converges to the same metal state.
+      PREVIEW_METAL_ENABLED: ${{ vars.PREVIEW_METAL_ENABLED || '0' }}
+      PREVIEW_METAL_PR_NUMBER: ${{ vars.PREVIEW_METAL_PR_NUMBER }}
+      PREVIEW_METAL_GOLDEN_VERSION: ${{ vars.PREVIEW_METAL_GOLDEN_VERSION }}
+      PREVIEW_FREE_TIER_MAX_RUNTIMES: ${{ vars.PREVIEW_FREE_TIER_MAX_RUNTIMES || '10' }}
+      PREVIEW_FREE_TIER_INVITE_REQUIRED: ${{ vars.PREVIEW_FREE_TIER_INVITE_REQUIRED || 'true' }}
+      PREVIEW_FREE_TIER_SLEEP_ENABLED: ${{ vars.PREVIEW_FREE_TIER_SLEEP_ENABLED || '1' }}
+      # Daily funded AI spend across all free owners on preview, in micro-USD ($20/day by default).
+      PREVIEW_FREE_TIER_DAILY_FUNDED_SPEND_MICROUSD: ${{ vars.PREVIEW_FREE_TIER_DAILY_FUNDED_SPEND_MICROUSD || '20000000' }}
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v6
@@ -993,14 +1144,50 @@ jobs:
           fi
           # Match the existing platform VPS-origin TLS policy (tracked in #410).
           # This applies only to the dedicated Preview service and registered VPS addresses.
-          custom_mcp_args=()
+          secret_updates=""
           if [ "$CUSTOM_MCP_ENABLED" = true ]; then
-            custom_mcp_args+=(--update-secrets "MCP_CREDENTIAL_ENCRYPTION_KEY=mcp-credential-encryption-key-preview:1")
+            secret_updates="MCP_CREDENTIAL_ENCRYPTION_KEY=mcp-credential-encryption-key-preview:1"
+          fi
+          # --update-* merges onto the service template, which carries whichever revision deployed
+          # last. Re-apply metal settings for the selected PR and strip them from every other PR.
+          metal_env_updates=""
+          metal_args=()
+          case "${PREVIEW_METAL_ENABLED:-0}" in
+            0|1) ;;
+            *)
+              echo "PREVIEW_METAL_ENABLED must be 0 or 1; refusing to deploy." >&2
+              exit 1
+              ;;
+          esac
+          if [ "${PREVIEW_METAL_ENABLED:-0}" = "1" ] && ! [[ "${PREVIEW_METAL_PR_NUMBER:-}" =~ ^[1-9][0-9]{0,8}$ ]]; then
+            echo "PREVIEW_METAL_PR_NUMBER is invalid; refusing to deploy." >&2
+            exit 1
+          fi
+          if [ "${PREVIEW_METAL_ENABLED:-0}" = "1" ] && [ "$PREVIEW_METAL_PR_NUMBER" = "$PR_NUMBER" ]; then
+            if ! [[ "${PREVIEW_METAL_GOLDEN_VERSION:-}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]] ||
+               ! [[ "${PREVIEW_FREE_TIER_MAX_RUNTIMES:-}" =~ ^[1-9][0-9]{0,3}$ ]] ||
+               ! [[ "${PREVIEW_FREE_TIER_INVITE_REQUIRED:-}" =~ ^(true|false)$ ]] ||
+               ! [[ "${PREVIEW_FREE_TIER_SLEEP_ENABLED:-}" =~ ^[01]$ ]] ||
+               ! [[ "${PREVIEW_FREE_TIER_DAILY_FUNDED_SPEND_MICROUSD:-}" =~ ^[1-9][0-9]{0,11}$ ]]; then
+              echo "Preview metal settings are invalid; refusing to deploy." >&2
+              exit 1
+            fi
+            metal_env_updates="@METAL_HOSTS_ENABLED=1@METAL_GOLDEN_VERSION=${PREVIEW_METAL_GOLDEN_VERSION}"
+            metal_env_updates="${metal_env_updates}@MATRIX_FREE_TIER_ENABLED=1@MATRIX_FREE_TIER_MAX_RUNTIMES=${PREVIEW_FREE_TIER_MAX_RUNTIMES}@MATRIX_FREE_TIER_INVITE_REQUIRED=${PREVIEW_FREE_TIER_INVITE_REQUIRED}"
+            metal_env_updates="${metal_env_updates}@MATRIX_FREE_TIER_SLEEP_ENABLED=${PREVIEW_FREE_TIER_SLEEP_ENABLED}@MATRIX_FREE_TIER_DAILY_FUNDED_SPEND_MICROUSD=${PREVIEW_FREE_TIER_DAILY_FUNDED_SPEND_MICROUSD}"
+            secret_updates="${secret_updates:+${secret_updates},}METAL_HOSTD_API_TOKEN=metal-hostd-api-token-preview:latest,METAL_HOSTD_INGRESS_TOKEN=metal-hostd-ingress-token-preview:latest,METAL_HOSTD_CA_PEM=metal-hostd-ca-pem-preview:latest"
+          else
+            metal_args+=(--remove-env-vars "METAL_HOSTS_ENABLED,METAL_GOLDEN_VERSION,MATRIX_FREE_TIER_ENABLED,MATRIX_FREE_TIER_MAX_RUNTIMES,MATRIX_FREE_TIER_INVITE_REQUIRED,MATRIX_FREE_TIER_SLEEP_ENABLED,MATRIX_FREE_TIER_DAILY_FUNDED_SPEND_MICROUSD")
+            metal_args+=(--remove-secrets "METAL_HOSTD_API_TOKEN,METAL_HOSTD_INGRESS_TOKEN,METAL_HOSTD_CA_PEM")
+          fi
+          secret_args=()
+          if [ -n "$secret_updates" ]; then
+            secret_args+=(--update-secrets "$secret_updates")
           fi
           gcloud run deploy "$CLOUD_RUN_PREVIEW_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" \
             --image "$image" --tag "pr-$PR_NUMBER" --no-traffic \
-            --update-env-vars "^@^MATRIX_APP_ORIGIN=${public_origin}@MATRIX_APP_DOMAIN_HOSTS=${public_origin#https://},${url#https://},${service_base_url#https://}@CUSTOMER_VPS_TLS_VERIFY=false@CUSTOM_MCP_ENABLED=${CUSTOM_MCP_ENABLED}@MCP_OAUTH_CALLBACK_URL=${url}/api/mcp-servers/oauth/callback" \
-            "${custom_mcp_args[@]}" --quiet
+            --update-env-vars "^@^MATRIX_APP_ORIGIN=${public_origin}@MATRIX_APP_DOMAIN_HOSTS=${public_origin#https://},${url#https://},${service_base_url#https://}@CUSTOMER_VPS_TLS_VERIFY=false@CUSTOM_MCP_ENABLED=${CUSTOM_MCP_ENABLED}@MCP_OAUTH_CALLBACK_URL=${url}/api/mcp-servers/oauth/callback${metal_env_updates}" \
+            "${secret_args[@]}" "${metal_args[@]}" --quiet
           if ! [[ "$PREVIEW_CLERK_USER_ID" =~ ^user_[A-Za-z0-9]+$ ]]; then
             echo "PREVIEW_CLERK_USER_ID is required for preview speech authorization." >&2
             exit 1
