@@ -53,6 +53,18 @@ describe('private managed route control resolver', () => {
     expect(result.descriptor.credential.fingerprint).toBe(hash(key)); expect(result.descriptor.relay.endpoint).toBe(f.control.reviews[0]!.relay.endpoint);
     expect(JSON.stringify(result)).not.toContain(key); expect(JSON.stringify(result)).not.toContain(f.config.relayControlToken); expect(f.fetchFn).not.toHaveBeenCalled();
   });
+  it('logs only a fixed coarse class on unexpected body-reader failure and keeps expected refusal quiet', async () => {
+    const f = fixture(); const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const failure = new Error('synthetic private provider content'); failure.name = 'private-secret-name';
+    const response = await f.service.app.request(MANAGED_GOOGLE_ROUTE_CONTROL_PATH, { method: 'POST', headers: {
+      authorization: `Bearer ${f.config.relayControlToken}`, 'content-type': 'application/json', 'content-length': '100' },
+      body: new ReadableStream({ pull(controller) { controller.error(failure); } }), duplex: 'half' } as RequestInit);
+    expect(response.status).toBe(503); expect(await response.json()).toEqual({ error: 'Managed route unavailable' });
+    expect(warning).toHaveBeenCalledWith('[managed-route-control] Unexpected request failure', { errorClass: 'Error' });
+    expect(warning).toHaveBeenCalledWith('[managed-route-control] Body cleanup:', 'Error');
+    expect(JSON.stringify(warning.mock.calls)).not.toContain('private'); warning.mockClear();
+    expect((await f.request(undefined, { body: 'invalid json' })).status).toBe(400); expect(warning).not.toHaveBeenCalled();
+  });
   it('ignores forwarded/Host authority and refuses body attempts to select endpoints or credentials', async () => {
     const f = fixture(); const response = await f.request(undefined, { path: 'https://forged-host.example.invalid' + MANAGED_GOOGLE_ROUTE_CONTROL_PATH,
       headers: { host: 'forged-host.example.invalid', 'x-forwarded-host': 'forged-proxy.example.invalid', 'x-forwarded-proto': 'http' } });

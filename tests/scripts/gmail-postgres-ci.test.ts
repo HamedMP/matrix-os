@@ -10,7 +10,7 @@ describe('Gmail PostgreSQL CI qualification', () => {
     const files = gmailPostgresFiles(process.cwd());
     for (const file of ['tests/gateway/google-data/provenance/model-history-read-scope.test.ts',
       'tests/gateway/google-data/provenance/model-history-reader-lifecycle.test.ts',
-      'tests/gateway/google-broker-collection-startup.test.ts',
+      'tests/platform/ai-funded-qualified-proxy-composition.test.ts',
       'tests/gateway/google-runtime-authority.test.ts',
       'tests/gateway/google-runtime-authority-pins.test.ts']) expect(files).toContain(file);
     expect(new Set(files).size).toBe(files.length);
