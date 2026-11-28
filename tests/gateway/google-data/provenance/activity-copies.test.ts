@@ -71,12 +71,19 @@ describe('registered activity copies', () => {
   it('retains active prompts and keeps accepting activity past a full window', async () => {
     await repository.markRunRunning(owner, { chatId: key.chatId, runId: key.runId, startedAt: new Date().toISOString() });
     await mark();
+    const binding = { chatId: key.chatId, runId: key.runId, sessionId: 'term_existing', sessionCreatedAt: new Date().toISOString() };
+    expect(await repository.bindTerminalSession(owner, binding)).toBe(true);
     for (let batch = 0; batch < 5; batch++) {
-      await repository.appendRunActivities(owner, key.chatId, key.runId, Array.from({ length: 100 }, (_, index) => {
+      await repository.appendRunActivities(owner, key.chatId, key.runId, Array.from({ length: batch === 4 ? 99 : 100 }, (_, index) => {
         const n = batch * 100 + index;
         return { ...activity(`activity_${n}`), status: n === 0 ? 'running' as const : 'completed' as const };
       }));
     }
+    const events = () => repository.kysely.selectFrom('chat_run_events').select('id').where('run_id', '=', key.runId).orderBy('id').execute();
+    const before = await events();
+    expect(before).toHaveLength(500);
+    expect(await repository.bindTerminalSession(owner, binding)).toBe(false);
+    expect(await events()).toEqual(before);
     await repository.appendRunActivities(owner, key.chatId, key.runId, [{ id: 'activity_prompt', chatId: key.chatId, runId: key.runId,
       occurredAt: new Date().toISOString(), type: 'input.requested', requestId: 'request_choice', title: 'Choose next step' }]);
     const rows = await repository.kysely.selectFrom('chat_run_events').select(['id']).where('run_id', '=', key.runId).execute();

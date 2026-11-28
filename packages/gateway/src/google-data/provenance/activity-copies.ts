@@ -66,9 +66,9 @@ export function createGoogleActivityCopyAdapter(db: Kysely<ChatDatabase>, option
         live(); return context;
       };
       await inspect(); await sql`SELECT pg_advisory_xact_lock(551035503)`.execute(current);
-      const discover = async () => {
-        const rows = await current.selectFrom('chat_run_events').select('id').where('chat_id', '=', key.chatId).where('run_id', '=', key.runId).orderBy('id').limit(501).execute();
-        if (rows.length > 500) deny(); live(); return rows.map(row => row.id);
+      const discover = async (maximum = 500) => {
+        const rows = await current.selectFrom('chat_run_events').select('id').where('chat_id', '=', key.chatId).where('run_id', '=', key.runId).orderBy('id').limit(maximum + 1).execute();
+        if (rows.length > maximum) deny(); live(); return rows.map(row => row.id);
       };
       const observed = await discover();
       const ids = [...new Set([...observed, ...requested])].sort(); // Bounded to 600 for this transaction only.
@@ -95,12 +95,16 @@ export function createGoogleActivityCopyAdapter(db: Kysely<ChatDatabase>, option
           || copy.origins.some(origin => !context.googleContext.sources.some(source => originKey(origin) === originKey({
             connectionId: source.originId, profileId: source.profileId, profileRevision: source.profileRevision, purpose: source.purposeId })))) deny();
       }
-      // Keep the bounded activity window moving without dropping pending owner
-      // interactions or live tool progress. Copy metadata remains for normal
-      // purge to confirm the missing bytes; pruning is not a fabricated receipt.
-      const overflow = Math.max(0, before.length + requested.filter(id => !observed.includes(id)).length - 500);
+      const result = await content(current);
+      live();
+      // A caller can propose a new ID for an idempotent write. Make room only
+      // for rows inserted by the callback in this transaction.
+      const written = ids.length > 500 ? await discover(ids.length) : observed;
+      const overflow = Math.max(0, written.length - 500);
       if (overflow) {
-        const retired = before.filter(row => !requested.includes(row.id) && row.activity.type === 'agent.activity'
+        // Retain pending owner interactions, live progress and the newly written IDs.
+        // The normal purge still verifies missing content against its copy metadata.
+        const retired = before.filter(row => written.includes(row.id) && !requested.includes(row.id) && row.activity.type === 'agent.activity'
           && ['completed', 'failed', 'cancelled'].includes(row.activity.status))
           .sort((a, b) => a.run_seq - b.run_seq || a.id.localeCompare(b.id)).slice(0, overflow);
         if (retired.length !== overflow) deny();
@@ -109,7 +113,7 @@ export function createGoogleActivityCopyAdapter(db: Kysely<ChatDatabase>, option
         if (deleted.length !== retired.length) deny();
         live();
       }
-      const result = await content(current); const after = await payloads(current, key); const fresh = await inspect();
+      const after = await payloads(current, key); const fresh = await inspect();
       if (after.some(row => !ids.includes(row.id) || row.redacted_hash)) deny();
       if (fresh.classification === 'google') for (const row of after) {
         const copy = copies.get(row.id); const origins = fresh.googleContext.sources.map(source => ({ connectionId: source.originId,
