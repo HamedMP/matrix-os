@@ -1,6 +1,7 @@
-import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react-native";
+import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react-native";
 import * as Clipboard from "expo-clipboard";
 import * as Haptics from "expo-haptics";
+import { AppState } from "react-native";
 
 import * as mockContextMenu from "./context-menu-test-utils";
 import { IconTile } from "../components/ui/IconTile";
@@ -20,6 +21,41 @@ describe("SidePanel chats", () => {
   });
 
   describe("rows", () => {
+    it("catches dates up when returning from the background", () => {
+      jest.useFakeTimers();
+      jest.setSystemTime(NOW);
+      const listen = jest.spyOn(AppState, "addEventListener");
+      try {
+        renderPanel({ chats: [chatRecord({ id: "resume", title: "Resume chat", activityAt: new Date(NOW.getTime() - 5 * 60_000).toISOString() })], now: undefined });
+        const change = listen.mock.calls.find(([event]) => event === "change")![1];
+        expect(within(screen.getByTestId("side-panel-chat-resume")).getByText("5m")).toBeTruthy();
+        act(() => change("background"));
+        jest.setSystemTime(new Date(NOW.getTime() + 60 * 60_000));
+        act(() => change("active"));
+        expect(within(screen.getByTestId("side-panel-chat-resume")).getByText("1h")).toBeTruthy();
+      } finally {
+        cleanup();
+        jest.useRealTimers();
+      }
+    });
+
+    it("keeps the date visible for a pinned Chat and updates it while the panel stays open", () => {
+      jest.useFakeTimers();
+      jest.setSystemTime(NOW);
+      try {
+        const pinned = chatRecord({ id: "pinned", title: "Pinned chat", activityAt: new Date(NOW.getTime() - 5 * 60_000).toISOString() });
+        pinned.chat.userState = { pinned: true, muted: false, readThroughSeq: 0 };
+        renderPanel({ chats: [pinned], now: undefined });
+        const row = screen.getByTestId("side-panel-chat-pinned");
+        expect(within(row).getByText("5m")).toBeTruthy();
+        act(() => jest.advanceTimersByTime(60_000));
+        expect(within(row).getByText("6m")).toBeTruthy();
+      } finally {
+        cleanup();
+        jest.useRealTimers();
+      }
+    });
+
     it("shows the title, the last message and when the chat was last active", () => {
       renderPanel();
 

@@ -3,6 +3,7 @@ import { FlatList, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import type { CanonicalChatRecord } from "@matrix-os/contracts";
+import { useMinuteClock } from "@/lib/use-minute-clock";
 
 import { SearchField } from "@/components/shell/Controls";
 import {
@@ -35,7 +36,7 @@ export interface SidePanelProps {
   searchFailed?: boolean;
   loadingMore?: boolean;
   loadMoreFailed?: boolean;
-  /** The time rows are dated against; the time of the render when omitted. */
+  /** Optional fixed time for previews; otherwise refreshed each minute. */
   now?: Date;
   /** Called with the trimmed text once typing has stopped, and at once when the field is emptied. */
   onSearchQueryChange: (query: string) => void;
@@ -72,6 +73,8 @@ export function SidePanel({
   onOpenProjects,
   onOpenShared,
 }: SidePanelProps) {
+  const nowMs = useMinuteClock(now === undefined);
+  const rowNow = useMemo(() => now ?? new Date(nowMs), [now, nowMs]);
   const insets = useSafeAreaInsets();
   const { theme } = useUnistyles();
   const [searchText, setSearchText] = useState("");
@@ -157,7 +160,7 @@ export function SidePanel({
       keyboardDismissMode="on-drag"
       data={rows}
       keyExtractor={(record) => record.chat.id}
-      renderItem={({ item }) => <SidePanelChatRow record={item} now={now} onSelect={onSelectChat} />}
+      renderItem={({ item }) => <SidePanelChatRow record={item} now={rowNow} onSelect={onSelectChat} />}
       ItemSeparatorComponent={RowGap}
       onEndReached={searchShown || loadMoreFailed ? undefined : onLoadMore}
       onEndReachedThreshold={0.5}
@@ -200,7 +203,7 @@ export function SidePanel({
                 />
               </View>
               {groups.needsYou.map((record) => (
-                <SidePanelChatRow key={record.chat.id} record={record} now={now} onSelect={onSelectChat} />
+                <SidePanelChatRow key={record.chat.id} record={record} now={rowNow} onSelect={onSelectChat} />
               ))}
             </View>
           ) : null}

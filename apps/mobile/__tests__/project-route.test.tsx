@@ -128,6 +128,13 @@ describe("project route", () => {
   });
 
   describe("chats", () => {
+    it("updates Chat dates without requiring a message or a refresh", async () => {
+      await renderPortfolio();
+      expect(within(screen.getByTestId("project-chat-chat_case")).getByText("2h")).toBeTruthy();
+      await act(async () => jest.advanceTimersByTime(60 * 60_000));
+      expect(within(screen.getByTestId("project-chat-chat_case")).getByText("3h")).toBeTruthy();
+    });
+
     it("reads the chats of the project by its id and lists them with their last message and time", async () => {
       await renderPortfolio();
 
