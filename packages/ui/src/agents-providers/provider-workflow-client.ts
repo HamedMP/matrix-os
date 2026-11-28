@@ -1,3 +1,4 @@
+import { createMatrixOpenAiConnectionClient } from "./matrix-openai-connection-client.js";
 import { createBotConnectionClient } from "../chat-agents/bots/provider-connections-client.js";
 import {
   ProviderWorkflowCapabilitiesSchema, ProviderWorkflowKeySchema, ProviderWorkflowLogsSchema,
@@ -74,6 +75,7 @@ export function createProviderWorkflowClient(
     return value;
   };
   return {
+    matrixOpenAi: createMatrixOpenAiConnectionClient(request),
     botConnections: createBotConnectionClient((path, method, body, signal = new AbortController().signal) => request({path, method, ...(body === undefined ? {} : {body}), signal})),
     capabilities: signal => readWithFallback(`${root}/v2/capabilities`, `${root}/capabilities?connectionVersion=2`, signal, ProviderWorkflowCapabilitiesV2Schema, ProviderWorkflowCapabilitiesSchema),
     startConnection: async (body, signal) => remember(await send({path: `${root}/v2/start`, method: "POST", body: parse(ProviderWorkflowStartV2Schema, body), signal}, ProviderWorkflowV2Schema)),

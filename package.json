@@ -145,7 +145,8 @@
       }
     },
     "patchedDependencies": {
-      "app-builder-lib@26.15.3": "patches/app-builder-lib@26.15.3.patch"
+      "app-builder-lib@26.15.3": "patches/app-builder-lib@26.15.3.patch",
+      "nanoid@4.0.2": "patches/nanoid@4.0.2.patch"
     },
     "overrides": {
       "@earendil-works/pi-ai": "1.0.0",
@@ -217,7 +218,9 @@
       "@tiptap/pm@>=3.0.0 <3.30.5": "3.32.0",
       "electron@>=41.0.0 <41.10.6": "41.10.6",
       "@tiptap/react>@tiptap/extension-bubble-menu": "3.32.0",
-      "@tiptap/react>@tiptap/extension-floating-menu": "3.32.0"
+      "@tiptap/react>@tiptap/extension-floating-menu": "3.32.0",
+      "@matrix-os/edge-router>wrangler": "4.149.0",
+      "@matrix-os/neo-worker>wrangler": "4.149.0"
     }
   },
   "devDependencies": {

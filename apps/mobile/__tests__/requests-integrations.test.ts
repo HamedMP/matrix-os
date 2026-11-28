@@ -69,6 +69,19 @@ describe("integration requests", () => {
     );
   });
 
+  it.each(["matrix", "pipedream"])("preserves the server's %s method on account load and sync", async method => {
+    const connection = { id: "8c463220-041b-4e5e-a86c-075b07a3ff3a", service: "gmail", account_label: "Same",
+      account_email: "same@example.test", status: "active", connected_at: "2026-10-25T00:00:00Z", connection_method: method };
+    jest.spyOn(global, "fetch").mockResolvedValueOnce({ ok: true, json: async () => [connection] } as Response)
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ synced: 0, services: [connection] }) } as Response)
+      .mockResolvedValueOnce({ ok: true, json: async () => [connection] } as Response);
+    expect(await fetchConnectedIntegrations("clerk-token", "https://app.matrix-os.com/vm/solar-vale"))
+      .toEqual([expect.objectContaining({ connectionMethod: method })]);
+    await expect(syncIntegrationConnections("clerk-token", "https://app.matrix-os.com/vm/solar-vale")).resolves.toBeUndefined();
+    expect(await fetchConnectedIntegrations("clerk-token", "https://app.matrix-os.com/vm/solar-vale"))
+      .toEqual([expect.objectContaining({ connectionMethod: method })]);
+  });
+
   it("refreshes a connected account token through the canonical endpoint", async () => {
     const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue({
       ok: true,

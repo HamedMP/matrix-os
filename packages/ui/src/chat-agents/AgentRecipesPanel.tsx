@@ -2,7 +2,7 @@ import {configureCreatedExecutor} from "./bots/configure-created-executor.js";
 import type {BotExecutorSelection} from "./bots/BotTaskExecutorField.js";
 import type {BotClient} from "./bots/client.js";
 import { BotRecipeSetup } from "./bots/BotRecipeSetup.js";
-import { botModelChoiceMatchesSelection, isAutomaticBotSelection, matrixBotSelectableModelChoices, matrixBotModelSelection } from "./bots/MatrixBotModelField.js";
+import { botModelChoiceMatchesSelection, isAutomaticBotSelection, matrixBotInitialModelChoice, matrixBotSelectableModelChoices, matrixBotModelSelection } from "./bots/MatrixBotModelField.js";
 import type { CanonicalProviderCatalog } from "@matrix-os/contracts";
 import type { CanonicalProviderChoice } from "../canonical-provider-choice.js";
 import type { CanonicalChatModelSelection } from "@matrix-os/contracts";
@@ -10,7 +10,7 @@ import { buildAgentRecipePrompt, isLaunchBotRecipeId, LAUNCH_BOT_RECIPE_IDS } fr
 import type { ChatAgentIntegrationConnection, StartAgentChat } from "./client.js";
 import { activeConnections } from "./recipe-integrations.js";
 import { JEV_AGENT_DESCRIPTION, JEV_AGENT_NAME } from "./jev-agent-template.js";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from "react";
 import { agentInspirations, type AgentInspiration } from "./agent-inspirations.generated.js";
 import { RecipeRabbit } from "./RecipeRabbit.js";
 import { JevLabelPermission } from "./JevLabelPermission.js";
@@ -57,14 +57,15 @@ export function AgentRecipesPanel({ requestedRecipeId, onRequestedRecipeResult, 
   const mounted = useRef(false);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const transportScope=botClient ?? onInstantiateBot;
-  const owner=useRef({transportScope});
-  if(owner.current.transportScope !== transportScope) owner.current={transportScope};
+  const scope = useMemo(() => ({ transportScope }), [transportScope]);
+  const owner = useRef(scope);
   const botAttempt = useRef<{ key: string; requestId: string; chatId?:string; executorAttempted?:boolean } | null>(null);
-  useEffect(() => {botAttempt.current=null; setBotPending(null); setBotError("");},[transportScope]);
+  useLayoutEffect(() => {owner.current=scope; botAttempt.current=null; setBotPending(null); setBotError("");},[scope]);
   const selectableModels = matrixBotSelectableModelChoices(matrixModels, catalog);
+  const initialModel = matrixBotInitialModelChoice(matrixModels, catalog);
   // Initialize the unsaved form once when its catalog arrives; later refreshes preserve intent.
-  if (setupRecipe && chosenBotSelection === undefined && !catalogLoading && selectableModels[0]) {
-    setBotSelection(matrixBotModelSelection(selectableModels[0]));
+  if (setupRecipe && chosenBotSelection === undefined && !catalogLoading && initialModel) {
+    setBotSelection(matrixBotModelSelection(initialModel));
   }
   const botSelection = chosenBotSelection ?? null;
   const nativeCatalogBlocked = Boolean(botRecipeStatus && botRecipeStatus !== "ready");

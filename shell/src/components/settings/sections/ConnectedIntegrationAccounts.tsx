@@ -2,6 +2,7 @@
 import { useState } from "react";
 import type { ConnectedService } from "./integrations-helpers";
 import type { IntegrationCatalogItem } from "@matrix-os/contracts/integration-marketplace";
+import { integrationConnectionMethodLabel } from "@matrix-os/contracts";
 
 const CATEGORY_COLORS: Record<string, string> = {
   google: "bg-blue-500",
@@ -102,13 +103,13 @@ export function ConnectedIntegrationAccounts({ connected, available, renamingId,
                     {accounts.map((conn) => (
                       <div
                         key={conn.id}
-                        className="flex items-center gap-4 rounded-lg border border-border/60 bg-card/50 px-4 py-3"
+                        className="flex flex-col items-start gap-3 rounded-lg border border-border/60 bg-card/50 px-4 py-3 sm:flex-row sm:items-center sm:gap-4"
                       >
                         {!hasMultiple && (
                           <ServiceLogo name={serviceName} category={category} logoUrl={def?.logoUrl} />
                         )}
                         <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2">
+                          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                             {renamingId === conn.id ? (
                               <input
                                 type="text"
@@ -134,6 +135,14 @@ export function ConnectedIntegrationAccounts({ connected, available, renamingId,
                                 {hasMultiple ? conn.account_label : serviceName}
                               </span>
                             )}
+                            {conn.service === "gmail" && (
+                              <span
+                                aria-label={`Connection method: ${integrationConnectionMethodLabel(conn.service, conn.connection_method)}`}
+                                className="shrink-0 rounded border border-border/60 px-1.5 py-0.5 text-xs text-muted-foreground"
+                              >
+                                {integrationConnectionMethodLabel(conn.service, conn.connection_method)}
+                              </span>
+                            )}
                             <StatusDot status={conn.status} />
                             <span className="text-xs text-muted-foreground capitalize">
                               {conn.status}
@@ -150,7 +159,7 @@ export function ConnectedIntegrationAccounts({ connected, available, renamingId,
                             Connected {formatDate(conn.connected_at)}
                           </div>
                         </div>
-                        <div className="flex items-center gap-1.5 shrink-0">
+                        <div className="flex flex-wrap items-center gap-1.5 shrink-0">
                           {renamingId === conn.id ? (
                             <>
                               <button

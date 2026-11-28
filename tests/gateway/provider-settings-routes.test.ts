@@ -430,3 +430,20 @@ describe("provider Settings reserved-credit negotiation", () => {
     expect(f.mutate).not.toHaveBeenCalled();
   });
 });
+
+it("negotiates owner OpenAI metadata on both read and mutation responses", async () => {
+ const connection = { connectionId: "matrix_openai_api" as const, providerId: "openai" as const, executionKind: "direct_pi" as const, billingKind: "api_key" as const,
+ revision: 0, enabled: false, credentialGeneration: null, sourceCredentialGeneration: null, state: "disconnected" as const,
+ models: [], actions: ["connect" as const], checkedAt: null, staleAfter: null, supports: { rootChat: true, recipeBots: true } };
+ const value = { ...snapshot, matrixOpenAiConnection: connection };
+ const app = createProviderSettingsRoutes({store: { getSnapshot: async () => value, mutate: async () => ({kind: "snapshot", snapshot: value}) }, getPrincipal: () => ({userId: "owner"}), canReadNativeAccountMetadata: () => true});
+ const legacy = await (await app.request("/provider-settings")).json();
+ expect(legacy).not.toHaveProperty("matrixOpenAiConnection");
+ expect(z.object(Object.fromEntries(Object.entries(ProviderSettingsSnapshotSchema.shape).filter(([key]) => key !== "matrixOpenAiConnection"))).strict().safeParse(legacy).success).toBe(true);
+ expect((await (await app.request("/provider-settings?includeMatrixOpenAiConnection=true")).json()).matrixOpenAiConnection).toEqual(connection);
+ expect((await app.request("/provider-settings?includeMatrixOpenAiConnection=invalid")).status).toBe(400);
+ const body = {type: "set_gateway_budget", expectedRevision: 0, idempotencyKey: "openai-projection", monthlyBudgetMicrousd: 0};
+ const request = {method: "POST", headers: {"content-type": "application/json"}, body: JSON.stringify(body)};
+ expect((await (await app.request("/provider-settings/actions", request)).json()).snapshot).not.toHaveProperty("matrixOpenAiConnection");
+ expect((await (await app.request("/provider-settings/actions?includeMatrixOpenAiConnection=true", request)).json()).snapshot.matrixOpenAiConnection).toEqual(connection);
+});

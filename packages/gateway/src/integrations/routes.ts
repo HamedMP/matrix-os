@@ -20,6 +20,7 @@ import type { PlatformDb } from "../platform-db.js";
 import { isScopedReadCatalogRequest, projectIntegrationCatalog } from "./catalog-projection.js";
 import { createIntegrationReadCallRoutes } from "./read-call.js";
 import { createJevLabelCallRoutes } from "./jev-label-call.js";
+import { connectedAccountMethod, projectConnectedAccount } from "./connection-projection.js";
 export { authorizeInternalJevLabels } from "./jev-label-call.js";
 export { createGoogleCollectionAdmissionForPlatform } from "../google-data/register-collection-admission.js";
 
@@ -420,9 +421,7 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
       ...await db.listConnectedServices(uid),
       ...(mcpPresetBroker ? await mcpPresetBroker.listConnections(uid) : []),
     ];
-    return c.json(services.map(({ id, service, account_label, account_email, scopes, status, connected_at, last_used_at }) => ({
-      id, service, account_label, account_email, scopes, status, connected_at, last_used_at,
-    })));
+    return c.json(services.map(projectConnectedAccount));
   });
 
   // -----------------------------------------------------------------------
@@ -502,7 +501,7 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
         ...await db.listConnectedServices(uid),
         ...(mcpPresetBroker ? await mcpPresetBroker.listConnections(uid) : []),
       ];
-      return c.json({ synced, services });
+      return c.json({ synced, services: services.map(projectConnectedAccount) });
     } catch (err) {
       console.error("[integrations] Sync failed:", err instanceof Error ? err.message : err);
       return c.json({ error: "Failed to sync accounts" }, 502);
@@ -604,6 +603,7 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
     if (result === null) return c.json({ error: "Not found" }, 404);
     if (result === "forbidden") return c.json({ error: "Forbidden" }, 403);
 
+    const connectionMethod = connectedAccountMethod(result);
     return c.json({
       id: result.id,
       service: result.service,
@@ -611,6 +611,7 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
       account_label: result.account_label,
       connected_at: result.connected_at,
       last_used_at: result.last_used_at,
+      ...(connectionMethod ? { connection_method: connectionMethod } : {}),
     });
   });
 

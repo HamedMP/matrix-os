@@ -506,6 +506,7 @@ export async function startBots(options: {
   startupCleanup.push(() => managed.close());
   copyLifecycle?.bindManaged(managed);
   const tools = createBotToolDispatcher({
+    authorizeExternalEgress: googleData.assertToolEgressAllowed,
     ...(pilot.enabled ? { artifactWrites: createGooglePilotArtifactAdmission(registry) } : {}),
     homePath: options.homePath, githubDeveloper, managedRoutine: { execute: managed.executeRoutine }, routines, ...(jevTools ? { jev: jevTools } : {}), managedTools: ownerTools, managedWorkspace: managedAdmission.workspace, interactions, memory,
     assertSource: revalidateSource,
