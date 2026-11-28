@@ -3,7 +3,9 @@ import { access, lstat, open, realpath, stat } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import type { MessageBoxOptions } from "electron";
 import type { AuthStatus } from "../auth/auth-service";
+import type { MacActionPairing, MacActionPairingLease } from "../desktop-pairing/action";
 
+const FULL_ACCESS_MS = 15 * 60_000;
 const CHECKOUT_MANIFEST_LIMIT = 128 * 1024;
 const ELECTRON_EXECUTABLE = "desktop/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron";
 
@@ -62,7 +64,9 @@ interface SetupDependencies {
   pickDirectory(): Promise<string | null>;
   resolveSource(checkout: string): Promise<VerificationSource | null>;
   prompt(options: MessageBoxOptions): Promise<number>;
+  acquirePairing: MacActionPairing;
   stop(reason: "stopped" | "revoked"): void;
+  now?(): number;
 }
 
 interface Setup {
@@ -70,8 +74,18 @@ interface Setup {
   source: VerificationSource;
 }
 
+interface Grant {
+  setup: Setup;
+  pairing: MacActionPairingLease;
+  controller: AbortController;
+  expiresAt: number;
+  timer: ReturnType<typeof setTimeout>;
+}
+
 export function createMacVerificationSetup(options: SetupDependencies) {
+  const now = options.now ?? Date.now;
   let setup: Setup | undefined;
+  let grant: Grant | undefined;
   let menuRequest: AbortController | undefined;
 
   function accountIdentity() {
@@ -82,10 +96,21 @@ export function createMacVerificationSetup(options: SetupDependencies) {
     return JSON.stringify([origin.origin, status.userId, status.handle, status.runtimeSlot, status.authGeneration]);
   }
 
+  function revoke(reason: "stopped" | "revoked", stopRunning: boolean) {
+    const active = grant;
+    if (!active) return;
+    grant = undefined;
+    clearTimeout(active.timer);
+    active.controller.abort(reason);
+    active.pairing.close();
+    if (stopRunning) options.stop(reason);
+  }
+
   function clearSetup() {
     // Clear the session selection before aborting sources that can call back.
     setup = undefined;
     menuRequest?.abort("revoked");
+    revoke("revoked", false);
   }
 
   function currentSetup() {
@@ -105,6 +130,36 @@ export function createMacVerificationSetup(options: SetupDependencies) {
       return null;
     }
     return source;
+  }
+
+  function currentGrant() {
+    const active = currentSetup();
+    const candidate = grant;
+    if (candidate && (candidate.setup !== active || candidate.controller.signal.aborted || now() >= candidate.expiresAt)) {
+      revoke("revoked", true);
+      return undefined;
+    }
+    return candidate;
+  }
+
+  async function getFullAccessApproval(signal: AbortSignal) {
+    const candidate = currentGrant();
+    if (!candidate || signal.aborted) return null;
+
+    const check = async (boundarySignal: AbortSignal, retryBadGateway?: () => boolean) => {
+      if (boundarySignal.aborted || currentGrant() !== candidate) return false;
+      if (!await resolveActiveSource(boundarySignal) || currentGrant() !== candidate || boundarySignal.aborted) return false;
+      const retryWhileCurrent = retryBadGateway && (() => currentGrant() === candidate && !boundarySignal.aborted && retryBadGateway());
+      const paired = await candidate.pairing.check(boundarySignal, retryWhileCurrent);
+      if (boundarySignal.aborted || currentGrant() !== candidate) return false;
+      if (!paired) {
+        revoke("revoked", true);
+        return false;
+      }
+      return true;
+    };
+
+    return await check(signal) ? { check } : null;
   }
 
   function promptForConsent(message: string, detail: string, button: string, signal: AbortSignal) {
@@ -128,13 +183,45 @@ export function createMacVerificationSetup(options: SetupDependencies) {
       return;
     }
     const approved = await promptForConsent("Enable Mac Verification?",
-      `Trust the Matrix OS checkout at ${source.checkout} for this app session. Mac Verification builds this checkout in a temporary worktree and can return a screenshot to the requesting Matrix Chat. Supervised Chats ask for Mac approval. Full Access Chats can use the permission you gave during Mac pairing.`,
+      `Trust the Matrix OS checkout at ${source.checkout} for this app session. Mac Verification builds this checkout in a temporary worktree and can return a screenshot to the requesting Matrix Chat. Each preview initially asks for Mac approval.`,
       "Enable for This Session", signal);
     if (approved !== 1 || signal.aborted || accountIdentity() !== account) return;
     const verified = await options.resolveSource(source.checkout);
     if (signal.aborted || accountIdentity() !== account || verified?.identity !== source.identity) return;
     setup = { account, source };
     options.stop("revoked");
+  }
+
+  async function authorize(active: Setup, signal: AbortSignal) {
+    const status = options.getStatus();
+    if (!status.signedIn) return;
+    const response = await promptForConsent("Allow Full Access for Mac Verification?",
+      `For 15 minutes, eligible Chats on ${status.handle} can run the built-in Electron verification against ${active.source.checkout} without another popup. This applies only to Mac Verification. You can stop it from Mac Activity or turn it off here.`,
+      "Allow for 15 Minutes", signal);
+    if (response !== 1 || signal.aborted || currentSetup() !== active || !await resolveActiveSource(signal)) return;
+    const controller = new AbortController();
+    const pairing = await options.acquirePairing(controller, signal);
+    if (!pairing || signal.aborted || controller.signal.aborted || currentSetup() !== active) {
+      controller.abort("revoked");
+      pairing?.close();
+      if (!signal.aborted && currentSetup() === active && !pairing) {
+        await options.prompt({
+          type: "info", message: "Mac Full Access needs an active pairing.",
+          detail: "Open Mac Pairing from the Matrix menu before retrying.", buttons: ["OK"], signal,
+        });
+      }
+      return;
+    }
+    revoke("revoked", true);
+    const newGrant: Grant = {
+      setup: active, pairing, controller, expiresAt: now() + FULL_ACCESS_MS,
+      timer: setTimeout(() => revoke("revoked", true), FULL_ACCESS_MS),
+    };
+    newGrant.timer.unref();
+    grant = newGrant;
+    controller.signal.addEventListener("abort", () => {
+      if (grant === newGrant) revoke("revoked", true);
+    }, { once: true });
   }
 
   async function open() {
@@ -154,16 +241,20 @@ export function createMacVerificationSetup(options: SetupDependencies) {
         await configure(account, signal);
         return;
       }
+      const fullAccess = Boolean(currentGrant());
       const response = await options.prompt({
         type: "info", message: "Mac Verification",
-        detail: `Trusted checkout: ${active.source.checkout}\n\nSupervised Chats ask for Mac approval. Manage Full Access in Mac Pairing.`,
-        buttons: ["Done", "Disable Verification"],
+        detail: `Trusted checkout: ${active.source.checkout}\n\n${fullAccess ? "Mac Full Access is on temporarily." : "Each verification asks for approval on this Mac."}`,
+        buttons: ["Done", "Disable Verification", fullAccess ? "Turn Off Full Access" : "Allow Full Access…"],
         defaultId: 0, cancelId: 0, signal,
       });
       if (signal.aborted || currentSetup() !== active) return;
       if (response === 1) {
         clearSetup();
         options.stop("stopped");
+      } else if (response === 2) {
+        if (fullAccess) revoke("stopped", true);
+        else await authorize(active, signal);
       }
     } finally {
       if (menuRequest === controller) menuRequest = undefined;
@@ -174,6 +265,11 @@ export function createMacVerificationSetup(options: SetupDependencies) {
     enabled: () => Boolean(currentSetup()),
     open,
     resolveActiveSource,
+    getFullAccessApproval,
+    revokeFullAccess(reason: "stopped" | "revoked") {
+      menuRequest?.abort(reason);
+      revoke(reason, false);
+    },
     clearSetup,
   };
 }

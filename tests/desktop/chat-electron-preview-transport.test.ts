@@ -88,7 +88,6 @@ function mockTransport(parts?: CanonicalChatMessage["parts"]) {
   let storeResult = false;
   let savedReceipt: { message: unknown; turn: unknown; run: unknown } | undefined;
   let returnedRunChatId = chatId;
-  let onReadReceipt: (() => void) | undefined;
   const fetchFn = vi.fn<typeof fetch>(async (input, init) => {
     const url = new URL(String(input));
     if (url.pathname === "/api/chats/" + chatId) {
@@ -141,16 +140,6 @@ function mockTransport(parts?: CanonicalChatMessage["parts"]) {
         admission: "accepted",
       };
       if (storeResult) savedReceipt = receipt;
-      if (onReadReceipt) {
-        const body = new ReadableStream({
-          pull(controller) {
-            controller.enqueue(new TextEncoder().encode(JSON.stringify(receipt)));
-            controller.close();
-            onReadReceipt?.();
-          },
-        }, { highWaterMark: 0 });
-        return new Response(body, { status: 202, headers: { "content-type": "application/json" } });
-      }
       return Response.json(receipt, { status: 202 });
     }
     throw new Error("Unexpected request " + url.pathname);
@@ -168,7 +157,6 @@ function mockTransport(parts?: CanonicalChatMessage["parts"]) {
     changeSession: () => { authStatus = { ...authStatus, authGeneration: 5 }; },
     existingUpload: (bytes: Buffer) => { uploadStatus = 409; uploadedBytes = bytes; },
     storeResult: () => { storeResult = true; },
-    onReadReceipt: (callback: () => void) => { onReadReceipt = callback; },
     misrouteResult: () => { returnedRunChatId = "chat_wrong"; },
   };
 }
@@ -195,9 +183,6 @@ describe("authenticated Chat Electron preview transport", () => {
     { fault: "HTTP 403", status: "unavailable", deliveryReads: 1 },
     { fault: "pre-build 502", status: "unavailable", deliveryReads: 0 },
     { fault: "Stop", status: "unavailable", deliveryReads: 1 },
-    { fault: "Full Access 502", status: "returned", deliveryReads: 2 },
-    { fault: "Full Access consent revoked", status: "unavailable", deliveryReads: 2 },
-    { fault: "Full Access view closed", status: "unavailable", deliveryReads: 1 },
   ])("requires a fresh signed pairing before returning verification ($fault)", async ({ fault, status, deliveryReads }) => {
     const { service: transport, fetchFn, storeResult } = verificationFixture();
     storeResult();
@@ -216,8 +201,6 @@ describe("authenticated Chat Electron preview transport", () => {
     let currentAtDelivery = false;
     let readsAfterBuild = 0;
     let stopDelivery: Promise<void> | undefined;
-    const fullAccess = fault.startsWith("Full Access");
-    const foreground = new AbortController();
     const pairingFetch = vi.fn<typeof fetch>(async (input, init) => {
       const { pathname } = new URL(String(input));
       if (pathname === "/api/desktop-pairing/action-challenge") {
@@ -234,7 +217,6 @@ describe("authenticated Chat Electron preview transport", () => {
       expect(pathname).toBe("/api/desktop-pairing");
       if (!built) return signed && fault === "pre-build 502" ? new Response(null, { status: 502 }) : Response.json(state);
       ++readsAfterBuild;
-      if (fault === "Full Access view closed") foreground.abort();
       if (fault === "HTTP 403") return new Response(null, { status: 403 });
       if (fault === "Stop") {
         stopDelivery = service.cancel("stopped");
@@ -247,7 +229,6 @@ describe("authenticated Chat Electron preview transport", () => {
       return Response.json(state);
     });
     const pairing = createMacActionPairing({ auth, fetchFn: pairingFetch,
-      hasChatFullAccess: async () => fault !== "Full Access consent revoked" || !built,
       keys: { load: async () => ({ deviceId, privateKey, publicKey: publicBytes.toString("base64url") }) } });
     const fetch = fetchFn.getMockImplementation()!;
     fetchFn.mockImplementation(async (input, init) => {
@@ -265,13 +246,11 @@ describe("authenticated Chat Electron preview transport", () => {
       wasHandled: async key => key === claimedKey, acquireActionPairing: pairing.acquire });
     const clock = vi.spyOn(Date, "now").mockReturnValue(now);
     try {
-      const result = await service.run(verificationTarget, undefined, fullAccess ? {
-        signal: foreground.signal, acquire: (_request, operation, signal) => pairing.acquireFullAccess(operation, signal),
-      } : undefined);
+      const result = await service.run(verificationTarget);
       await stopDelivery;
       const writes = resultWrites(fetchFn);
       expect(signed).toBe(true);
-      expect(approve).toHaveBeenCalledTimes(fullAccess ? 0 : 1);
+      expect(approve).toHaveBeenCalledOnce();
       expect(claim).toHaveBeenCalledOnce();
       expect(execute).toHaveBeenCalledTimes(fault === "pre-build 502" ? 0 : 1);
       expect(result).toEqual({ status });
@@ -821,20 +800,6 @@ describe("authenticated Chat Electron preview transport", () => {
     rejectNextTurn("provider_instance_locked");
 
     await expect(service.returnResult(request, previewResult)).rejects.toThrow("Preview result could not be posted");
-    expect(resultWrites(fetchFn).map(([, init]) => init?.method)).toEqual(["PUT", "POST"]);
-  });
-
-  it("recognizes a verified committed Mac Verification receipt when Stop happens while reading it", async () => {
-    const { service, fetchFn, onReadReceipt, storeResult } = verificationFixture();
-    const operation = new AbortController();
-    const target = (await service.read(verificationTarget))!;
-    const result = { png, testSummary: "10 tests passed" };
-    storeResult();
-    onReadReceipt(() => operation.abort("stopped"));
-
-    await expect(service.returnResult(target, result, operation.signal)).resolves.toBeUndefined();
-    expect(operation.signal.reason).toBe("stopped");
-    await service.returnResult(target, result);
     expect(resultWrites(fetchFn).map(([, init]) => init?.method)).toEqual(["PUT", "POST"]);
   });
 

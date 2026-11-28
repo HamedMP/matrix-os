@@ -18,7 +18,6 @@ export { resolveActivePath } from "./FilePreviewPane";
 export type { FileSelection } from "./FilePreviewPane";
 
 import { useDesktopFileDownload } from "./use-file-download";
-import { useFileTrash } from "./use-file-trash";
 import { FileDownloadStatus } from "./FileDownloadStatus";
 import { InspectorFilesPanel, InspectorFilePreview, type InspectorFileTarget } from "../panels/InspectorFilesPanel";
 
@@ -66,25 +65,6 @@ export default function FilesWorkspace() {
   const nextTabId = useRef(1);
   const newItemInputRef = useRef<HTMLInputElement | null>(null);
   const pendingCreation = useRef<{ request: NewItemRequest; controller: AbortController } | null>(null);
-  const currentTabs = useRef(tabs);
-
-  useLayoutEffect(() => {
-    currentTabs.current = tabs;
-  }, [tabs]);
-
-  const trash = useFileTrash(runtimeSlot, authGeneration, (path, removed) => {
-    const contains = (target: string) => target === path || target.startsWith(`${path}/`);
-    const parent = path.split("/").slice(0, -1).join("/");
-    const affected = currentTabs.current.filter((tab) => !tab.project && (tab.path === parent || contains(tab.path)));
-    setRefreshes((current) => {
-      const next = { ...current };
-      for (const tab of affected) next[tab.id] = (current[tab.id] ?? 0) + 1;
-      return next;
-    });
-    if (removed) setSelections((current) => Object.fromEntries(
-      Object.entries(current).map(([tabId, selection]) => [tabId, selection && contains(selection.path) ? null : selection]),
-    ));
-  });
 
   useLayoutEffect(() => () => {
     const operation = pendingCreation.current;
@@ -179,6 +159,30 @@ export default function FilesWorkspace() {
     }
     setNewItemRequest((current) => current?.tabId === tabId ? null : current);
   }, [activeTabId, tabs]);
+
+  const handleFileTrashed = (path: string, sourceTabId: string) => {
+    const parentPath = path.split("/").slice(0, -1).join("/");
+    const isTrashed = (candidate: string) => candidate === path || candidate.startsWith(`${path}/`);
+    const computerTabs = tabs.filter(tab => !tab.project && tab.id !== sourceTabId);
+
+    setRefreshes((current) => {
+      const next = { ...current };
+      for (const tab of computerTabs) {
+        if (tab.path === parentPath || isTrashed(tab.path)) {
+          next[tab.id] = (current[tab.id] ?? 0) + 1;
+        }
+      }
+      return next;
+    });
+    setSelections((current) => {
+      const next = { ...current };
+      for (const tab of computerTabs) {
+        const selection = current[tab.id];
+        if (selection && isTrashed(selection.path)) next[tab.id] = null;
+      }
+      return next;
+    });
+  };
 
   const requestNewItem = useCallback((kind: NewItemKind, tabId: string, parentPath: string) => {
     if (pendingCreation.current) return;
@@ -294,11 +298,10 @@ export default function FilesWorkspace() {
                   onSelectionChange={(next: BrowserSelection | null) => setSelections((current) => ({ ...current, [tab.id]: next ? { slot: runtimeSlot, authGeneration, path: next.path, entry: next.entry } : null }))}
                   onDownload={download.download}
                   downloadPending={download.pending}
-                  onMoveToTrash={active ? trash.move : undefined}
-                  trashPending={trash.pending}
                   onOpenFolderInNewTab={openFolderTab}
                   onRequestCreateFolder={(parentPath) => requestNewItem("folder", tab.id, parentPath)}
                   onRequestCreateFile={(parentPath) => requestNewItem("file", tab.id, parentPath)}
+                  onFileTrashed={(path) => handleFileTrashed(path, tab.id)}
                   refreshRevision={refreshes[tab.id] ?? 0}
                   framed={false}
                 />}

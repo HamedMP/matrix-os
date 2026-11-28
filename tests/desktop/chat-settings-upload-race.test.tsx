@@ -20,7 +20,6 @@ it.each(["send", "queue", "edit"] as const)("preserves the draft and attachment 
   const client = createCanonicalChatWorkspaceClient();
   const fixture = createCanonicalChatFixture(mode === "send" ? "completed" : "running").snapshot;
   const record = { chat: fixture.chat, projectId: "matrix-os", providerBinding: fixture.chat.providerBinding, activeRun: fixture.chat.activeRun };
-  vi.mocked(client.list).mockResolvedValue({ items: [record] });
   const queued = { id: "queued_test", chatId: fixture.chat.id, clientRequestId: "request_test", position: 1,
     parts: [{ type: "text" as const, text: "Existing queued draft" }], selection: { instanceId: "codex_fixture", model: "gpt-5.6-sol" },
     interactionMode: "default", permissionMode: "supervised", executionRoot: { kind: "project" as const, projectId: "matrix-os" },
@@ -58,10 +57,7 @@ it("settles the original signed-in Queue draft after its authenticated client is
   const replacement = createCanonicalChatWorkspaceClient();
   const fixture = createCanonicalChatFixture("running").snapshot;
   const record = { chat: fixture.chat, projectId: "matrix-os", providerBinding: fixture.chat.providerBinding, activeRun: fixture.chat.activeRun };
-  for (const candidate of [client, replacement]) {
-    vi.mocked(candidate.list).mockResolvedValue({ items: [record] });
-    vi.mocked(candidate.getDetail).mockResolvedValue({ record, messages: fixture.messages, turns: fixture.turns, runs: fixture.runs, activities: fixture.activities });
-  }
+  for (const candidate of [client, replacement]) vi.mocked(candidate.getDetail).mockResolvedValue({ record, messages: fixture.messages, turns: fixture.turns, runs: fixture.runs, activities: fixture.activities });
   const ack = Promise.withResolvers<Awaited<ReturnType<typeof client.queueTurn>>>();
   vi.mocked(client.queueTurn).mockReturnValue(ack.promise);
   const api = { baseUrl: "https://matrix.test", putBytes: vi.fn(async (url: string, file: File) => ({ ok: true, path: decodeURIComponent(url.split("path=")[1]!), size: file.size })) } as never;

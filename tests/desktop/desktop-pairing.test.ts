@@ -1,5 +1,5 @@
 import { createHash, createPublicKey, randomBytes, randomUUID, verify } from "node:crypto";
-import { lstat, mkdir, mkdtemp, readFile, readdir, rename, rm, symlink, utimes, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, readdir, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it, vi, afterEach } from "vitest";
@@ -104,9 +104,9 @@ async function setup() {
 
   const deps = { auth, safeStorage, window: () => null, userData, fetchFn };
   const create = () => createPairing(deps);
-  const enroll = async (response = 1) => {
+  const enroll = async () => {
     const pairing = create();
-    prompt.mockResolvedValueOnce({ response }).mockResolvedValueOnce({ response: 0 });
+    prompt.mockResolvedValueOnce({ response: 1 }).mockResolvedValueOnce({ response: 0 });
     await pairing.open();
     expect(state.revision).toBe(1);
     prompt.mockClear();
@@ -116,10 +116,10 @@ async function setup() {
   return { authStatus, deps, state, fetchFn, create, userData, enroll };
 }
 
-it.each(["device", "chat-full-access"])("sweeps stale %s files while idle, preserves links and grace, and stops on disposal", async (recordType) => {
+it("sweeps stale key files while idle, preserves links and grace, and stops on disposal", async () => {
   const { create, userData } = await setup();
   const directory = join(userData, "desktop-pairing");
-  const keyName = `${recordType}-${"a".repeat(64)}.bin`;
+  const keyName = `device-${"a".repeat(64)}.bin`;
   const temporaryName = () => `${keyName}.${randomUUID()}.tmp`;
   const now = Date.now();
   const old = new Date(now - 2 * 60 * 60_000);
@@ -173,9 +173,7 @@ it("persists pair identity across a client restart and disconnects only after ex
   expect(state.revision).toBe(1);
   expect(state.deviceId).toMatch(/^[a-f0-9]{64}$/);
   const lastId = state.deviceId;
-  expect(prompt.mock.calls[0]?.[1]).toMatchObject({
-    buttons: ["Cancel", "Pair This Mac", "Pair and Allow Chat Full Access"], defaultId: 0, cancelId: 0,
-  });
+  expect(prompt.mock.calls[0]?.[1]).toMatchObject({ buttons: ["Cancel", "Pair This Mac"], defaultId: 0, cancelId: 0 });
   expect(safeStorage.encryptString).toHaveBeenCalledTimes(1);
   const dir = join(userData, "desktop-pairing");
   const [file, ...extra] = await readdir(dir);
@@ -187,9 +185,7 @@ it("persists pair identity across a client restart and disconnects only after ex
   prompt.mockClear();
   prompt.mockResolvedValueOnce({ response: 1 }).mockResolvedValueOnce({ response: 0 });
   await create().open();
-  expect(prompt.mock.calls[0]?.[1]).toMatchObject({
-    buttons: ["Done", "Disconnect This Mac", "Allow Chat Full Access"], defaultId: 0, cancelId: 0,
-  });
+  expect(prompt.mock.calls[0]?.[1]).toMatchObject({ buttons: ["Cancel", "Disconnect This Mac"], defaultId: 0, cancelId: 0 });
   expect(state).toEqual({ machineId, revision: 2, deviceId: null });
   expect(fetchFn.mock.calls.filter(([, init]) => init?.method === "DELETE")).toHaveLength(1);
 
@@ -557,168 +553,4 @@ it("removes stale leases synchronously when the main process cancels pairing", a
   pairing.cancel();
   expect(grant.signal.reason).toBe("revoked");
   expect(await lease.check()).toBe(false);
-});
-
-it("keeps existing pairings supervised until the owner expressly allows Chat Full Access", async () => {
-  const { enroll, state, create, fetchFn } = await setup();
-  const pairing = await enroll();
-  expect(await pairing.acquireFullAccessPairing(new AbortController())).toBeNull();
-  expect(fetchFn.mock.calls.map(([, init]) => init?.method)).toEqual(["GET"]);
-  prompt.mockResolvedValueOnce({ response: 2 }).mockResolvedValueOnce({ response: 0 });
-  await pairing.open();
-  expect(prompt.mock.calls[0]?.[1]).toMatchObject({
-    detail: expect.stringContaining("Mac Verification"),
-    buttons: ["Done", "Disconnect This Mac", "Allow Chat Full Access"],
-  });
-  expect(state.revision).toBe(1);
-  expect(fetchFn.mock.calls.every(([, init]) => init?.method === "GET")).toBe(true);
-  const lease = await create().acquireFullAccessPairing(new AbortController());
-  try {
-    expect(await lease?.check()).toBe(true);
-  } finally {
-    lease?.close();
-  }
-});
-
-it("keeps permission from the original pairing consent across restart and elapsed time", async () => {
-  const { enroll, create, state } = await setup();
-  await enroll(2);
-  vi.useFakeTimers({ toFake: ["Date"] });
-  try {
-    vi.setSystemTime(Date.now() + 24 * 60 * 60_000);
-    const restarted = create();
-    const operation = new AbortController();
-    const lease = await restarted.acquireFullAccessPairing(operation);
-    try {
-      expect(await lease?.check()).toBe(true);
-      expect(prompt).not.toHaveBeenCalled();
-      state.revision++;
-      expect(await lease?.check()).toBe(false);
-      expect(operation.signal.reason).toBe("revoked");
-      expect(await restarted.acquireFullAccessPairing(new AbortController())).toBeNull();
-    } finally {
-      lease?.close();
-    }
-  } finally {
-    vi.useRealTimers();
-  }
-});
-
-it("revokes permission and stops an active Full Access lease without disconnecting the Mac", async () => {
-  const { enroll, create, state, fetchFn } = await setup();
-  const pairing = await enroll(2);
-  const operation = new AbortController();
-  const lease = await pairing.acquireFullAccessPairing(operation);
-  expect(await lease?.check()).toBe(true);
-  fetchFn.mockClear();
-  prompt.mockResolvedValueOnce({ response: 2 }).mockResolvedValueOnce({ response: 0 });
-  await pairing.open();
-  expect(prompt.mock.calls[0]?.[1].buttons).toEqual(["Done", "Disconnect This Mac", "Revoke Chat Full Access"]);
-  expect(operation.signal.reason).toBe("revoked");
-  expect(await lease?.check()).toBe(false);
-  expect(state.revision).toBe(1);
-  expect(fetchFn.mock.calls.every(([, init]) => init?.method === "GET")).toBe(true);
-  const restarted = create();
-  expect(await restarted.acquireFullAccessPairing(new AbortController())).toBeNull();
-  const supervised = await restarted.acquireActionPairing(new AbortController());
-  try {
-    expect(await supervised?.check()).toBe(true);
-  } finally {
-    supervised?.close();
-  }
-});
-
-it("preserves bounded ordinary action capacity during Full Access and revokes only Full Access", async () => {
-  const { enroll, fetchFn } = await setup();
-  const pairing = await enroll(2);
-  const fullAccessOperation = new AbortController();
-  const fullAccess = await pairing.acquireFullAccessPairing(fullAccessOperation);
-  const ordinary = [new AbortController(), new AbortController(), new AbortController()];
-  const ordinaryLeases = [];
-  try {
-    expect(await fullAccess?.check()).toBe(true);
-    expect(await pairing.acquireActionPairing(fullAccessOperation)).toBeNull();
-    for (const operation of ordinary) {
-      const lease = await pairing.acquireActionPairing(operation);
-      ordinaryLeases.push(lease);
-      expect(lease).not.toBeNull();
-    }
-    fetchFn.mockClear();
-    expect(await pairing.acquireActionPairing(new AbortController())).toBeNull();
-    expect(fetchFn).not.toHaveBeenCalled();
-
-    prompt.mockResolvedValueOnce({ response: 2 }).mockResolvedValueOnce({ response: 0 });
-    await pairing.open();
-    expect(fullAccessOperation.signal.reason).toBe("revoked");
-    expect(await fullAccess?.check()).toBe(false);
-    expect(ordinary.every(operation => !operation.signal.aborted)).toBe(true);
-    for (const lease of ordinaryLeases) expect(await lease?.check()).toBe(true);
-  } finally {
-    fullAccess?.close();
-    for (const lease of ordinaryLeases) lease?.close();
-  }
-});
-
-it("cannot consent to a changed pairing and keeps its approval prompt usable", async () => {
-  const { enroll, state, create } = await setup();
-  const pairing = await enroll();
-  prompt.mockImplementationOnce(async () => {
-    state.revision++;
-    return { response: 2 };
-  }).mockResolvedValueOnce({ response: 0 });
-  await pairing.open();
-  expect(await create().acquireFullAccessPairing(new AbortController())).toBeNull();
-  expect(prompt.mock.calls.at(-1)?.[1].message).toBe("Mac pairing could not be confirmed.");
-});
-
-it("fails closed on an unreadable consent record and leaves ordinary pairing available", async () => {
-  const { enroll, create, userData } = await setup();
-  const pairing = await enroll(2);
-  const operation = new AbortController();
-  const lease = await pairing.acquireFullAccessPairing(operation);
-  expect(await lease?.check()).toBe(true);
-  const directory = join(userData, "desktop-pairing");
-  const paths = await readdir(directory);
-  expect(paths).toHaveLength(2);
-  const record = paths.find(path => path.startsWith("chat-full-access-"))!;
-  await writeFile(join(directory, record), "corrupt");
-  expect(await lease?.check()).toBe(false);
-  expect(operation.signal.reason).toBe("revoked");
-  const restarted = create();
-  expect(await restarted.acquireFullAccessPairing(new AbortController())).toBeNull();
-  const supervised = await restarted.acquireActionPairing(new AbortController());
-  try {
-    expect(await supervised?.check()).toBe(true);
-  } finally {
-    supervised?.close();
-  }
-});
-
-it("keeps Full Access blocked after a disk error and offers a durable revocation retry", async () => {
-  const { enroll, create, userData } = await setup();
-  const pairing = await enroll(2);
-  const operation = new AbortController();
-  const lease = await pairing.acquireFullAccessPairing(operation);
-  expect(await lease?.check()).toBe(true);
-  const directory = join(userData, "desktop-pairing");
-  const path = join(directory, (await readdir(directory)).find(file => file.startsWith("chat-full-access-"))!);
-  const heldRecord = join(userData, "original-consent");
-  prompt.mockImplementationOnce(async () => {
-    await rename(path, heldRecord);
-    await mkdir(path);
-    return { response: 2 };
-  }).mockResolvedValueOnce({ response: 0 });
-  await pairing.open();
-  expect(prompt.mock.calls.at(-1)?.[1].message).toBe("Chat Full Access could not be revoked.");
-  expect(operation.signal.reason).toBe("revoked");
-  await rm(path, { recursive: true });
-  await rename(heldRecord, path);
-  expect(await pairing.acquireFullAccessPairing(new AbortController())).toBeNull();
-
-  prompt.mockClear();
-  prompt.mockResolvedValueOnce({ response: 2 }).mockResolvedValueOnce({ response: 0 });
-  await pairing.open();
-  expect(prompt.mock.calls[0]?.[1].buttons).toEqual(["Done", "Disconnect This Mac", "Retry Chat Full Access Revocation"]);
-  expect(prompt.mock.calls.at(-1)?.[1].message).toBe("Chat Full Access is revoked.");
-  expect(await create().acquireFullAccessPairing(new AbortController())).toBeNull();
 });

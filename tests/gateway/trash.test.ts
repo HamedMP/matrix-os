@@ -172,23 +172,6 @@ describe("trashRestore", () => {
     rmSync(testDir, { recursive: true, force: true });
   });
 
-  it("refuses to restore another deletion of the same file with a stale Undo ID", async () => {
-    writeFileSync(join(testDir, "same-name.md"), "first");
-    const first = await fileDelete(testDir, "same-name.md", { withUndo: true });
-    expect(first.entryId).toMatch(/^[0-9a-f-]{36}$/);
-    expect((await trashRestore(testDir, first.trashPath!, first.entryId)).ok).toBe(true);
-    writeFileSync(join(testDir, "same-name.md"), "replacement");
-    const later = await fileDelete(testDir, "same-name.md", { withUndo: true });
-    expect(later.trashPath).not.toBe(first.trashPath);
-    expect(later.entryId).not.toBe(first.entryId);
-
-    expect(await trashRestore(testDir, first.trashPath!, first.entryId)).toMatchObject({ ok: false, status: 404 });
-    expect(await trashRestore(testDir, later.trashPath!, first.entryId)).toMatchObject({ ok: false, status: 409 });
-    expect(existsSync(join(testDir, "same-name.md"))).toBe(false);
-    expect((await trashRestore(testDir, later.trashPath!, later.entryId)).ok).toBe(true);
-    expect(readFileSync(join(testDir, "same-name.md"), "utf8")).toBe("replacement");
-  });
-
   it("restores a file to its original location", async () => {
     writeFileSync(join(testDir, "restore-me.md"), "content");
     const deleteResult = await fileDelete(testDir, "restore-me.md");

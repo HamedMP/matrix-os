@@ -28,23 +28,3 @@ it("restores accepted Chat controls instead of global preferences and fences loc
   hook.rerender({ chatId: "chat_two" });
   await waitFor(() => expect(hook.result.current.selection?.permissionMode).toBe("supervised"));
 });
-
-it("keeps the live owner’s mode through a Mac receipt and honors downgrade and later Chat turns", async () => {
-  const catalog = createCanonicalProviderCatalogFixture();
-  const selection = { instanceId: "codex_fixture", model: "gpt-5.6-sol" };
-  const full = { chatId: "chat_one", runId: "run_edit", selection, interactionMode: "default", permissionMode: "full_access" };
-  const receipt = { ...full, runId: "run_receipt", permissionMode: "supervised" };
-  const hook = renderHook(({ executionControls, macReceiptRunId }: {
-    executionControls: typeof full; macReceiptRunId?: string;
-  }) => useCanonicalComposerSelection({
-    catalog, catalogReady: true, initializeImmediately: true, chatId: "chat_one",
-    currentSelection: selection, executionControls, macReceiptRunId,
-  }), { initialProps: { executionControls: full } as { executionControls: typeof full; macReceiptRunId?: string } });
-  await waitFor(() => expect(hook.result.current.selection?.permissionMode).toBe("full_access"));
-  hook.rerender({ executionControls: receipt, macReceiptRunId: receipt.runId });
-  expect(hook.result.current.selection?.permissionMode).toBe("full_access");
-  act(() => hook.result.current.onSelectionChange({ ...hook.result.current.selection!, permissionMode: "supervised" }));
-  expect(hook.result.current.selection?.permissionMode).toBe("supervised");
-  hook.rerender({ executionControls: { ...full, runId: "run_manual" }, macReceiptRunId: receipt.runId });
-  await waitFor(() => expect(hook.result.current.selection?.permissionMode).toBe("full_access"));
-});

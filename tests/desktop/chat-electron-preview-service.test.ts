@@ -84,21 +84,16 @@ describe("one-time Electron Desktop preview", () => {
 
   it("does not retry a dropped receipt after revocation of the Full Access grant that skipped consent", async () => {
     const actionCheck = vi.fn(async () => true);
-    const originalGrantCheck = vi.fn(async () => false).mockResolvedValueOnce(true).mockResolvedValueOnce(true);
-    const closed = vi.fn();
+    const originalGrantCheck = vi.fn(async () => true).mockResolvedValueOnce(true).mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(false);
     const { deps, service } = setup(async () => ({ check: actionCheck, close: vi.fn() }));
     const verified = { ...request, requestKind: "verification" as const };
     deps.read.mockResolvedValue(verified);
+    deps.approve.mockResolvedValue({ check: originalGrantCheck });
     deps.returnResult.mockRejectedValueOnce(new ChatElectronPreviewTransportInterruptedError(new TypeError("Disconnected")));
-    expect(await service.run({ ...identity, requestKind: "verification" }, undefined, {
-      signal: new AbortController().signal,
-      acquire: async () => ({ check: originalGrantCheck, close: closed }),
-    })).toEqual({ status: "unavailable" });
-    expect(deps.approve).not.toHaveBeenCalled();
-    expect(actionCheck).not.toHaveBeenCalled();
+    expect(await service.run({ ...identity, requestKind: "verification" })).toEqual({ status: "unavailable" });
     expect(deps.execute).toHaveBeenCalledOnce();
     expect(deps.returnResult).toHaveBeenCalledOnce();
-    expect(closed).toHaveBeenCalledOnce();
   });
 
   it("uses one explicit approval, builds the bound version and returns evidence once", async () => {

@@ -64,7 +64,6 @@ interface ChatElectronPreviewProps {
   editingQueuedTurn?: boolean;
   actorId: string | null;
   detail: CanonicalChatDetailResponse;
-  permissionMode?: string;
   onDraft?: StageChatWorktreeDraft;
 }
 
@@ -73,7 +72,7 @@ interface PreviewAttempt {
   promise: Promise<PreviewStatus>;
 }
 
-export function useChatElectronPreview({ active, editingQueuedTurn = false, actorId, detail, onDraft, permissionMode }: ChatElectronPreviewProps) {
+export function useChatElectronPreview({ active, editingQueuedTurn = false, actorId, detail, onDraft }: ChatElectronPreviewProps) {
   const { chat, activeRun, projectId } = detail.record;
   const eligible = active && !!projectId && chat.lifecycle === "active" && !chat.collaboration
     && chat.ownerScope.type === "personal" && chat.ownerScope.ownerId === actorId;
@@ -138,7 +137,6 @@ export function useChatElectronPreview({ active, editingQueuedTurn = false, acto
 
   const canPreview = available && eligible && worktree !== null;
   const verification = useMacVerification({
-    permissionMode,
     busy: Boolean(activeRun),
     editingQueuedTurn,
     candidate: verificationAvailable && eligible && worktree && latestRun?.driverKind === "codex"

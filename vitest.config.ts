@@ -63,7 +63,6 @@ export default defineConfig({
       "@matrix-os/brand/tokens": path.resolve(__dirname, "packages/brand/src/tokens.ts"),
       "@matrix-os/brand/marks": path.resolve(__dirname, "packages/brand/src/marks.ts"),
       "@matrix-os/brand": path.resolve(__dirname, "packages/brand/src/index.ts"),
-      "@matrix-os/contracts/mac-verification-terminal": path.resolve(__dirname, "packages/contracts/src/mac-verification-terminal.ts"),
       "@matrix-os/contracts/command-preview-policy": path.resolve(__dirname, "packages/contracts/src/command-preview-policy.mjs"),
       "@matrix-os/contracts/integration-marketplace": path.resolve(__dirname, "packages/contracts/src/integration-marketplace.ts"),
       "@matrix-os/contracts/managed-integrations": path.resolve(__dirname, "packages/contracts/src/managed-integrations.ts"),

@@ -203,7 +203,7 @@ describe("collaborative app owner sharing controls", () => {
     render(<CollaborativeAppShareButton appId="team-tracker" api={api}
       organizationId="org_matrix_team" organizationName="Matrix team" onShareChanged={onShareChanged} />);
     fireEvent.click(await screen.findByRole("button", { name: "Manage app sharing" }));
-    await waitFor(() => expect(screen.getByText(/does not delete or change your app data/i)).toBeVisible());
+    expect(await screen.findByText(/does not delete or change your app data/i)).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Stop sharing" }));
     await waitFor(() => expect(api.delete).toHaveBeenCalledWith("/api/collaboration/apps/team-tracker/share", {
       clientRequestId: expect.any(String), expectedShareRevision: "4", expectedBindingRevision: "8",

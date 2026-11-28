@@ -6,17 +6,16 @@ import { useChatMacTerminalProbe } from "./ChatMacTerminalProbe";
 import type { MacVerificationDraft } from "./ChatMacVerification";
 import type { ComposerMentionAction } from "./ComposerMentionActions";
 
-export function ChatWorktreeActions({ active, editingQueuedTurn, actorId, detail, onDraft, onDiscardDraft, permissionMode, children }: {
+export function ChatWorktreeActions({ active, editingQueuedTurn, actorId, detail, onDraft, onDiscardDraft, children }: {
   active: boolean;
   editingQueuedTurn?: boolean;
   actorId: string | null;
   detail: CanonicalChatDetailResponse;
-  permissionMode?: string;
   onDraft?: StageChatWorktreeDraft;
   onDiscardDraft: (text: string) => void;
   children: (actions: readonly ComposerMentionAction[], verification?: MacVerificationDraft) => ReactNode;
 }) {
-  const preview = useChatElectronPreview({ active, editingQueuedTurn, actorId, detail, onDraft, permissionMode });
+  const preview = useChatElectronPreview({ active, editingQueuedTurn, actorId, detail, onDraft });
   const terminal = useChatMacTerminalProbe({
     active, actorId, detail, onDraft, onDiscardDraft, previewAvailable: preview.available,
   });

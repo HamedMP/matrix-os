@@ -2,7 +2,7 @@ import { dialog, type BrowserWindow, type IpcMain, type OpenDialogOptions } from
 import { isAbsolute, join } from "node:path";
 import type { MacActionPairing, MacActionPairingLease } from "../desktop-pairing/action";
 import type { AuthService } from "../auth/auth-service";
-import { CHAT_ELECTRON_PREVIEW_INVOKE, type MacVerificationChatScope } from "../../shared/chat-electron-preview-ipc";
+import { CHAT_ELECTRON_PREVIEW_INVOKE } from "../../shared/chat-electron-preview-ipc";
 import type { BeginMacActivity } from "../mac-activity/activity";
 import { showMacActivityDialog } from "../mac-activity/dialog";
 import { createChatElectronPreviewClaims } from "./claims";
@@ -14,7 +14,6 @@ import { createMacVerificationSetup, resolveVerificationSource } from "./verific
 interface RegistrationOptions {
   auth: AuthService;
   acquireActionPairing: MacActionPairing;
-  acquireFullAccessPairing?: MacActionPairing;
   transport: ReturnType<typeof createChatElectronPreviewTransport>;
   allowed: boolean;
   macVerificationAllowed?: boolean;
@@ -26,26 +25,14 @@ interface RegistrationOptions {
   beginActivity?: BeginMacActivity;
 }
 
-interface FullAccessSelection {
-  viewId: string;
-  scope: MacVerificationChatScope;
-  controller: AbortController;
-  isTrusted(): boolean;
-}
-
 export function registerChatElectronPreview(ipc: Pick<IpcMain, "handle">, options: RegistrationOptions) {
-  const { auth, transport, checkout, userData, electronPath, acquireFullAccessPairing } = options;
-  let selection: FullAccessSelection | undefined;
-  function clearFullAccessSelection() {
-    const current = selection;
-    selection = undefined;
-    current?.controller.abort("revoked");
-  }
+  const { auth, transport, checkout, userData, electronPath } = options;
   const legacySource = options.allowed && checkout && isAbsolute(checkout) ? { checkout, electronPath } : null;
   // The legacy development environment is separate from a user-enabled
   // installed client's native settings.
   const setup = options.macVerificationAllowed ? createMacVerificationSetup({
     getStatus: () => auth.getStatus(),
+    acquirePairing: options.acquireActionPairing,
     resolveSource: resolveVerificationSource,
     async pickDirectory() {
       const win = options.window();
@@ -80,6 +67,14 @@ export function registerChatElectronPreview(ipc: Pick<IpcMain, "handle">, option
       const source = await resolveSource(request, signal);
       signal.throwIfAborted();
       if (!source) return false;
+      if (request.requestKind === "verification" && !request.operation && !request.backgroundTargetId) {
+        const fullAccess = await setup?.getFullAccessApproval(signal);
+        signal.throwIfAborted();
+        if (fullAccess) {
+          approvedSource = source;
+          return fullAccess;
+        }
+      }
       const window = options.window();
       const parent = window && !window.isDestroyed() ? window : null;
       if (!parent && !request.backgroundTargetId) return false;
@@ -135,90 +130,22 @@ export function registerChatElectronPreview(ipc: Pick<IpcMain, "handle">, option
       verificationAvailable: verificationAvailable() && status.signedIn && status.runtimeSlot === "primary",
     };
   });
-  const select = "chat:mac-verification-selection";
-  ipc.handle(select, (event, raw) => {
-    if (!options.isTrustedSender(event)) throw new Error("invalid request");
-    const { viewId, scope } = CHAT_ELECTRON_PREVIEW_INVOKE[select].request.parse(raw);
-    if (!scope) {
-      if (selection?.viewId === viewId) clearFullAccessSelection();
-      return { accepted: true };
-    }
-    clearFullAccessSelection();
-    if (!setup?.enabled()) return { accepted: false };
-    selection = {
-      viewId, scope, controller: new AbortController(), isTrusted: () => options.isTrustedSender(event),
-    };
-    return { accepted: true };
-  });
-
-  function bindFullAccess(current: FullAccessSelection, isTrustedRequest: () => boolean) {
-    const isCurrent = () => selection === current && !current.controller.signal.aborted
-      && current.isTrusted() && isTrustedRequest();
-    return {
-      signal: current.controller.signal,
-      async acquire(request: ChatElectronPreviewRequest, operation: AbortController, signal: AbortSignal) {
-        if (request.requestKind !== "verification" || request.operation || request.backgroundTargetId
-          || request.chatId !== current.scope.chatId || request.projectId !== current.scope.projectId
-          || request.worktreeId !== current.scope.worktreeId || !acquireFullAccessPairing) return null;
-        approvedSource = null;
-        function requireCurrent() {
-          if (!isCurrent()) operation.abort("revoked");
-          return !signal.aborted;
-        }
-        if (!requireCurrent()) return null;
-        const source = await setup?.resolveActiveSource(signal);
-        if (!requireCurrent()) return null;
-        if (!source) return null;
-        const lease = await acquireFullAccessPairing(operation, signal);
-        if (!requireCurrent()) {
-          lease?.close();
-          return null;
-        }
-        if (!lease) return null;
-        approvedSource = source;
-        return {
-          close: lease.close,
-          async check(boundarySignal?: AbortSignal, retryBadGateway?: () => boolean) {
-            if (!isCurrent()) operation.abort("revoked");
-            if (boundarySignal?.aborted || operation.signal.aborted
-              || !await lease.check(boundarySignal, retryBadGateway)) return false;
-            const verified = await setup?.resolveActiveSource(boundarySignal ?? operation.signal);
-            if (!isCurrent() || verified?.identity !== source.identity) operation.abort("revoked");
-            return !operation.signal.aborted && !boundarySignal?.aborted;
-          },
-        };
-      },
-    };
-  }
-
   const run = "chat:electron-preview-run";
   ipc.handle(run, async (event, raw) => {
     if (!options.isTrustedSender(event)) throw new Error("invalid request");
     const request = CHAT_ELECTRON_PREVIEW_INVOKE[run].request.safeParse(raw);
     if (!request.success) throw new Error("invalid request");
-    const { fullAccessViewId, ...target } = request.data;
-    if (target.requestKind === "verification" ? !verificationAvailable() : !legacySource) {
+    if (request.data.requestKind === "verification" ? !verificationAvailable() : !legacySource) {
       return { status: "unavailable" };
     }
-    // A renderer may lose its selection between acknowledging the mode and
-    // requesting a run. Never turn a stale Full Access request into a prompt.
-    let foreground: ReturnType<typeof bindFullAccess> | undefined;
-    if (fullAccessViewId) {
-      if (selection?.viewId !== fullAccessViewId || selection.scope.chatId !== target.chatId
-        || !selection.isTrusted()) return { status: "unavailable" };
-      foreground = bindFullAccess(selection, () => options.isTrustedSender(event));
-    }
-    return CHAT_ELECTRON_PREVIEW_INVOKE[run].response.parse(await service.run(target, undefined, foreground));
+    return CHAT_ELECTRON_PREVIEW_INVOKE[run].response.parse(await service.run(request.data));
   });
   let lastHandled: { targetId: string; runId: string } | undefined;
   return {
     openVerification: setup?.open,
-    clearFullAccessSelection,
     async cancel(reason: "stopped" | "revoked" = "revoked") {
-      if (reason === "revoked") {
-        clearFullAccessSelection();
-        setup?.clearSetup();
-      }
+      if (reason === "stopped") setup?.revokeFullAccess(reason);
+      else setup?.clearSetup();
       await service.cancel(reason);
     },
     async tryBackgroundPreview(
