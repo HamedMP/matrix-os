@@ -4,6 +4,9 @@ import { createRelayRequestDrain, RELAY_SHUTDOWN_TIMEOUT_MS } from "./funded-rel
 import { createFundedPricingRegistry } from "./funded-relay-pricing-registry.js";
 import { createGenerationIdentityReader, identitiesMatch } from "./funded-relay-generation-identity.js";
 import type { FundedPricingReviews } from "./funded-pricing-review.js";
+import { coalesceQualifiedResponse } from './funded-qualified-stream.js';
+import { createQualifiedFundedRoute, isQualifiedFundedCredential } from './funded-qualified-route.js';
+import { snapshotFundedRelayConfig, type ManagedRouteControlConfig } from './managed-route-control-config.js';
 import { createHmac, randomUUID } from "node:crypto";
 import {
   FundedAiClaimKeySchema,
@@ -68,6 +71,7 @@ interface FundedRelayDependencies extends FundedRelayConfig {
   now?: () => Date;
   requestIdFactory?: () => string;
   platformClient?: FundedPlatformClient;
+  managedRouteControl?: ManagedRouteControlConfig;
 }
 
 interface ActiveRequestState {
@@ -247,8 +251,13 @@ function rateLimitHeader(response: Response, name: string): number | undefined {
 
 function fundedCredential(c: Context): string {
   const key = c.req.header("x-api-key") ?? "";
-  if (isFundedProxyApiKey(key)) return key;
   const bearer = /^Bearer (\S+)$/i.exec(c.req.header("authorization") ?? "")?.[1] ?? "";
+  // Any qualified prefix selects the fail-closed boundary; conflicting headers cannot downgrade it.
+  if (isQualifiedFundedCredential(key) || isQualifiedFundedCredential(bearer)) {
+    if (key && bearer && key !== bearer) return 'sk-matrix-google-funded-invalid';
+    return isQualifiedFundedCredential(key) ? key : bearer;
+  }
+  if (isFundedProxyApiKey(key)) return key;
   return isFundedProxyApiKey(bearer) ? bearer : key;
 }
 
@@ -257,7 +266,7 @@ function createDisabledRelay(): FundedRelay {
     pricingReviewsFor: async () => null,
     register(app) {
       app.all("/v1/*", async (c, next) => {
-        if (!isFundedProxyApiKey(fundedCredential(c))) return next();
+        if (!(isFundedProxyApiKey(fundedCredential(c)) || isQualifiedFundedCredential(fundedCredential(c)))) return next();
         return errorResponse(c, 403, "permission_error", "Matrix-funded AI is disabled");
       });
     },
@@ -270,10 +279,12 @@ function createDisabledRelay(): FundedRelay {
 
 export function createFundedRelay(dependencies: FundedRelayDependencies | null): FundedRelay {
   if (!dependencies) return createDisabledRelay();
-  const config = dependencies;
+  const { fetch: providedFetch, now: providedNow, requestIdFactory: providedIds, platformClient: providedPlatform, managedRouteControl, ...input } = dependencies;
+  const config = { ...(managedRouteControl ? snapshotFundedRelayConfig(input) : input), fetch: providedFetch, now: providedNow, requestIdFactory: providedIds, platformClient: providedPlatform };
   const fetchImpl = config.fetch ?? fetch;
   const now = config.now ?? (() => new Date());
   const requestIdFactory = config.requestIdFactory ?? randomUUID;
+  const qualifiedRoute = createQualifiedFundedRoute({ config, settings: managedRouteControl, fetch: fetchImpl, now, releaseRejected: releaseBeforeStart });
   const admission = new AdmissionController(config, () => now().getTime());
   const createControlClient = () => createFundedPlatformClient({ ...config, fetch: fetchImpl });
   const registryClient = config.pricingRegistryEnabled ? createControlClient() : undefined;
@@ -396,16 +407,19 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
     }
 
     const credential = fundedCredential(c);
+    let qualified: ReturnType<typeof qualifiedRoute> | undefined;
+    try { if (isQualifiedFundedCredential(credential)) qualified = qualifiedRoute(credential, model.canonicalModelId); }
+    catch (error) { return controlPlaneError(c, error); }
     const checkInput = FundedAiPolicyCheckRequestSchema.safeParse({
       credential,
       modelId: model.canonicalModelId,
     });
-    if (!checkInput.success) return errorResponse(c, 401, "authentication_error", "Unauthorized");
+    if (!qualified && !checkInput.success) return errorResponse(c, 401, "authentication_error", "Unauthorized");
     // Reuse identity only when no upstream request can precede live admission.
     const boundsInputTokens = c.req.path !== COUNT_TOKENS_PATH && (isOpenAi || config.reservationMode === "usage");
     let checked: Awaited<ReturnType<typeof readGenerationIdentity>>;
     try {
-      checked = await readGenerationIdentity(checkInput.data, state.lifetimeSignal, boundsInputTokens);
+      checked = qualified ? await qualified.check(state.lifetimeSignal) : await readGenerationIdentity(checkInput.data!, state.lifetimeSignal, boundsInputTokens);
     } catch (error) {
       return controlPlaneError(c, error);
     }
@@ -493,16 +507,18 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
     }
     const maxCostMicrousd = estimate.amountMicrousd;
 
+    // Qualified Gmail uses a separately approved prepaid usage hold.
+    const billing = qualified ? "prepaid" : checked.customerBilling;
     let authorization: Awaited<ReturnType<FundedPlatformClient["authorize"]>>;
     try {
       const claimKey = fundedClaimKey(c);
-      authorization = await platform.authorize({
+      authorization = qualified ? await qualified.authorize({ requestId, maxCostMicrousd, ...(claimKey ? { claimKey } : {}) }, state.lifetimeSignal) : await platform.authorize({
         credential,
         requestId,
         modelId: model.canonicalModelId,
         maxCostMicrousd,
         billingMode: "usage",
-        ...(checked.customerBilling === "prepaid" ? {} : { billingPolicy: "postpaid" as const }), // Free runtimes prepay.
+        ...(billing === "prepaid" ? {} : { billingPolicy: "postpaid" as const }), // Free runtimes prepay.
         ...(claimKey ? { claimKey } : {}),
       }, state.lifetimeSignal);
     } catch (error) {
@@ -517,7 +533,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
     }
     const reservation = authorization.reservation;
     if (!identitiesMatch(identity, authorization.identity)
-      || !customerAuthorizationMatches(checked.customerBilling, reservation, { requestId, modelId: model.canonicalModelId, maxCostMicrousd })) {
+      || !customerAuthorizationMatches(billing, reservation, { requestId, modelId: model.canonicalModelId, maxCostMicrousd })) {
       await releaseBeforeStart(reservation.reservationId, authorization.identity.tokenId);
       return errorResponse(c, 503, "api_error", "AI access is temporarily unavailable");
     }
@@ -558,7 +574,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
       if (result.mode === "conservative") {
         if (!await terminal.unknown(terminalState) && closing) terminalComplete = false;
       } else {
-        settlementQueue.enqueue(customerExactFinalization(checked.customerBilling, finalizationLocator, result, terminalState));
+        settlementQueue.enqueue(customerExactFinalization(billing, finalizationLocator, result, terminalState));
       }
     };
 
@@ -582,8 +598,9 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
       redirect: "error",
       signal: generationSignal,
     };
-    let dispatched = false;
+    let dispatched = false; let startedConfirmed = false;
     try {
+      await qualified?.validate(generationSignal, generationUrl);
       const started = await platform.start(
         { reservationId: reservation.reservationId, tokenId: authorization.identity.tokenId,
           ...(reservation.billingMode === "usage" ? { executionId: terminal.executionId } : {}) },
@@ -595,6 +612,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
         throw new Error("Funded AI start response did not match its reservation");
       }
       terminal.started(started);
+      startedConfirmed = true;
       if (pricingRegistry) {
         const current = await pricingRegistry.read(model.canonicalModelId, generationSignal, true);
         if (!current || current.version !== estimate.pricingVersion
@@ -608,12 +626,13 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
           return errorResponse(c, 503, "api_error", "AI access is temporarily unavailable");
         }
       }
+      await qualified?.validate(generationSignal, generationUrl);
       dispatched = true;
       const fetched = terminal.response(await fetchImpl(generationUrl, generationInit));
-      let upstream = fetched;
-      if (isOpenAi && fetched.ok) {
-        upstream = normalizeWorkersAiResponse(fetched, model.nativeModelId, config.maxResponseBytes);
-      }
+      try { await qualified?.validate(state.lifetimeSignal, generationUrl); }
+      catch (error) { await fetched.body?.cancel().catch(cleanup => console.warn("[qualified-relay] Result cleanup:", cleanup instanceof Error ? cleanup.name : "UnknownError")); throw error; }
+      const upstream = isOpenAi && fetched.ok
+        ? normalizeWorkersAiResponse(fetched, model.nativeModelId, config.maxResponseBytes) : fetched;
       clearTimeout(firstResponseTimer);
       if (!upstream.ok) {
         pricingRegistry?.reportFailure(model.canonicalModelId, estimate.pricingVersion, upstream.status, generationSignal);
@@ -642,7 +661,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
         return new Response(null, { status: upstream.status, headers: safeUpstreamHeaders(upstream) });
       }
       const responseBody = boundedBody(
-        upstream.body,
+        qualified ? coalesceQualifiedResponse(upstream.body) : upstream.body,
         config.maxResponseBytes,
         resourceLease,
         (reason) => state.controller.abort(reason),
@@ -663,12 +682,17 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
           };
         })(),
         Math.min(10_000, 2 * config.platformTimeoutMs),
+        qualified ? () => qualified.validate(state.lifetimeSignal, generationUrl) : undefined,
       );
       state.handedOff = true;
       return new Response(responseBody, { status: upstream.status, headers: safeUpstreamHeaders(upstream) });
     } catch (error) {
       clearTimeout(firstResponseTimer);
-      if (!dispatched && error instanceof FundedControlPlaneError) {
+      if (qualified && !dispatched && startedConfirmed) {
+        enqueueFinalization({ mode: 'exact', actualCostMicrousd: 0 }); resourceLease.release(); state.resourceLease = null;
+        return controlPlaneError(c, error);
+      }
+      if (!dispatched && (qualified || error instanceof FundedControlPlaneError)) {
         const released = await releaseBeforeStart(reservation.reservationId, authorization.identity.tokenId);
         resourceLease.release();
         state.resourceLease = null;
@@ -681,6 +705,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
       state.resourceLease = null;
       const errorName = error instanceof Error ? error.name : "UnknownError";
       console.warn("[proxy] Funded AI upstream request failed", { errorName });
+      if (qualified && error instanceof FundedControlPlaneError) return controlPlaneError(c, error);
       if (state.lifetimeSignal.aborted || firstResponseController.signal.aborted) {
         return errorResponse(c, 504, "timeout_error", "AI access timed out");
       }
@@ -921,7 +946,9 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
           return errorResponse(c, 403, "permission_error", "AI access is unavailable");
         }
         const providedKey = fundedCredential(c);
-        if (!isFundedProxyApiKey(providedKey)) return next();
+        if (isQualifiedFundedCredential(providedKey) && c.req.path !== CHAT_COMPLETIONS_PATH)
+          return errorResponse(c, 503, 'api_error', 'AI access is temporarily unavailable');
+        if (!(isFundedProxyApiKey(providedKey) || isQualifiedFundedCredential(providedKey))) return next();
         if (c.req.method !== "POST") return errorResponse(c, 404, "not_found_error", "AI route not found");
         if (c.req.path !== MESSAGES_PATH && c.req.path !== COUNT_TOKENS_PATH
           && c.req.path !== CHAT_COMPLETIONS_PATH && c.req.path !== EVALUATE_PATH && c.req.path !== JEV_READINESS_PATH) {

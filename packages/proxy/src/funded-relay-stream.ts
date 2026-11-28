@@ -26,6 +26,7 @@ export function boundedBody(
     unconfirmed?(): void;
   },
   cancellationTimeoutMs = 10_000,
+  beforeRelease?: () => Promise<void>,
 ): ReadableStream<Uint8Array> {
   const reader = source.getReader();
   let seen = 0;
@@ -109,8 +110,10 @@ export function boundedBody(
           return;
         }
         observer?.push(result.value);
+        if (beforeRelease) { lifetimeSignal.throwIfAborted(); await beforeRelease(); lifetimeSignal.throwIfAborted(); }
         controller.enqueue(result.value);
       } catch (error) {
+        if (beforeRelease) abortUpstream("response release denied");
         if (sourceFailed && !cancelling) await reportAmbiguous();
         else if (!cancelling) await cancelSource("response processing failed").catch((cancelError: unknown) => {
           console.warn("[proxy] Funded AI response cancellation failed", { errorName: cancelError instanceof Error ? cancelError.name : "UnknownError" });

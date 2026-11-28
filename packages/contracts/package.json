@@ -41,6 +41,7 @@
     "#notifications": "./src/notifications.ts",
     "#messaging-origin": "./src/messaging-origin.ts",
     "#inference-response-limits": "./src/inference-response-limits.ts",
+    "#google-qualified-authorization": "./src/google-qualified-authorization.ts",
     "#chatgpt-plan-peer": "./src/chatgpt-plan-peer.ts",
     "#chatgpt-plan-poll-delivery": "./src/chatgpt-plan-poll-delivery.ts",
     "#chatgpt-plan-wire": "./src/chatgpt-plan-wire.ts",
