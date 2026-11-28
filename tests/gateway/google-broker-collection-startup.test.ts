@@ -28,12 +28,13 @@ let runtime: Awaited<ReturnType<typeof createGoogleBrokerRuntime>>;
 let registry: BotRuntimeRegistry;
 beforeEach(async () => { ({ db } = await createAuthorityFixture()); registry = new BotRuntimeRegistry(); registry.bind(binding); });
 afterEach(async () => { registry.shutdown(); await runtime?.close(); await repository?.close(); await db.destroy(); vi.restoreAllMocks(); });
-async function fixture(options: { credentials?: boolean; transport?: boolean } = {}) {
+async function fixture(options: { credentials?: boolean; transport?: boolean; attachments?: boolean } = {}) {
   const now = () => new Date(); repository = createGoogleDataRepository(db.sql, { now });
   const input = profileInput({ credentialKind: 'byo', credentialGeneration: generation, credentialFingerprint: identity.credential.fingerprint,
     endpoint: identity.endpoint, harnessId: GOOGLE_POLICY_HARNESS_ID[identity.api], harnessRevision: identity.harnessVersion,
     recipientChain: [{ recipientId: 'example-provider', accountId: 'verified-account-map', endpoint: identity.endpoint }] });
   input.dataKinds = ['gmail-metadata', 'gmail-content', 'gmail-attachments', 'google-derived-context'];
+  if (options.attachments === false) input.dataKinds = input.dataKinds.filter(kind => kind !== 'gmail-attachments');
   input.evidence.expiresAt = new Date(Date.now() + 7200000).toISOString();
   const profile = await repository.reviewProfile(input, 0);
   const owns = async (owner: string, account: string) => owner === binding.ownerId && account === accountId;
@@ -53,6 +54,18 @@ async function fixture(options: { credentials?: boolean; transport?: boolean } =
   return { transport, credentials, requestConsent, observe, prepare, profile };
 }
 describe('live broker collection composition', () => {
+  it('reaches real owner interaction for the attachment-free text action under a three-kind profile', async () => {
+    const f = await fixture({ attachments: false }); await f.observe();
+    const claim = await runtime.prepareCollection(binding, accountId, new AbortController().signal, f.requestConsent, 'get_message_text');
+    expect(claim).toMatchObject({ profileId: f.profile.id, consentRevision: 1 });
+    expect(f.requestConsent).toHaveBeenCalledOnce();
+    expect(f.requestConsent.mock.calls[0][0].disclosure.dataKinds).not.toContain('gmail-attachments');
+  });
+  it.each(['get_message', 'get_attachment'])('does not expand a three-kind profile for %s', async action => {
+    const f = await fixture({ attachments: false }); await f.observe();
+    await expect(runtime.prepareCollection(binding, accountId, new AbortController().signal, f.requestConsent, action)).rejects.toThrow();
+    expect(f.requestConsent).not.toHaveBeenCalled();
+  });
   it('uses a privately observed endpoint plus fresh broker credentials to get consent and durably classify before collection', async () => {
     const f = await fixture(); await f.observe(); const claim = await f.prepare();
     expect(claim).toMatchObject({ ownerId: binding.ownerId, googleAccountId: accountId, profileId: f.profile.id, consentRevision: 1 });

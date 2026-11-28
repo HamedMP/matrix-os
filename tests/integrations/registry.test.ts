@@ -280,12 +280,18 @@ describe("Service Registry", () => {
     expect(getAction("linear", "graphql")).toBeUndefined();
   });
 
-  it("does not register destructive or arbitrary-provider escape-hatch actions", () => {
+  it("allows only reviewed unused-label cleanup and no arbitrary-provider escape hatch", () => {
     expect(getAction("google_calendar", "delete_event")).toBeUndefined();
     expect(getAction("linear", "graphql")).toBeUndefined();
-    for (const service of listServices()) {
-      expect(Object.values(service.actions).every((action) => action.risk !== "destructive")).toBe(true);
-    }
+    const destructive = listServices().flatMap(service => Object.entries(service.actions)
+      .filter(([, action]) => action.risk === "destructive")
+      .map(([action]) => ({ service: service.id, action })));
+    expect(destructive).toEqual([{ service: "gmail", action: "delete_unused_label" }]);
+    const cleanup = getAction("gmail", "delete_unused_label")!;
+    expect(cleanup.directApi).toBeUndefined();
+    expect(Object.keys(cleanup.params).sort()).toEqual(["expectedName", "labelId"]);
+    expect(cleanup.paramsSchema!.safeParse({ labelId: "INBOX", expectedName: "Inbox" }).success).toBe(false);
+    expect(cleanup.paramsSchema!.safeParse({ labelId: "Label_test", expectedName: "Test", url: "https://example.invalid" }).success).toBe(false);
   });
 
   describe("validateIntegrationManifest", () => {
