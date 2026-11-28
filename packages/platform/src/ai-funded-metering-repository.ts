@@ -288,15 +288,15 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
       throw new AiFundedPolicyError("identity_mismatch");
     }
     if (ownerPromotion) {
+      const global = await transaction.executor.selectFrom("ai_funded_global_policy")
+        .select(["enabled", "allowed_model_ids"])
+        .where("policy_id", "=", "default").forUpdate().executeTakeFirstOrThrow();
       const runtime = await transaction.executor.selectFrom("ai_funded_runtime_policies")
         .select(["enabled", "allowed_model_ids", "expires_at"])
         .where("machine_id", "=", grant.identity.machineId)
         .where("owner_id", "=", grant.identity.ownerId)
         .where("runtime_slot", "=", grant.identity.runtimeSlot)
         .forUpdate().executeTakeFirst();
-      const global = await transaction.executor.selectFrom("ai_funded_global_policy")
-        .select(["enabled", "allowed_model_ids"])
-        .where("policy_id", "=", "default").forUpdate().executeTakeFirstOrThrow();
       const eligible = runtime?.enabled === true && global.enabled
         && (runtime.expires_at === null || runtime.expires_at > at)
         && intersectModels(parseModels(global.allowed_model_ids), parseModels(runtime.allowed_model_ids)).length > 0;
