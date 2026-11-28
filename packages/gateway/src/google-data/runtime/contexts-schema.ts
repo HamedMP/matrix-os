@@ -1,9 +1,18 @@
-import { sql, type Kysely, type Transaction } from "kysely";
+import { sql, type Kysely, type QueryExecutorProvider, type Transaction } from "kysely";
 import { boundedProvenanceTransaction } from "../provenance/transaction.js";
 
 export async function lockGoogleContexts<DB>(tx: Transaction<DB>) {
   await sql`SELECT pg_advisory_xact_lock(551035504)`.execute(tx);
 }
+// A host without this schema has never stored Google context markers.
+export async function hasGoogleContextMarker(db: QueryExecutorProvider, ownerId: string, chatId: string): Promise<boolean> {
+  const schema = (await sql<{ installed: boolean }>`SELECT to_regclass('google_context_markers') IS NOT NULL AS installed`.execute(db)).rows[0];
+  if (schema?.installed === false) return false;
+  const row = (await sql<{ present: boolean }>`SELECT EXISTS (SELECT 1 FROM google_context_markers
+    WHERE owner_id=${ownerId} AND chat_id=${chatId}) AS present`.execute(db)).rows[0];
+  return row?.present !== false;
+}
+
 export async function migrateGoogleContexts<DB>(db: Kysely<DB>) {
   await boundedProvenanceTransaction(db, async tx => {
     await lockGoogleContexts(tx);
@@ -17,6 +26,8 @@ export async function migrateGoogleContexts<DB>(db: Kysely<DB>) {
       id UUID PRIMARY KEY, owner_id TEXT NOT NULL, chat_id TEXT NOT NULL, revision INTEGER NOT NULL CHECK(revision>0),
       retention_deadline TIMESTAMPTZ NOT NULL, state TEXT NOT NULL CHECK(state IN ('active','purging','deleted')),
       UNIQUE(owner_id,chat_id))`.execute(tx);
+    await sql`ALTER TABLE google_context_markers ADD COLUMN IF NOT EXISTS
+      ordinary_side_answer_seq BIGINT NOT NULL DEFAULT 0`.execute(tx);
     await sql`CREATE TABLE IF NOT EXISTS google_context_origins (
       context_id UUID NOT NULL REFERENCES google_context_markers(id), origin_id TEXT NOT NULL REFERENCES google_context_sources(origin_id),
       PRIMARY KEY(context_id,origin_id))`.execute(tx);

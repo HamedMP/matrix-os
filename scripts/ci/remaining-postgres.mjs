@@ -4,6 +4,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import ts from 'typescript';
 import { parse as parseYaml } from 'yaml';
+import { gmailPostgresFiles } from './gmail-postgres.mjs';
 
 // Explicit ownership: newly discovered real-server suites must be assigned to a
 // hosted lane before qualification succeeds. Existing hosted selections stay put.
@@ -20,10 +21,6 @@ export const REMAINING_POSTGRES_FILES = [
   'tests/gateway/bots/sessions-repository.test.ts',
   'tests/gateway/bots/tasks-repository.test.ts',
   'tests/gateway/chat-order-title.test.ts',
-  'tests/gateway/google-data/provenance/contexts.test.ts',
-  'tests/gateway/google-data/provenance/store.test.ts',
-  'tests/gateway/google-runtime-authority-pins.test.ts',
-  'tests/gateway/google-runtime-authority.test.ts',
   'tests/gateway/jev-inbox-batch-postgres.test.ts',
   'tests/gateway/jev-repository-postgres.test.ts',
   'tests/gateway/sites-bootstrap-postgres.test.ts',
@@ -132,7 +129,10 @@ export function remainingPostgresInventory(root = process.cwd(), remainingFiles 
           ? [...unitPatterns, routine[1]] : unitPatterns;
       }));
   if (!patterns.length) throw Error('Funded PostgreSQL hosted selection is missing');
-  const fundedFiles = [...sources.keys()].filter(file => patterns.some(pattern => path.matchesGlob(file, pattern)));
+  const gmailEnabled = steps.some(step => step.if !== false && !['false', '${{ false }}'].includes(step.if)
+    && String(step.run ?? '').split('\n').some(line => /^\s*node scripts\/ci\/gmail-postgres\.mjs\s*$/.test(line)));
+  const gmailFiles = new Set(gmailEnabled ? gmailPostgresFiles(root) : []);
+  const fundedFiles = [...sources.keys()].filter(file => gmailFiles.has(file) || patterns.some(pattern => path.matchesGlob(file, pattern)));
   const funded = new Set(fundedFiles), collaboration = new Set(collaborationFiles), remaining = new Set(remainingFiles);
   const overlap = remainingFiles.filter(file => funded.has(file) || collaboration.has(file));
   if (overlap.length) throw Error(`Remaining PostgreSQL files already assigned to a hosted lane: ${overlap.join(', ')}`);

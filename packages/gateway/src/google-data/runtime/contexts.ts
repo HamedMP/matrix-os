@@ -17,6 +17,29 @@ const sourceProjection = sql`jsonb_build_object('originId',s.origin_id,'googleAc
   'consentId',s.consent_id,'profileId',s.profile_id,'profileRevision',s.profile_revision,
   'purposeId',s.purpose_id,'expiresAt',s.expires_at,'state',s.state)`;
 
+async function hasSideChat<DB>(tx: Transaction<DB>) {
+  return (await sql<{ installed: boolean }>`SELECT to_regclass('chat_side_messages') IS NOT NULL AS installed`.execute(tx)).rows[0]?.installed === true;
+}
+
+/** The marker records the last assistant sequence before first Gmail exposure under the context fence.
+ * Older markers lack that evidence and keep the conservative zero cutoff. */
+async function eraseSideChatAnswers<DB>(tx: Transaction<DB>, ownerId: string, chatIds?: readonly string[]) {
+  if (chatIds?.length === 0 || !await hasSideChat(tx)) return;
+  const eligible = chatIds === undefined
+    ? sql`m.state='deleted' AND EXISTS (
+        SELECT 1 FROM chat_side_threads t JOIN chat_side_messages a ON a.thread_id=t.id
+        WHERE t.chat_id=m.chat_id AND t.owner_type='personal' AND t.owner_id=m.owner_id
+          AND a.role='assistant' AND a.seq>m.ordinary_side_answer_seq)`
+    : sql`m.chat_id=ANY(${chatIds}::text[])`;
+  await sql`WITH affected AS (
+      SELECT m.chat_id,m.ordinary_side_answer_seq FROM google_context_markers m
+      WHERE m.owner_id=${ownerId} AND (${eligible}) ORDER BY m.chat_id
+      ${chatIds === undefined ? sql`LIMIT 100` : sql``})
+    DELETE FROM chat_side_messages a USING chat_side_threads t,affected m
+    WHERE a.thread_id=t.id AND a.role='assistant' AND t.owner_type='personal' AND t.owner_id=${ownerId}
+      AND t.chat_id=m.chat_id AND a.seq>m.ordinary_side_answer_seq`.execute(tx);
+}
+
 /** Trusted metadata composition only: marking is classification, never P1 approval.
  * Revalidate current P1 after waits and before collection/context assembly/egress.
  * Unknown references require host handling; null means never classified, not proof of non-Google content. */
@@ -58,8 +81,12 @@ export function createGoogleContextStore<DB>(db: Kysely<DB>, options: GoogleCont
     } else {
       const count = (await sql<{ total: number; owned: number }>`SELECT count(*)::int AS total,count(*) FILTER(WHERE owner_id=${ownerId})::int AS owned FROM google_context_markers`.execute(tx)).rows[0]!;
       if (count.total >= cap.maxContexts || count.owned >= cap.maxContextsPerOwner) contextDeny();
-      const inserted = await sql<{ id: string }>`INSERT INTO google_context_markers(id,owner_id,chat_id,revision,retention_deadline,state)
-        SELECT ${randomUUID()},${ownerId},${chatId},1,${deadline},'active' WHERE ${deadline}::timestamptz > clock_timestamp()
+      const ordinaryAnswerSeq = await hasSideChat(tx)
+        ? sql`(SELECT COALESCE(max(a.seq),0) FROM chat_side_threads t JOIN chat_side_messages a ON a.thread_id=t.id
+            WHERE t.chat_id=${chatId} AND t.owner_type='personal' AND t.owner_id=${ownerId} AND a.role='assistant')`
+        : sql`0`;
+      const inserted = await sql<{ id: string }>`INSERT INTO google_context_markers(id,owner_id,chat_id,revision,retention_deadline,state,ordinary_side_answer_seq)
+        SELECT ${randomUUID()},${ownerId},${chatId},1,${deadline},'active',${ordinaryAnswerSeq} WHERE ${deadline}::timestamptz > clock_timestamp()
         AND ${expires}::timestamptz > clock_timestamp() ON CONFLICT(owner_id,chat_id) DO NOTHING RETURNING id`.execute(tx);
       if (!inserted.rows[0]) contextDeny();
       id = inserted.rows[0]!.id;
@@ -142,10 +169,19 @@ export function createGoogleContextStore<DB>(db: Kysely<DB>, options: GoogleCont
             SELECT 1 FROM google_context_origins o JOIN google_context_sources s ON s.origin_id=o.origin_id
             WHERE o.context_id=m.id AND s.owner_id=${ownerId} AND s.google_account_id=${account})
           RETURNING chat_id,revision`.execute(tx)).rows;
+        await eraseSideChatAnswers(tx, ownerId, contexts.map(context => context.chat_id));
         const revisions: Record<string, number> = Object.create(null);
         for (const context of contexts) revisions[context.chat_id] = context.revision;
         return { originIds: origins.map(row => row.origin_id), chatIds: contexts.map(row => row.chat_id), revisions,
           coverage: "registered-contexts-only" as const };
+      });
+    },
+    /** Repair closed markers left by older builds after their account links were removed. */
+    async cleanupClosedDerivedSurfaces(ownerId: string) {
+      contextOpaque.parse(ownerId);
+      await boundedProvenanceTransaction(db, async tx => {
+        await lockGoogleContexts(tx);
+        await eraseSideChatAnswers(tx, ownerId);
       });
     },
     /** Full owner-account lifecycle only, after host revocation/quiescence and actual content deletion.

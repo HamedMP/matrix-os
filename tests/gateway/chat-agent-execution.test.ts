@@ -14,7 +14,9 @@ import { createCanonicalProviderCatalogFixture } from "../contracts/fixtures/can
 import { createCustomBotChats } from "../../packages/gateway/src/bots/custom-direct-chat.js";
 import { bootstrapBotDatabase } from "../../packages/gateway/src/bots/database.js";
 import { ownerBotExecutor } from "../../packages/gateway/src/bots/instantiation.js";
-import { ChatAgentContextError } from "../../packages/gateway/src/chat/agent-context.js";
+import { ChatAgentContextError, type ChatAgentContext } from "../../packages/gateway/src/chat/agent-context.js";
+
+import { createGoogleContextStore } from "../../packages/gateway/src/google-data/runtime/contexts.js";
 
 const owner = { type: "personal" as const, ownerId: "owner_bot_runs" };
 const principal = { userId: owner.ownerId, source: "jwt" as const };
@@ -29,6 +31,7 @@ describe("Hermes Agent invocation through canonical Chat", () => {
   let repository: ChatRepository;
   let agents: ChatAgentStore;
   let orchestrator: CanonicalChatOrchestrator;
+  let chatContext: ChatAgentContext;
   let calls: Array<{ driver: string; resumed: boolean; input: CanonicalProviderRunInput }>;
   let enabled: boolean;
   let release: (() => void) | undefined;
@@ -95,6 +98,7 @@ describe("Hermes Agent invocation through canonical Chat", () => {
     });
     agents = runtime.agents;
     orchestrator = runtime.orchestrator;
+    chatContext = runtime.context;
     await repository.create(owner, { id: "chat_parent", clientRequestId: "req_parent", title: "Original Chat", currentSelection: selection });
     agentId = (await agents.create(owner, {
       clientRequestId: "req_agent", name: "Partner helper", description: "Prepare partner decisions",
@@ -594,6 +598,49 @@ describe("Hermes Agent invocation through canonical Chat", () => {
     await complete();
     expect(retried.run.context).toEqual(first.run.context);
     expect(calls.at(-1)?.input.prompt).not.toContain("Budget changed to 900 units");
+  });
+
+  it("refuses a Gmail-marked reference at preparation and saved-context revalidation", async () => {
+    await repository.create(owner, { id: "chat_source", clientRequestId: "req_source", title: "Source" });
+    const request = await input("req_gmail_reference", [{ type: "text", text: "Use the reference" }, mention("chat", "chat_source")]);
+    const prepared = await chatContext.prepare(owner, "chat_parent", request);
+    expect(prepared.context?.chats).toHaveLength(1);
+
+    const contexts = createGoogleContextStore(repository.kysely);
+    await contexts.migrate();
+    const deadline = new Date(Date.now() + 60_000).toISOString();
+    await contexts.mark({ ownerId: owner.ownerId, chatId: "chat_source",
+      googleAccountId: "10000000-0000-4000-8000-000000000001", consentId: "consent_reference",
+      profileId: "profile_reference", profileRevision: 1, purposeId: "assistant",
+      expiresAt: deadline, retentionDeadline: deadline });
+
+    await expect(chatContext.prepare(owner, "chat_parent", request)).rejects.toMatchObject({ code: "context_unavailable" });
+    await expect(chatContext.revalidate(owner, "chat_parent", prepared.context)).rejects.toMatchObject({ code: "context_unavailable" });
+  });
+
+  it.each(["admission", "dispatch"] as const)("withholds a Gmail-marked parent from the Agent at %s", async phase => {
+    await send("req_agent_parent_history", [{ type: "text", text: "Synthetic chat history" }]);
+    const contexts = createGoogleContextStore(repository.kysely);
+    await contexts.migrate();
+    const deadline = new Date(Date.now() + 60_000).toISOString();
+    const mark = () => contexts.mark({ ownerId: owner.ownerId, chatId: "chat_parent",
+      googleAccountId: "10000000-0000-4000-8000-000000000001", consentId: "consent_agent",
+      profileId: "profile_agent", profileRevision: 1, purposeId: "assistant", expiresAt: deadline, retentionDeadline: deadline });
+    const sendAgent = () => send("req_agent_parent_marked", [{ type: "text", text: "Summarize" }, mention("agent", agentId)]);
+    if (phase === "admission") {
+      await mark();
+      const read = vi.spyOn(repository, "getDetailPage");
+      await expect(sendAgent()).rejects.toMatchObject({ safeError: { code: "resource_unavailable" } });
+      expect(read).not.toHaveBeenCalled();
+    } else {
+      const persist = repository.markRunRunning.bind(repository);
+      vi.spyOn(repository, "markRunRunning").mockImplementationOnce(async (...args) => {
+        await mark();
+        return persist(...args);
+      });
+      await sendAgent();
+    }
+    expect(calls.map(call => call.driver)).toEqual(["codex"]);
   });
 
   it("rechecks the switch before dispatching an already queued Agent", async () => {

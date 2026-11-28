@@ -1,9 +1,11 @@
 import { CanonicalChatOrchestrator } from "./orchestrator.js";
 import { ChatAgentStore } from "./agent-store.js";
-import { ChatAgentContext } from "./agent-context.js";
+import { ChatAgentContext, ChatAgentContextError } from "./agent-context.js";
 import { createChatAgentRecipeResolver, discoverChatAgentRecipeSkillsRoot } from "./agent-recipe.js";
 import { listServices } from "../integrations/registry.js";
 import type { ChatRepository } from "./repository.js";
+import { hasGoogleContextMarker, lockGoogleContexts } from "../google-data/runtime/contexts-schema.js";
+import { boundedProvenanceTransaction } from "../google-data/provenance/transaction.js";
 
 /** Agent configuration shares the canonical database lock lifecycle; it owns no pool. */
 export async function createCanonicalChatRuntime(options: Omit<ConstructorParameters<typeof CanonicalChatOrchestrator>[0], "agentContext"> & {
@@ -30,6 +32,13 @@ export async function createCanonicalChatRuntime(options: Omit<ConstructorParame
     admitJevWorkflow: options.admitJevWorkflow,
     drives: options.drives,
     assertChatReferenceAllowed: options.assertChatReferenceAllowed,
+    modelHistory: options.modelHistory,
+    readOrdinaryReference: (owner, chatId, read) => options.repository.withTransaction(repository =>
+      boundedProvenanceTransaction(repository.kysely, async tx => {
+        await lockGoogleContexts(tx);
+        if (await hasGoogleContextMarker(tx, owner.ownerId, chatId)) throw new ChatAgentContextError("context_unavailable");
+        return read(repository);
+      })),
     ...(options.botChats ? { botChats: options.botChats } : {}),
   });
   return { agents, recipes, context, orchestrator: new CanonicalChatOrchestrator({ ...options, agentContext: context }) };

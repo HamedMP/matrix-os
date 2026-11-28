@@ -4,6 +4,7 @@ import type { ChatOwner } from "./records.js";
 import type { ChatRepository } from "./repository.js";
 import { MATRIX_BOT_INSTANCE_ID } from "../bots/selection.js";
 import { SESSION_HISTORY_BYTE_LIMIT, SESSION_HISTORY_MESSAGE_LIMIT } from "./session-history-limits.js";
+import type { GoogleModelHistoryReader } from "../google-data/runtime/model-history-reader.js";
 
 export { SESSION_HISTORY_MESSAGE_LIMIT } from "./session-history-limits.js";
 
@@ -33,7 +34,16 @@ export async function prepareChatSessionContext(input: {
   repository: Pick<ChatRepository, "getDetailPage">; owner: ChatOwner; chatId: string;
   throughSeq: number; requestHash: string; instanceId: string;
   resumeState: unknown; context?: ChatRunContext;
+  /** Trusted host installation; the actual registered adapter identity is required for Google history. */
+  modelHistory?: GoogleModelHistoryReader; adapter?: unknown; signal?: AbortSignal;
 }): Promise<ChatRunContext | undefined> {
+  if (input.modelHistory) {
+    const { modelHistory, ...rest } = input;
+    const admitted = { ...rest, owner: structuredClone(input.owner),
+      ...(input.context ? { context: structuredClone(input.context) } : {}) };
+    return modelHistory.read({ owner: admitted.owner, chatId: admitted.chatId, adapter: admitted.adapter, signal: admitted.signal,
+      read: repository => prepareChatSessionContext({ ...admitted, repository }) });
+  }
   const context = contextForChatSession(input.context, input.resumeState);
   if (input.resumeState !== undefined || input.instanceId === MATRIX_BOT_INSTANCE_ID || input.throughSeq === 0) return context;
   // Retry preserves the original admitted history, not replies from its failed attempt.

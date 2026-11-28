@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createTestPGlite } from "../helpers/pglite-test-helper.js";
+import { createGoogleContextStore } from "../../packages/gateway/src/google-data/runtime/contexts.js";
 import { ChatRepository } from "../../packages/gateway/src/chat/repository.js";
 import { SideChatNotFoundError, SideChatRepository } from "../../packages/gateway/src/chat/side-chat-repository.js";
 
@@ -49,4 +50,49 @@ it("keeps newest main context when the side transcript is long", async () => {
   const generate = vi.fn(async (prompt: string) => ({ text: "Answer" }));
   await side.ask(owner, chat.chat.id, { clientRequestId: "req_side_latest", text: "Question" }, generate);
   expect(generate.mock.calls[0]?.[0]).toContain("RECENT_MAIN_CONTEXT");
+});
+
+it("preserves answers committed before Gmail marking and erases later unverified answers", async () => {
+  const { chat } = await chats.create(owner, { id: "chat_side_gmail", clientRequestId: "req_side_gmail", title: "Main" });
+  const { chat: ordinary } = await chats.create(owner, { id: "chat_side_ordinary", clientRequestId: "req_side_ordinary", title: "Other" });
+  const generate = vi.fn(async () => ({ text: "Synthetic Side Chat answer" }));
+  for (const id of [chat.id, ordinary.id]) {
+    await side.create(owner, id);
+    await side.ask(owner, id, { clientRequestId: "req_old_answer", text: "Owner question" }, generate);
+  }
+  const contexts = createGoogleContextStore(chats.kysely, { deletionAuthority: {
+    withVerifiedContextDeletion: (_ownerId, _chatId, work) => work(),
+  } });
+  await contexts.migrate();
+  const account = "10000000-0000-4000-8000-000000000001";
+  const deadline = new Date(Date.now() + 60_000).toISOString();
+  const mark = { ownerId: owner.ownerId, chatId: chat.id, googleAccountId: account,
+    consentId: "consent_side", profileId: "profile_side", profileRevision: 1, purposeId: "assistant",
+    expiresAt: deadline, retentionDeadline: deadline };
+  await contexts.mark(mark);
+  const thread = await chats.kysely.selectFrom("chat_side_threads").select("id").where("chat_id", "=", chat.id).executeTakeFirstOrThrow();
+  // An older writer could persist an unverified answer after the marker was committed.
+  await chats.kysely.insertInto("chat_side_messages").values({
+    thread_id: thread.id, seq: 3, role: "assistant", content: "Unverified legacy answer",
+    client_request_id: "req_unverified_answer", created_at: new Date(),
+  }).execute();
+  await contexts.mark({ ...mark, expectedRevision: 1 });
+
+  const preserved = ["Owner question", "Synthetic Side Chat answer"];
+  expect((await side.read(owner, chat.id)).messages.map(row => row.content)).toEqual(preserved);
+  await expect(side.ask(owner, chat.id, { clientRequestId: "req_old_answer", text: "Owner question" }, generate)).rejects.toThrow();
+  await expect(side.ask(owner, chat.id, { clientRequestId: "req_new_answer", text: "Question" }, generate)).rejects.toThrow();
+  expect(generate).toHaveBeenCalledTimes(2);
+  const purge = await contexts.beginPurge(owner.ownerId, account);
+  await contexts.completeDeletion(owner.ownerId, chat.id, purge.revisions[chat.id]!);
+
+  const rows = await chats.kysely.selectFrom("chat_side_messages as m")
+    .innerJoin("chat_side_threads as t", "t.id", "m.thread_id").select(["m.role", "m.content"])
+    .where("t.chat_id", "=", chat.id).orderBy("m.seq").execute();
+  expect(rows).toEqual([
+    { role: "user", content: "Owner question" },
+    { role: "assistant", content: "Synthetic Side Chat answer" },
+  ]);
+  expect((await side.read(owner, chat.id)).messages.map(row => row.content)).toEqual(preserved);
+  expect((await side.read(owner, ordinary.id)).messages).toHaveLength(2);
 });

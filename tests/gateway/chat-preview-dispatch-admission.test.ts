@@ -434,7 +434,7 @@ it("binds a routine Full Access proof only after a fresh direct turn and before 
     const provenance = { routineFullAccessProof: "verified-browser-proof" };
     const admitted = await orchestrator.admitTurn(principal, owner, "chat_verified_origin", input, provenance);
     await orchestrator.drain();
-    expect(order).toEqual(["proof", "start", "release"]);
+    await expect.poll(() => [...order]).toEqual(["proof", "start", "release"]);
     expect(redeem).toHaveBeenCalledWith(expect.objectContaining({ principal, owner, chatId: "chat_verified_origin",
       proof: provenance.routineFullAccessProof, run: expect.objectContaining({ id: admitted.run.id, turnId: admitted.turn.id, status: "accepted" }),
       body: input }));

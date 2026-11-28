@@ -14,8 +14,10 @@ export async function submitCanonicalApproval(options: {
   active?: { owner: ChatOwner; chatId: string; instanceId: string; adapter: CanonicalChatProviderAdapter } | null;
   browserApprovals?: BrowserApprovalControl;
   routineActions?: Pick<RoutineCliActionController, "submitChat">;
+  beforeDispatch?(): Promise<void>;
 }, owner: ChatOwner, chatId: string, runId: string, approvalId: string,
 inputValue: CanonicalSubmitChatApprovalRequest, provenance?: ApprovalProvenance): Promise<CanonicalChatApprovalSubmissionResponse> {
+  owner = structuredClone(owner);
   const input = CanonicalSubmitChatApprovalRequestSchema.parse(inputValue), active = options.active;
   if (!active || active.chatId !== chatId || active.owner.type !== owner.type || active.owner.ownerId !== owner.ownerId) {
     throw new CanonicalChatOrchestrationError(safeError("capability_mismatch", "This approval is no longer available."), 409);
@@ -30,6 +32,7 @@ inputValue: CanonicalSubmitChatApprovalRequest, provenance?: ApprovalProvenance)
       if (!options.browserApprovals || !provenance?.browserApprovalProof || owner.type !== "personal") {
         throw new CanonicalChatOrchestrationError(safeError("capability_mismatch", "This browser approval is unavailable."), 409);
       }
+      await options.beforeDispatch?.();
       await options.browserApprovals.submit({ ownerId: owner.ownerId, chatId, runId, approvalId, input, proof: provenance.browserApprovalProof });
     } else {
       if (!active.adapter.submitApproval) throw new CanonicalChatOrchestrationError(safeError("capability_mismatch", "This approval is no longer available."), 409);
@@ -38,10 +41,12 @@ inputValue: CanonicalSubmitChatApprovalRequest, provenance?: ApprovalProvenance)
         throw new CanonicalChatOrchestrationError(safeError("capability_mismatch", "This approval decision is no longer available."), 409);
       }
       const state = await options.repository.getAdapterState(owner, { runId, driverKind: active.adapter.driverKind, instanceId: active.instanceId });
+      const parsedState = state ? active.adapter.parseState(state.state) : undefined;
+      await options.beforeDispatch?.();
       await active.adapter.submitApproval({ owner, chatId, runId, approvalId, decision: input.decision, clientRequestId: input.clientRequestId,
         ...(input.actionDigest ? { actionDigest: input.actionDigest } : {}),
         ...(provenance?.platformApprovalProof ? { platformApprovalProof: provenance.platformApprovalProof } : {}),
-        ...(state ? { state: active.adapter.parseState(state.state) } : {}) });
+        ...(state ? { state: parsedState } : {}) });
     }
   } catch (error: unknown) {
     if (error instanceof CanonicalChatOrchestrationError) throw error;
