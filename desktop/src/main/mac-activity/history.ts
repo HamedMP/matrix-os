@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { z } from "zod/v4";
 
 export const MacActivityScope = z.string().regex(/^[a-f0-9]{64}$/);
-export const MacActivityKindSchema = z.enum(["preview", "terminal", "background-checks", "terminal-watch"]);
+export const MacActivityKindSchema = z.enum(["preview", "terminal", "background-checks"]);
 export const MacActivityPhaseSchema = z.enum([
   "awaiting-approval", "ready", "running", "returning", "returned", "declined", "stopped", "expired", "failed", "revoked",
 ]);

@@ -1,7 +1,6 @@
 import type { ReactNode } from "react";
 import type { CanonicalChatDetailResponse } from "@matrix-os/contracts";
 import { type StageChatWorktreeDraft, useChatElectronPreview } from "./ChatElectronPreview";
-import { useChatMacTerminalWatch } from "./ChatMacTerminalWatch";
 import { useChatMacTerminalProbe } from "./ChatMacTerminalProbe";
 import type { ComposerMentionAction } from "./ComposerMentionActions";
 
@@ -17,18 +16,12 @@ export function ChatWorktreeActions({ active, actorId, detail, onDraft, onDiscar
   const terminal = useChatMacTerminalProbe({
     active, actorId, detail, onDraft, onDiscardDraft, previewAvailable: preview.available,
   });
-  const watch = useChatMacTerminalWatch(terminal.watchScope);
-  const actions = [
-    ...(preview.action ? [preview.action] : []),
-    ...(watch.inUse ? [] : terminal.actions),
-    ...(watch.action ? [watch.action] : []),
-  ];
+  const actions = preview.action ? [preview.action, ...terminal.actions] : terminal.actions;
 
   return (
     <>
       {preview.feedback}
       {terminal.feedback}
-      {watch.feedback}
       {children(actions)}
     </>
   );
