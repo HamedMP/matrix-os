@@ -103,6 +103,40 @@ describe("chat list requests", () => {
     expect(fetchMock.mock.calls[0]![1]!.method).toBeUndefined();
   });
 
+  it("resolves a new bearer when a Chat request retries after a wake", async () => {
+    jest.useFakeTimers();
+    jest.spyOn(Math, "random").mockReturnValue(0);
+    try {
+      const expiresAt = Date.now() + 2_000;
+      const getToken = jest.fn(async () => Date.now() < expiresAt ? "near-expiry" : "renewed");
+      const page = { items: [chatRecord("chat_one")] };
+      const waking = {
+        status: 503,
+        headers: { get: (name: string) => name === "retry-after" ? "3" : null },
+        clone: () => ({ text: async () => JSON.stringify({ runtimeState: "waking" }) }),
+      } as unknown as Response;
+      const fetchMock = jest.spyOn(global, "fetch")
+        .mockResolvedValueOnce(waking)
+        .mockImplementation(async (_url, init) => {
+          const bearer = (init?.headers as Record<string, string>).Authorization;
+          return bearer === "Bearer renewed" ? respond(page) : respond({}, 401);
+        });
+      const pending = fetchChats(getToken, gatewayUrl).catch((error: unknown) => error);
+
+      await jest.advanceTimersByTimeAsync(3_000);
+
+      expect(await pending).toEqual(page);
+      expect(getToken).toHaveBeenCalledTimes(2);
+      expect(fetchMock.mock.calls.map(([, init]) => init?.headers)).toEqual([
+        { Authorization: "Bearer near-expiry" },
+        { Authorization: "Bearer renewed" },
+      ]);
+    } finally {
+      jest.useRealTimers();
+      jest.restoreAllMocks();
+    }
+  });
+
   it("continues from a cursor", async () => {
     const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue(respond({ items: [] }));
 

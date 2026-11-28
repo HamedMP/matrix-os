@@ -342,6 +342,33 @@ describe("mobile terminal client", () => {
     jest.useRealTimers();
   });
 
+  it("aborts a reconnect that is still waiting when the terminal closes", async () => {
+    jest.useFakeTimers();
+    const ws = new MockWebSocket() as unknown as WebSocket;
+    let reconnectSignal: AbortSignal | undefined;
+    const onStatus = jest.fn();
+    const reconnect = jest.fn((_fromSeq: number, _ownership: string, signal: AbortSignal) => {
+      reconnectSignal = signal;
+      return new Promise<WebSocket>((_resolve, reject) => {
+        signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+      });
+    });
+    const connection = new MobileTerminalConnection(ws, { sessionId: SESSION_ID, onMessage: jest.fn(), onStatus }, reconnect);
+    connection.attach();
+    (ws as unknown as MockWebSocket).onopen?.();
+    (ws as unknown as MockWebSocket).onclose?.();
+    await jest.advanceTimersByTimeAsync(60_000);
+    expect(reconnect).toHaveBeenCalledTimes(1);
+    onStatus.mockClear();
+
+    connection.close();
+    await jest.advanceTimersByTimeAsync(60_000);
+    expect(reconnectSignal?.aborted).toBe(true);
+    expect(reconnect).toHaveBeenCalledTimes(1);
+    expect(onStatus).not.toHaveBeenCalledWith("error");
+    jest.useRealTimers();
+  });
+
   it("does not reattach to a terminal that has exited", async () => {
     jest.useFakeTimers();
     const ws = new MockWebSocket() as unknown as WebSocket;

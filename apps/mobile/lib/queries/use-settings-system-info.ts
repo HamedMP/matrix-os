@@ -26,9 +26,8 @@ export function useSettingsSystemInfo() {
     queryKey: mobileQueryKeys.systemInfo(userId ?? "signed-out", computerKey),
     enabled: enabled && Boolean(computer),
     queryFn: async () => {
-      const token = await getToken();
-      if (!token || !computer) throw new Error("System information unavailable.");
-      return fetchMobileSystemInfo(token, `${HOSTED_GATEWAY_URL}${computer.gatewayPath}`);
+      if (!computer) throw new Error("System information unavailable.");
+      return fetchMobileSystemInfo(getToken, `${HOSTED_GATEWAY_URL}${computer.gatewayPath}`);
     },
   });
 

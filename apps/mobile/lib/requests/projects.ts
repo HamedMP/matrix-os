@@ -1,7 +1,7 @@
 import { z } from "zod/v4";
 
 import { fetchAuthenticatedAnswer, gatewayRequestUrl, type RequestAnswer } from "@/lib/requests/answers";
-import { buildGatewayRequestUrl, fetchAuthenticatedJson } from "@/lib/requests/http";
+import { buildGatewayRequestUrl, fetchAuthenticatedJson, type RequestToken } from "@/lib/requests/http";
 
 const PROJECTS_UNAVAILABLE_ERROR = "Projects unavailable. Try again.";
 const PROJECT_LIST_LIMIT = 200;
@@ -44,7 +44,7 @@ const ProjectListResponseSchema = z.object({
 });
 
 export function fetchProjects(
-  clerkToken: string,
+  clerkToken: RequestToken,
   computerGatewayUrl: string,
 ): Promise<ProjectSummary[]> {
   let url: string;
@@ -123,7 +123,7 @@ function validProjectName(name: string): string | null {
 type RefusalReason = (status: number, code: string | null) => ProjectRequestFailure;
 
 async function requestProject<T>(
-  clerkToken: string,
+  clerkToken: RequestToken,
   computerGatewayUrl: string,
   path: string,
   method: "POST" | "PATCH",
@@ -155,7 +155,7 @@ async function requestProject<T>(
 
 /** `POST /api/projects`: a new empty project named `name`. */
 export async function createProject(
-  clerkToken: string,
+  clerkToken: RequestToken,
   computerGatewayUrl: string,
   input: CreateProjectInput,
 ): Promise<ProjectSummary> {
@@ -179,7 +179,7 @@ export async function createProject(
 
 /** `PATCH /api/projects/:slug`: changes the display name; the slug stays. */
 export async function renameProject(
-  clerkToken: string,
+  clerkToken: RequestToken,
   computerGatewayUrl: string,
   slug: string,
   name: string,
@@ -205,7 +205,7 @@ export async function renameProject(
  * rejects here as a `ProjectRequestError` with that reason.
  */
 export async function archiveProject(
-  clerkToken: string,
+  clerkToken: RequestToken,
   computerGatewayUrl: string,
   slug: string,
 ): Promise<ProjectSummary> {

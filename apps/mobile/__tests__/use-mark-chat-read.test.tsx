@@ -158,8 +158,9 @@ describe("useMarkChatRead", () => {
     expect(mockUpdateChatReadState).not.toHaveBeenCalled();
     await advance(1);
     expect(mockUpdateChatReadState).toHaveBeenCalledWith(
-      "session-token", gatewayUrl, "chat_one", { type: "mark_read", throughSeq: 4, baseVersion: 2 },
+      expect.any(Function), gatewayUrl, "chat_one", { type: "mark_read", throughSeq: 4, baseVersion: 2 },
     );
+    await expect(mockUpdateChatReadState.mock.calls[0]![0]()).resolves.toBe("session-token");
     await waitFor(() => expect(result.current.chats).toBe("read"));
     expect(readChats).toHaveBeenCalledTimes(2);
     expect(client.getQueryData<CanonicalChatDetailResponse>(detailKey)?.record.readState).toEqual(read);
@@ -236,7 +237,7 @@ describe("useMarkChatRead", () => {
     rerender({ shown: detail({ ...unread, latestIncomingSeq: 6 }, [message(4, "assistant"), message(6, "assistant"), message(7, "assistant", "pending")]) });
     await advance(1_000);
     expect(mockUpdateChatReadState).toHaveBeenCalledTimes(1);
-    expect(mockUpdateChatReadState).toHaveBeenLastCalledWith("session-token", gatewayUrl, "chat_one", { type: "mark_read", throughSeq: 6, baseVersion: 2 });
+    expect(mockUpdateChatReadState).toHaveBeenLastCalledWith(expect.any(Function), gatewayUrl, "chat_one", { type: "mark_read", throughSeq: 6, baseVersion: 2 });
   });
 
   it("cancels a queued read on background or blur; foreground alone never overrides a new manual unread mark", async () => {
@@ -281,7 +282,7 @@ describe("useMarkChatRead", () => {
     rerender({ shown: detail({ ...unread, version: 3, latestIncomingSeq: 6 }, [message(6, "assistant"), message(7, "assistant", "pending")]) });
     await act(async () => finishToken("fresh-token"));
     expect(mockUpdateChatReadState).toHaveBeenCalledTimes(1);
-    expect(mockUpdateChatReadState).toHaveBeenLastCalledWith("fresh-token", gatewayUrl, "chat_one", { type: "mark_read", throughSeq: 6, baseVersion: 3 });
+    expect(mockUpdateChatReadState).toHaveBeenLastCalledWith(expect.any(Function), gatewayUrl, "chat_one", { type: "mark_read", throughSeq: 6, baseVersion: 3 });
   });
 
   it("cancels a token lookup across background/foreground even if the same chat becomes visible again", async () => {
@@ -295,7 +296,7 @@ describe("useMarkChatRead", () => {
     await act(async () => finishToken("obsolete-token"));
     expect(mockUpdateChatReadState).not.toHaveBeenCalled();
     await advance();
-    expect(mockUpdateChatReadState).toHaveBeenLastCalledWith("session-token", gatewayUrl, "chat_one", { type: "mark_read", throughSeq: 4, baseVersion: 2 });
+    expect(mockUpdateChatReadState).toHaveBeenLastCalledWith(expect.any(Function), gatewayUrl, "chat_one", { type: "mark_read", throughSeq: 4, baseVersion: 2 });
   });
 
   it("keeps one read in flight while newer committed replies arrive, then acknowledges the latest snapshot", async () => {
@@ -311,7 +312,7 @@ describe("useMarkChatRead", () => {
     await act(async () => finish(detail(read).record));
     await advance();
     expect(mockUpdateChatReadState).toHaveBeenCalledTimes(2);
-    expect(mockUpdateChatReadState).toHaveBeenLastCalledWith("session-token", gatewayUrl, "chat_one", { type: "mark_read", throughSeq: 6, baseVersion: 3 });
+    expect(mockUpdateChatReadState).toHaveBeenLastCalledWith(expect.any(Function), gatewayUrl, "chat_one", { type: "mark_read", throughSeq: 6, baseVersion: 3 });
   });
 
   it.each(["token", "HTTP"])("acknowledges a newer reply after an older %s operation fails", async (stage) => {
@@ -327,7 +328,7 @@ describe("useMarkChatRead", () => {
     await act(async () => fail(new Error("Unavailable")));
     await advance();
     expect(mockUpdateChatReadState).toHaveBeenCalledTimes(stage === "token" ? 1 : 2);
-    expect(mockUpdateChatReadState).toHaveBeenLastCalledWith("session-token", gatewayUrl, "chat_one", { type: "mark_read", throughSeq: 6, baseVersion: 3 });
+    expect(mockUpdateChatReadState).toHaveBeenLastCalledWith(expect.any(Function), gatewayUrl, "chat_one", { type: "mark_read", throughSeq: 6, baseVersion: 3 });
   });
 
   it.each([false, true])("serializes reads across another view of the same chat (previous view unmounted: %s)", async (unmount) => {
@@ -356,7 +357,7 @@ describe("useMarkChatRead", () => {
     rerender({ shown: detail({ ...read, version: 5 }) });
     rerender({ shown: detail({ ...read, version: 5, unread: true, latestIncomingSeq: 6 }, [message(6, "assistant")]) });
     await advance();
-    expect(mockUpdateChatReadState).toHaveBeenLastCalledWith("session-token", gatewayUrl, "chat_one", { type: "mark_read", throughSeq: 6, baseVersion: 5 });
+    expect(mockUpdateChatReadState).toHaveBeenLastCalledWith(expect.any(Function), gatewayUrl, "chat_one", { type: "mark_read", throughSeq: 6, baseVersion: 5 });
   });
 
   it("does not spend an attempt when no session is available, and retries on the next visit", async () => {
@@ -384,6 +385,6 @@ describe("useMarkChatRead", () => {
     await act(async () => finish(detail(read).record));
     expect(client.getQueryData<CanonicalChatDetailResponse>(detailKey)?.record.readState).toEqual(unread);
     await advance();
-    expect(mockUpdateChatReadState).toHaveBeenLastCalledWith("session-token", "https://app.matrix-os.com/vm/bob", "chat_one", { type: "mark_read", throughSeq: 4, baseVersion: 8 });
+    expect(mockUpdateChatReadState).toHaveBeenLastCalledWith(expect.any(Function), "https://app.matrix-os.com/vm/bob", "chat_one", { type: "mark_read", throughSeq: 4, baseVersion: 8 });
   });
 });

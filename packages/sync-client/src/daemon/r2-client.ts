@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
 import { lstat, readFile, writeFile, mkdir, stat, rename, unlink } from "node:fs/promises";
 import { dirname } from "node:path";
+import { fetchWithWakeRetry } from "../cli/output.js";
 
 const MULTIPART_COMPLETE_TIMEOUT_MS = 60_000;
 
@@ -77,14 +78,13 @@ export async function requestPresignedUrls(
   client: GatewayClient,
   files: { path: string; action: "put" | "get"; hash?: string; size?: number }[],
 ): Promise<PresignedUrl[]> {
-  const res = await fetch(`${client.gatewayUrl}/api/sync/presign`, {
+  const res = await fetchWithWakeRetry(fetch, `${client.gatewayUrl}/api/sync/presign`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       authorization: `Bearer ${client.token}`,
     },
     body: JSON.stringify({ protocolVersion: 3, files }),
-    signal: AbortSignal.timeout(10_000),
   });
 
   if (res.status === 401 || res.status === 403) {
@@ -107,15 +107,14 @@ export async function completeMultipartUpload(
   stagingId: string,
   parts: MultipartUploadedPart[],
 ): Promise<void> {
-  const res = await fetch(`${client.gatewayUrl}/api/sync/multipart/complete`, {
+  const res = await fetchWithWakeRetry(fetch, `${client.gatewayUrl}/api/sync/multipart/complete`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       authorization: `Bearer ${client.token}`,
     },
     body: JSON.stringify({ protocolVersion: 3, path, stagingId, uploadId, parts }),
-    signal: AbortSignal.timeout(MULTIPART_COMPLETE_TIMEOUT_MS),
-  });
+  }, MULTIPART_COMPLETE_TIMEOUT_MS);
 
   if (res.status === 401 || res.status === 403) {
     throw new AuthRejectedError();
@@ -133,14 +132,13 @@ export async function abortMultipartUpload(
   uploadId: string,
   stagingId: string,
 ): Promise<void> {
-  const res = await fetch(`${client.gatewayUrl}/api/sync/multipart/abort`, {
+  const res = await fetchWithWakeRetry(fetch, `${client.gatewayUrl}/api/sync/multipart/abort`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       authorization: `Bearer ${client.token}`,
     },
     body: JSON.stringify({ protocolVersion: 3, path, stagingId, uploadId }),
-    signal: AbortSignal.timeout(10_000),
   });
 
   if (res.status === 401 || res.status === 403) {
@@ -425,7 +423,7 @@ export async function commitFiles(
   files: { path: string; hash: string; size: number; action?: "delete"; stagingId?: string }[],
   expectedVersion: number,
 ): Promise<{ manifestVersion: number; committed: number }> {
-  const res = await fetch(`${client.gatewayUrl}/api/sync/commit`, {
+  const res = await fetchWithWakeRetry(fetch, `${client.gatewayUrl}/api/sync/commit`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -433,8 +431,7 @@ export async function commitFiles(
     },
     body: JSON.stringify({ protocolVersion: 3, files, expectedVersion }),
     // Server publication has a four-minute batch budget plus bounded cleanup.
-    signal: AbortSignal.timeout(360_000),
-  });
+  }, 360_000);
 
   if (res.status === 401 || res.status === 403) {
     throw new AuthRejectedError();
@@ -457,11 +454,10 @@ export async function fetchManifest(client: GatewayClient): Promise<{
   manifest: unknown;
   etag: string | null;
 }> {
-  const res = await fetch(`${client.gatewayUrl}/api/sync/manifest`, {
+  const res = await fetchWithWakeRetry(fetch, `${client.gatewayUrl}/api/sync/manifest`, {
     headers: {
       authorization: `Bearer ${client.token}`,
     },
-    signal: AbortSignal.timeout(10_000),
   });
 
   if (res.status === 401 || res.status === 403) {

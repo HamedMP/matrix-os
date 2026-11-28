@@ -1,5 +1,6 @@
 import { randomUUID } from "../random-uuid.js";
 import {
+  CollaborativeAppDataReadResponseSchema,
   CollaborativeAppDirectoryItemSchema,
   CollaborativeAppLaunchResponseSchema,
   CollaborativeAppQueryResponseSchema,
@@ -23,7 +24,9 @@ export type SharedAppFailureCode =
   | "access_ended"
   | "needs_recheck"
   | "unavailable"
-  | "invalid_response";
+  | "invalid_response"
+  /** The share is view-only; the app stays open and its write is refused. */
+  | "read_only";
 
 export class SharedAppTransportError extends Error {
   constructor(public readonly code: SharedAppFailureCode, public readonly retryable: boolean) {
@@ -43,6 +46,8 @@ export interface SharedAppTransport {
   query(action: unknown): Promise<{ result: unknown; revision: string }>;
   mutate(action: unknown, expectedRevision: string): Promise<{ result: unknown; revision: string; replayed: boolean }>;
   retryMutation(): Promise<{ result: unknown; revision: string; replayed: boolean }>;
+  /** One owner key-value entry for the app's `readData`; `null` when unset. */
+  readData(key: string): Promise<string | null>;
   subscribe(handlers: { onChanged(): void | Promise<void>; onUnavailable(): void }): () => void;
   close(): void;
 }
@@ -159,10 +164,23 @@ export function createSharedAppTransport(input: {
     }
   };
 
+  const readData = async (key: string): Promise<string | null> => {
+    // The owner's gateway normalizes the key exactly like the owner's own bridge.
+    if (key.length < 1 || key.length > 256) throw new SharedAppTransportError("unavailable", false);
+    try {
+      return CollaborativeAppDataReadResponseSchema.parse(await input.direct.request(
+        target.scopeId, "GET", `${base}/data?key=${encodeURIComponent(key)}`,
+      )).value;
+    } catch (error: unknown) {
+      throw normalize(error, "unavailable");
+    }
+  };
+
   return {
     target,
     launch,
     query,
+    readData,
     mutate(action, expectedRevision) {
       if (uncertain.length + inFlight.size >= MAX_PENDING_MUTATIONS) {
         return Promise.reject(new SharedAppTransportError("unavailable", true));
@@ -212,6 +230,7 @@ function normalize(error: unknown, fallback: SharedAppFailureCode): SharedAppTra
   if (error instanceof SharedAppTransportError) return error;
   if (error instanceof CollaborationDirectError) {
     if (error.code === "host_offline") return new SharedAppTransportError("host_offline", true);
+    if (error.code === "read_only") return new SharedAppTransportError("read_only", false);
     if (error.code === "denied" || error.code === "not_found" || error.code === "unauthenticated") {
       return new SharedAppTransportError("access_ended", false);
     }
@@ -228,5 +247,6 @@ function messageFor(code: SharedAppFailureCode): string {
   if (code === "host_offline") return "The owner’s computer is offline.";
   if (code === "access_ended") return "Access to this shared app has ended.";
   if (code === "needs_recheck") return "This shared app needs to be checked again by its owner.";
+  if (code === "read_only") return "This app is view-only. Ask the owner to make it collaborative.";
   return "Shared app is unavailable.";
 }

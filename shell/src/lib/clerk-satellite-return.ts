@@ -4,7 +4,16 @@
  * `redirect_url` back to the satellite page; Matrix may send them back only to
  * these exact https origins (no wildcards, no subdomains, no other ports).
  */
-export const CLERK_SATELLITE_RETURN_ORIGINS = ["https://ai-insights.app"] as const;
+export const CLERK_SATELLITE_RETURN_ORIGINS = ["https://ai-insights.app", "https://matrix.page"] as const;
+
+/**
+ * Matrix.page serves many publications and their frames/assets/data routes, so a
+ * sign-in may only return to one canonical shared app: `/<publication-uuid>`,
+ * optionally with Clerk's sync query (spec 2691 amendment, AL-2).
+ */
+const SATELLITE_RETURN_PATHS: Partial<Record<(typeof CLERK_SATELLITE_RETURN_ORIGINS)[number], RegExp>> = {
+  "https://matrix.page": /^\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?:[?#]|$)/,
+};
 
 const MAX_SATELLITE_RETURN_LENGTH = 2_048;
 // Anything a URL parser might silently rewrite (whitespace, control
@@ -25,6 +34,8 @@ export function clerkSatelliteReturnTarget(value: unknown): string | null {
   // ports, case or percent-encoding tricks that normalize to it are refused.
   const rest = value.slice(origin.length);
   if (!value.startsWith(origin) || (rest !== "" && !/^[/?#]/.test(rest))) return null;
+  const pathRule = SATELLITE_RETURN_PATHS[origin];
+  if (pathRule && (!pathRule.test(rest) || !pathRule.test(url.pathname))) return null;
   return url.href;
 }
 

@@ -131,7 +131,7 @@ describe("project route", () => {
     it("reads the chats of the project by its id and lists them with their last message and time", async () => {
       await renderPortfolio();
 
-      expect(requests.fetchProjectChats).toHaveBeenCalledWith(TOKEN, GATEWAY_URL, "proj_portfolio", { cursor: undefined });
+      expect(requests.fetchProjectChats).toHaveBeenCalledWith(expect.any(Function), GATEWAY_URL, "proj_portfolio", { cursor: undefined });
       const row = screen.getByTestId("project-chat-chat_case");
       expect(within(row).getAllByText(/./).map((node) => node.props.children)).toEqual([
         "Case study",
@@ -177,7 +177,7 @@ describe("project route", () => {
       fireEvent(list(), "endReached");
 
       await waitFor(() => expect(chatTitles()).toEqual(["Case study", "Landing page copy", "Pricing page"]));
-      expect(requests.fetchProjectChats).toHaveBeenLastCalledWith(TOKEN, GATEWAY_URL, "proj_portfolio", { cursor: "page-2" });
+      expect(requests.fetchProjectChats).toHaveBeenLastCalledWith(expect.any(Function), GATEWAY_URL, "proj_portfolio", { cursor: "page-2" });
       expect(screen.queryByRole("button", { name: "Load more chats" })).toBeNull();
 
       fireEvent(list(), "endReached");
@@ -331,13 +331,13 @@ describe("project route", () => {
       fireEvent.press(sendButton());
 
       await waitFor(() => expect(requests.admitChatTurn).toHaveBeenCalledTimes(1));
-      expect(requests.createChat).toHaveBeenCalledWith(TOKEN, GATEWAY_URL, {
+      expect(requests.createChat).toHaveBeenCalledWith(expect.any(Function), GATEWAY_URL, {
         clientRequestId: expect.stringMatching(/^req_/),
         title: "Draft the case study",
         currentSelection: sonnet,
         projectId: "proj_portfolio",
       });
-      expect(requests.admitChatTurn).toHaveBeenCalledWith(TOKEN, GATEWAY_URL, "chat_new", expect.objectContaining({
+      expect(requests.admitChatTurn).toHaveBeenCalledWith(expect.any(Function), GATEWAY_URL, "chat_new", expect.objectContaining({
         parts: [{ type: "text", text: "Draft the case study" }],
         selection: sonnet,
         interactionMode: "default",
@@ -517,7 +517,8 @@ describe("project route", () => {
       fireEvent.changeText(input(), "Draft the case study");
       fireEvent.press(sendButton());
 
-      await waitFor(() => expect(requests.fetchChatDetail).toHaveBeenCalledWith(TOKEN, GATEWAY_URL, "chat_new", { timeoutMs: 2_000 }));
+      await waitFor(() => expect(requests.fetchChatDetail).toHaveBeenCalledWith(expect.any(Function), GATEWAY_URL, "chat_new", { timeoutMs: 2_000 }));
+      await expect(requests.fetchChatDetail.mock.calls[0]![0]()).resolves.toBe(TOKEN);
       await waitFor(() => expect(screen.getByRole("alert").props.children).toBe("Could not confirm delivery. Retry to check again."), { timeout: 8_000 });
       expect(requests.fetchChatDetail).toHaveBeenCalledTimes(5);
       expect(input().props.value).toBe("Draft the case study");
@@ -559,7 +560,7 @@ describe("project route", () => {
       fireEvent.press(sendButton());
 
       await waitFor(() => expect(shell.setSelectionOverride).toHaveBeenCalledWith(opus));
-      expect(requests.createChat).toHaveBeenCalledWith(TOKEN, GATEWAY_URL, expect.objectContaining({ currentSelection: opus }));
+      expect(requests.createChat).toHaveBeenCalledWith(expect.any(Function), GATEWAY_URL, expect.objectContaining({ currentSelection: opus }));
     });
 
     it("lets the next new chat follow the project's latest chat once a chat is started with the model chosen here", async () => {
@@ -613,7 +614,7 @@ describe("project route", () => {
       await mockRoutes.renderProjectRoute(<ProjectRoute />, { projectId: mockRoutes.admin.id });
 
       await waitFor(() => expect(modelPickerProps()).toMatchObject({ catalogLoading: false, selection: opus }));
-      expect(requests.fetchProjectChats).toHaveBeenLastCalledWith(TOKEN, GATEWAY_URL, mockRoutes.admin.id, expect.anything());
+      expect(requests.fetchProjectChats).toHaveBeenLastCalledWith(expect.any(Function), GATEWAY_URL, mockRoutes.admin.id, expect.anything());
     });
 
     it("leaves the person where they are when they left the project before the chat was started", async () => {

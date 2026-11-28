@@ -1,7 +1,7 @@
 import { RoutineActionIdSchema } from "@matrix-os/contracts";
 import { NativeRoutineActionConfirmation } from "./RoutineActionConfirmation";
 import { z } from "zod/v4";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Text } from "react-native";
 import { Button } from "@/components/ui";
 import { StyleSheet } from "react-native-unistyles";
@@ -41,6 +41,10 @@ export function CanonicalApprovalMessage({ approval, chatId, gatewayUrl, onSettl
   const scope = useRef<object>({});
   const grantRead = useRef<object>({});
   const inFlight = useRef(false);
+  const getScopedToken = useCallback(async (current: object) => {
+    const token = await getToken();
+    return scope.current === current ? token : null;
+  }, [getToken]);
   // At most seven decision keys; preserve an ambiguous request's id on retry.
   const requestIds = useRef<Partial<Record<CanonicalChatApprovalDecision | BrowserPermissionChoice, string>>>({});
   useEffect(() => {
@@ -51,13 +55,13 @@ export function CanonicalApprovalMessage({ approval, chatId, gatewayUrl, onSettl
   useEffect(() => {
     const current = scope.current; const read = {}; grantRead.current = read; let cancelled = false;
     if (approval.browserApproval) void (async () => {
-      const token = await getToken(); if (!token) throw new Error("Not signed in");
-      const result = await fetchAuthenticatedJson({ url: buildGatewayRequestUrl(gatewayUrl, `/api/chats/${encodeURIComponent(chatId)}/browser-grants`), token,
+      const result = await fetchAuthenticatedJson({ url: buildGatewayRequestUrl(gatewayUrl, `/api/chats/${encodeURIComponent(chatId)}/browser-grants`),
+        token: () => getScopedToken(current),
         schema: z.strictObject({ grant: BrowserGrantViewSchema.nullable() }), errorMessage: "Could not check browser access." });
       if (!cancelled && scope.current === current && grantRead.current === read) setGrant(prior => reconcileBrowserGrantObservation(prior, result.grant, chatId));
     })().catch((error: unknown) => { console.warn("[browser-permission] Grant read failed", browserPermissionErrorKind(error)); if (!cancelled && scope.current === current && grantRead.current === read) setError("Could not check browser access. Refresh this Chat."); });
     return () => { cancelled = true; };
-  }, [chatId, gatewayUrl, approval.approvalId, approval.runId, approval.browserGrant, approval.browserApproval, getToken, grantRefresh, grantRefreshKey]);
+  }, [chatId, gatewayUrl, approval.approvalId, approval.runId, approval.browserGrant, approval.browserApproval, getScopedToken, grantRefresh, grantRefreshKey]);
   useEffect(() => {
     if (!approval.pending || !approval.browserApproval) return;
     const timer = setInterval(() => setClock(Date.now()), 1000); return () => clearInterval(timer);
@@ -71,14 +75,12 @@ export function CanonicalApprovalMessage({ approval, chatId, gatewayUrl, onSettl
     setSending(decision);
     setError(null);
     try {
-      const token = await getToken();
-      if (!token) throw new Error("Not signed in");
       const clientRequestId = requestIds.current[browserChoice ?? decision] ??= canonicalChatRequestId();
       const body = browserChoice ? browserPermissionRequest(approval, browserChoice, clientRequestId) : CanonicalSubmitChatApprovalRequestSchema.parse({ decision, clientRequestId,
         ...(approval.actionDigest !== undefined ? { actionDigest: approval.actionDigest } : {}) });
       await fetchAuthenticatedJson({
         url: buildGatewayRequestUrl(gatewayUrl, `/api/chats/${encodeURIComponent(chatId)}/runs/${encodeURIComponent(approval.runId)}/approvals/${encodeURIComponent(approval.approvalId)}`),
-        token, method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+        token: () => getScopedToken(current), method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
         schema: CanonicalChatApprovalSubmissionResponseSchema,
         errorMessage: "Could not submit approval. Try again.",
       });
@@ -123,10 +125,9 @@ export function CanonicalApprovalMessage({ approval, chatId, gatewayUrl, onSettl
     {grant?.state === "active" ? <Button label="Undo" variant="outline" fullWidth disabled={submitting} onPress={() => void (async () => {
       if (inFlight.current) return; const current = scope.current; inFlight.current = true; setSubmitting(true); setError(null);
       try {
-        const token = await getToken(); if (!token) throw new Error("Not signed in");
         const body = undo.request(grant, canonicalChatRequestId);
         const result = await fetchAuthenticatedJson({ url: buildGatewayRequestUrl(gatewayUrl, `/api/chats/${encodeURIComponent(chatId)}/browser-grants/${encodeURIComponent(grant.id)}`),
-          token, method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), schema: z.strictObject({ grant: BrowserGrantViewSchema }), errorMessage: "Could not undo browser access." });
+          token: () => getScopedToken(current), method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), schema: z.strictObject({ grant: BrowserGrantViewSchema }), errorMessage: "Could not undo browser access." });
         if (result.grant.state !== "revoked") throw new Error("Access not removed");
         if (scope.current === current) {
           grantRead.current = {};

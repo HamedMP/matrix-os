@@ -42,6 +42,8 @@ export interface GatewayChannels {
   channelManager: ChannelManager;
   pushAdapter: PushAdapter;
   codingAgentAttentionNotifications: ReturnType<typeof registerCodingAgentAttentionNotifications> | undefined;
+  /** Settles (never rejects) once every enabled adapter has finished starting or failed to start. */
+  ready: Promise<void>;
 }
 
 export function initializeGatewayChannels(options: GatewayChannelStartupOptions): GatewayChannels {
@@ -214,7 +216,11 @@ export function initializeGatewayChannels(options: GatewayChannelStartupOptions)
     db: options.notificationServices.kyselyInstance, push: pushAdapter, preferences: codingAgentNotificationPreferenceStore.preferences,
   });
 
-  channelManager.start().then(() => {
+  const started = channelManager.start();
+  const ready = started.then(() => undefined, (err: unknown) => {
+    logBestEffortFailure("Channel startup failed", err);
+  });
+  started.then(() => {
     channelManager.replay().catch((err: unknown) => {
       logBestEffortFailure("Failed to replay queued channel messages", err);
     });
@@ -249,7 +255,7 @@ export function initializeGatewayChannels(options: GatewayChannelStartupOptions)
     }
   });
 
-  return { channelManager, pushAdapter, codingAgentAttentionNotifications, async closeChannels() {
+  return { channelManager, pushAdapter, codingAgentAttentionNotifications, ready, async closeChannels() {
     codingAgentAttentionNotifications?.dispose();
     await options.notificationServices?.notificationRouter?.close();
     pushAdapter.dispose();

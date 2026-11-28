@@ -10,8 +10,8 @@ import {
   type InstantiateBotRequest, type InstantiateBotResponse,
   type ResolveBotInteractionRequest, type ResolveBotInteractionResponse,
 } from "@matrix-os/contracts";
-import { fetchAuthenticatedAnswer, gatewayRequestUrl, type RequestAnswer } from "./answers";
-import { buildGatewayRequestUrl, fetchAuthenticatedJson, fetchAuthenticatedResponse } from "./http";
+import { gatewayRequestUrl } from "./answers";
+import { buildGatewayRequestUrl, fetchAuthenticatedJson, fetchAuthenticatedResponse, type RequestToken } from "./http";
 
 export interface NativeBotChatSnapshot {
   agentId: string;
@@ -37,7 +37,7 @@ function agentPath(agentId: string) {
   return `/api/chat-agents/${encodeURIComponent(ChatAgentIdSchema.parse(agentId))}`;
 }
 
-export async function fetchNativeBotRecipes(token: string, gatewayUrl: string): Promise<BotRecipeSummary[]> {
+export async function fetchNativeBotRecipes(token: RequestToken, gatewayUrl: string): Promise<BotRecipeSummary[]> {
   const result = await fetchAuthenticatedJson({
     url: buildGatewayRequestUrl(gatewayUrl, "/api/chat-agents/bot-recipes"), token,
     schema: BotRecipeListResponseSchema, errorMessage: STATUS_ERROR,
@@ -45,7 +45,7 @@ export async function fetchNativeBotRecipes(token: string, gatewayUrl: string): 
   return result.recipes;
 }
 
-export function instantiateNativeBot(token: string, gatewayUrl: string,
+export function instantiateNativeBot(token: RequestToken, gatewayUrl: string,
   input: InstantiateBotRequest): Promise<InstantiateBotResponse> {
   return fetchAuthenticatedJson({
     url: buildGatewayRequestUrl(gatewayUrl, "/api/chat-agents/instantiate"), token,
@@ -55,7 +55,7 @@ export function instantiateNativeBot(token: string, gatewayUrl: string,
   });
 }
 
-export async function fetchNativeBotChat(token: string, gatewayUrl: string, chatId: string): Promise<NativeBotChatSnapshot | null> {
+export async function fetchNativeBotChat(token: RequestToken, gatewayUrl: string, chatId: string): Promise<NativeBotChatSnapshot | null> {
   const chat = chatPath(chatId);
   // A computer whose gateway predates bots has no such route: its chats simply
   // have no bot, which is not an error to show or a request to keep retrying.
@@ -90,7 +90,7 @@ export async function fetchNativeBotChat(token: string, gatewayUrl: string, chat
   };
 }
 
-export function resolveNativeBotInteraction(token: string, gatewayUrl: string, chatId: string,
+export function resolveNativeBotInteraction(token: RequestToken, gatewayUrl: string, chatId: string,
   interactionId: string, input: ResolveBotInteractionRequest): Promise<ResolveBotInteractionResponse> {
   const id = BotInteractionIdSchema.parse(interactionId);
   const body = ResolveBotInteractionRequestSchema.parse(input);
@@ -101,13 +101,13 @@ export function resolveNativeBotInteraction(token: string, gatewayUrl: string, c
   });
 }
 
-export async function revokeNativeBotGrant(token: string, gatewayUrl: string, agentId: string, grantId: string): Promise<void> {
+export async function revokeNativeBotGrant(token: RequestToken, gatewayUrl: string, agentId: string, grantId: string): Promise<void> {
   const id = BotGrantIdSchema.parse(grantId);
   await fetchAuthenticatedJson({ url: buildGatewayRequestUrl(gatewayUrl, `${agentPath(agentId)}/grants/${encodeURIComponent(id)}`),
     token, method: "DELETE", schema: RevokeBotGrantResponseSchema, errorMessage: ACCESS_ERROR });
 }
 
-export async function mutateNativeBotMemory(token: string, gatewayUrl: string, agentId: string, itemId: string,
+export async function mutateNativeBotMemory(token: RequestToken, gatewayUrl: string, agentId: string, itemId: string,
   action: "confirm" | "forget", input: BotMemoryMutationRequest): Promise<void> {
   const id = BotMemoryItemIdSchema.parse(itemId);
   const body = BotMemoryMutationRequestSchema.parse(input);
@@ -117,7 +117,7 @@ export async function mutateNativeBotMemory(token: string, gatewayUrl: string, a
   schema: BotMemoryMutationResponseSchema, errorMessage: ACCESS_ERROR });
 }
 
-export async function updateNativeBotModel(token: string, gatewayUrl: string, agentId: string,
+export async function updateNativeBotModel(token: RequestToken, gatewayUrl: string, agentId: string,
   baseRevision: number, selection: CanonicalChatModelSelection): Promise<void> {
   const validated = UpdateChatAgentRequestSchema.parse({ baseRevision, selection });
   const body = { baseRevision: validated.baseRevision, selection: validated.selection };
@@ -169,40 +169,41 @@ function agentChatUrl(gatewayUrl: string, chatId: string, suffix: string, query?
 /** A write whose 404 and 409 answers mean something to the screen. */
 async function writeAgent<T>(request: {
   url: string;
-  token: string;
+  token: RequestToken;
   method: "POST" | "PATCH";
   body: unknown;
   schema: { parse(value: unknown): T };
 }): Promise<T> {
-  let answer: RequestAnswer<T>;
+  let answer: { value: T } | { refusalStatus: number };
   try {
-    answer = await fetchAuthenticatedAnswer({
+    answer = await fetchAuthenticatedResponse<typeof answer>({
       url: request.url,
       token: request.token,
-      schema: request.schema,
       errorMessage: AGENT_UNAVAILABLE_ERROR,
-      refusalStatuses: [404, 409],
+      expectedStatuses: [404, 409],
       method: request.method,
       headers: JSON_HEADERS,
       body: JSON.stringify(request.body),
-    });
+    }, async (response) => response.ok
+      ? { value: request.schema.parse(await response.json()) }
+      : { refusalStatus: response.status });
   } catch (error: unknown) {
     console.warn("[mobile] agent request failed", error instanceof Error ? error.name : "unknown");
     throw new AgentRequestError("unavailable");
   }
-  if (answer.ok) return answer.value;
-  throw new AgentRequestError(answer.status === 404 ? "not_found" : "conflict");
+  if ("value" in answer) return answer.value;
+  throw new AgentRequestError(answer.refusalStatus === 404 ? "not_found" : "conflict");
 }
 
 /** `GET /api/chat-agents`: the saved agents, archived ones left out. `enabled` is false when agents are switched off. */
-export function fetchAgents(token: string, gatewayUrl: string): Promise<ChatAgentListResponse> {
+export function fetchAgents(token: RequestToken, gatewayUrl: string): Promise<ChatAgentListResponse> {
   const url = gatewayRequestUrl(gatewayUrl, "/api/chat-agents");
   if (!url) return Promise.reject(new Error(AGENTS_UNAVAILABLE_ERROR));
   return fetchAuthenticatedJson({ url, token, schema: ChatAgentListResponseSchema, errorMessage: AGENTS_UNAVAILABLE_ERROR });
 }
 
 /** `GET /api/chat-agents/:agentId/direct-chat`: the agent's own chat, or null when it has none yet. */
-export async function fetchAgentDirectChat(token: string, gatewayUrl: string, agentId: string): Promise<string | null> {
+export async function fetchAgentDirectChat(token: RequestToken, gatewayUrl: string, agentId: string): Promise<string | null> {
   const url = agentUrl(gatewayUrl, agentId, "/direct-chat");
   if (!url) throw new Error(AGENT_UNAVAILABLE_ERROR);
   const binding = await fetchAuthenticatedJson({
@@ -212,7 +213,7 @@ export async function fetchAgentDirectChat(token: string, gatewayUrl: string, ag
 }
 
 /** `POST /api/chat-agents/:agentId/direct-chat`: the agent's own chat, created if it had none. */
-export async function ensureAgentDirectChat(token: string, gatewayUrl: string, agentId: string): Promise<string> {
+export async function ensureAgentDirectChat(token: RequestToken, gatewayUrl: string, agentId: string): Promise<string> {
   const url = agentUrl(gatewayUrl, agentId, "/direct-chat");
   if (!url) throw new AgentRequestError(ChatAgentIdSchema.safeParse(agentId).success ? "unavailable" : "not_found");
   const binding = await writeAgent({ url, token, method: "POST", body: {}, schema: BotChatBindingResponseSchema });
@@ -225,7 +226,7 @@ export async function ensureAgentDirectChat(token: string, gatewayUrl: string, a
  * A `baseRevision` that is no longer the agent's revision rejects with the
  * reason `conflict`: load the agent again and retry with its new revision.
  */
-export async function archiveAgent(token: string, gatewayUrl: string, agentId: string, baseRevision: number): Promise<ChatAgent> {
+export async function archiveAgent(token: RequestToken, gatewayUrl: string, agentId: string, baseRevision: number): Promise<ChatAgent> {
   const body = UpdateChatAgentRequestSchema.safeParse({ baseRevision, archived: true });
   const url = agentUrl(gatewayUrl, agentId);
   if (!url) throw new AgentRequestError(ChatAgentIdSchema.safeParse(agentId).success ? "unavailable" : "not_found");
@@ -237,14 +238,14 @@ export async function archiveAgent(token: string, gatewayUrl: string, agentId: s
 }
 
 /** `GET /api/chats/:chatId/bot-tasks`: the unfinished tasks of the agent whose chat this is, newest first. */
-export async function fetchAgentTasks(token: string, gatewayUrl: string, chatId: string): Promise<BotTaskSummary[]> {
+export async function fetchAgentTasks(token: RequestToken, gatewayUrl: string, chatId: string): Promise<BotTaskSummary[]> {
   const url = agentChatUrl(gatewayUrl, chatId, "/bot-tasks");
   if (!url) throw new Error(AGENT_STATUS_ERROR);
   return (await fetchAuthenticatedJson({ url, token, schema: BotTaskListResponseSchema, errorMessage: AGENT_STATUS_ERROR })).tasks;
 }
 
 /** `GET /api/chats/:chatId/interactions`: what the agent in this chat is waiting on the person for. */
-export async function fetchAgentInteractions(token: string, gatewayUrl: string, chatId: string): Promise<BotInteraction[]> {
+export async function fetchAgentInteractions(token: RequestToken, gatewayUrl: string, chatId: string): Promise<BotInteraction[]> {
   const url = agentChatUrl(gatewayUrl, chatId, "/interactions", { includeRecovery: "true" });
   if (!url) throw new Error(AGENT_STATUS_ERROR);
   return (await fetchAuthenticatedJson({ url, token, schema: interactionsSchema, errorMessage: AGENT_STATUS_ERROR })).interactions;

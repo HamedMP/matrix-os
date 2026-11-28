@@ -81,7 +81,8 @@ describe("projects route", () => {
       fireEvent.press(screen.getByRole("button", { name: "Save" }));
 
       await waitFor(() => expect(screen.getByText("Project renamed")).toBeTruthy());
-      expect(requests.renameProject).toHaveBeenCalledWith(TOKEN, GATEWAY_URL, "portfolio", "Case studies");
+      expect(requests.renameProject).toHaveBeenCalledWith(expect.any(Function), GATEWAY_URL, "portfolio", "Case studies");
+      await expect(requests.renameProject.mock.calls[0]![0]()).resolves.toBe(TOKEN);
       expect(sheet.isPresented).toBe(false);
     });
 
@@ -117,7 +118,8 @@ describe("projects route", () => {
       await act(async () => buttons.find((button) => button.text === "Archive")!.onPress?.());
 
       await waitFor(() => expect(screen.getByText("Project archived")).toBeTruthy());
-      expect(requests.archiveProject).toHaveBeenCalledWith(TOKEN, GATEWAY_URL, "portfolio");
+      expect(requests.archiveProject).toHaveBeenCalledWith(expect.any(Function), GATEWAY_URL, "portfolio");
+      await expect(requests.archiveProject.mock.calls[0]![0]()).resolves.toBe(TOKEN);
     });
   });
 
@@ -138,7 +140,8 @@ describe("projects route", () => {
     it("lists the computer's projects in the server's order", async () => {
       await renderList();
 
-      expect(requests.fetchProjects).toHaveBeenCalledWith(TOKEN, GATEWAY_URL);
+      expect(requests.fetchProjects).toHaveBeenCalledWith(expect.any(Function), GATEWAY_URL);
+      await expect(requests.fetchProjects.mock.calls[0]![0]()).resolves.toBe(TOKEN);
       expect(rowNames()).toEqual(["Portfolio", "Matrix", "Admin"]);
     });
 
@@ -279,10 +282,11 @@ describe("projects route", () => {
 
       fireEvent.press(createButton());
       await waitFor(() => expect(createButton().props.accessibilityState).toMatchObject({ busy: true }));
-      expect(requests.createProject).toHaveBeenCalledWith(TOKEN, GATEWAY_URL, {
+      expect(requests.createProject).toHaveBeenCalledWith(expect.any(Function), GATEWAY_URL, {
         name: "Field notes",
         clientRequestId: expect.stringMatching(/^req_[A-Za-z0-9]+$/),
       });
+      await expect(requests.createProject.mock.calls[0]![0]()).resolves.toBe(TOKEN);
       // Nothing moves until the server answers.
       expect(sheet.isPresented).toBe(true);
       expect(router.push).not.toHaveBeenCalled();

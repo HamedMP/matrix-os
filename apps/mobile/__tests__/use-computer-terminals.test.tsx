@@ -5,13 +5,14 @@ const mockRenameTerminalSession = jest.fn();
 const mockDeleteTerminalSession = jest.fn();
 const mockNextName = jest.fn();
 let mockSession: { isSignedIn: boolean; userId: string | null; token: string | null };
+const mockGetToken = async () => mockSession.token;
 
 jest.mock("@clerk/clerk-expo", () => ({
   useAuth: () => ({
     isLoaded: true,
     isSignedIn: mockSession.isSignedIn,
     userId: mockSession.userId,
-    getToken: async () => mockSession.token,
+    getToken: mockGetToken,
   }),
 }));
 
@@ -37,6 +38,7 @@ import { QueryClient, QueryClientProvider, notifyManager } from "@tanstack/react
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react-native";
 
 import { useComputerTerminals } from "../lib/queries/use-computer-terminals";
+import { createTerminalSession } from "../lib/requests/terminals";
 import { disposeTestQueryClient } from "./query-test-cleanup";
 
 const COMPUTER_URL = "https://app.matrix-os.com/vm/solar-vale";
@@ -94,7 +96,7 @@ describe("useComputerTerminals", () => {
 
     expect(result.current.isPending).toBe(true);
     await waitFor(() => expect(result.current.sessions).toEqual([session]));
-    expect(mockFetchTerminalSessions).toHaveBeenCalledWith("session-token", COMPUTER_URL);
+    expect(mockFetchTerminalSessions).toHaveBeenCalledWith(mockGetToken, COMPUTER_URL);
     expect(result.current.isError).toBe(false);
   });
 
@@ -147,7 +149,56 @@ describe("useComputerTerminals", () => {
     await act(async () => { created = await result.current.createSession(); });
 
     expect(created).toBe(`${WORKSPACE}:tt_0000000000000000000000000000000b`);
-    expect(mockCreateTerminalSession).toHaveBeenCalledWith("session-token", COMPUTER_URL, "calm-otter");
+    expect(mockCreateTerminalSession).toHaveBeenCalledWith(mockGetToken, COMPUTER_URL, "calm-otter");
+  });
+
+  it("renews the bearer after the workspace wakes and uses it to create the tab", async () => {
+    mockCreateTerminalSession.mockImplementationOnce(createTerminalSession);
+    const { result } = renderHook(() => useComputerTerminals(), { wrapper });
+    await waitFor(() => expect(result.current.sessions).toEqual([session]));
+    jest.useFakeTimers();
+    const random = jest.spyOn(Math, "random").mockReturnValue(0);
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => undefined);
+    const observed: Array<{ url: string; bearer: string }> = [];
+    const fetchMock = jest.spyOn(global, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      const bearer = (init?.headers as Record<string, string>).Authorization;
+      observed.push({ url, bearer });
+      if (observed.length === 1) return {
+        status: 503,
+        headers: { get: (name: string) => name === "retry-after" ? "1" : null },
+        clone: () => ({ text: async () => '{"runtimeState":"waking"}' }),
+      } as unknown as Response;
+      if (bearer !== "Bearer renewed") return { status: 401, ok: false } as Response;
+      const time = "2026-11-26T00:00:00.000Z";
+      const body = url.endsWith("/ensure")
+        ? { workspace: { id: WORKSPACE, scope: "main", tabs: [] } }
+        : { tab: {
+          id: TAB, workspaceId: WORKSPACE, name: "calm-otter", cwd: "projects", revision: 1,
+          order: 0, status: "running", accessScope: "owner", createdAt: time, updatedAt: time,
+        } };
+      return { status: 200, ok: true, json: async () => body } as Response;
+    });
+    try {
+      await act(async () => {
+        const creation = result.current.createSession().catch((error: unknown) => error);
+        await jest.advanceTimersByTimeAsync(500);
+        mockSession.token = "renewed";
+        await jest.advanceTimersByTimeAsync(500);
+
+        expect(await creation).toBe(`${WORKSPACE}:${TAB}`);
+      });
+      expect(observed).toEqual([
+        { url: `${COMPUTER_URL}/api/terminal/workspaces/ensure`, bearer: "Bearer session-token" },
+        { url: `${COMPUTER_URL}/api/terminal/workspaces/ensure`, bearer: "Bearer renewed" },
+        { url: `${COMPUTER_URL}/api/terminal/workspaces/${WORKSPACE}/tabs`, bearer: "Bearer renewed" },
+      ]);
+    } finally {
+      fetchMock.mockRestore();
+      random.mockRestore();
+      warn.mockRestore();
+      jest.useRealTimers();
+    }
   });
 
   it("still creates a terminal when every generated name is already in the list", async () => {
@@ -159,7 +210,7 @@ describe("useComputerTerminals", () => {
     await act(async () => { await result.current.createSession(); });
 
     expect(mockNextName).toHaveBeenCalledTimes(3);
-    expect(mockCreateTerminalSession).toHaveBeenCalledWith("session-token", COMPUTER_URL, "swift-falcon");
+    expect(mockCreateTerminalSession).toHaveBeenCalledWith(mockGetToken, COMPUTER_URL, "swift-falcon");
   });
 
   it("renames against the listed revision and shows the new name once reloaded", async () => {
@@ -171,7 +222,7 @@ describe("useComputerTerminals", () => {
 
     await act(async () => { await result.current.renameSession(result.current.sessions[0]!, "Deploy logs"); });
 
-    expect(mockRenameTerminalSession).toHaveBeenCalledWith("session-token", COMPUTER_URL, session, "Deploy logs");
+    expect(mockRenameTerminalSession).toHaveBeenCalledWith(mockGetToken, COMPUTER_URL, session, "Deploy logs");
     await waitFor(() => expect(result.current.sessions).toEqual([{ ...session, name: "Deploy logs", revision: 4 }]));
   });
 
@@ -196,7 +247,7 @@ describe("useComputerTerminals", () => {
 
     await act(async () => { await result.current.deleteSession(result.current.sessions[0]!); });
 
-    expect(mockDeleteTerminalSession).toHaveBeenCalledWith("session-token", COMPUTER_URL, session);
+    expect(mockDeleteTerminalSession).toHaveBeenCalledWith(mockGetToken, COMPUTER_URL, session);
     await waitFor(() => expect(result.current.sessions).toEqual([]));
   });
 

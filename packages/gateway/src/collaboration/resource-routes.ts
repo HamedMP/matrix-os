@@ -11,6 +11,7 @@ import {
   CollaborationAppAssetPathSchema,
   CollaborationAppInstanceIdSchema,
   CollaborationAppInstanceSchema,
+  CollaborativeAppDataReadResponseSchema,
   CollaborativeAppQueryResponseSchema,
   CollaborationAppViewRequestSchema,
   CollaborationCatalogEntrySchema,
@@ -22,6 +23,8 @@ import {
   CollaborationIdSchema,
 } from "@matrix-os/contracts";
 import type { Context, Hono } from "hono";
+import { z } from "zod/v4";
+import { COLLABORATIVE_APP_ACCESS_HEADER } from "./collaborative-app-access.js";
 import { CollaborationAuthorizationError, type AuthorizedCollaborationContext } from "./authority.js";
 import { readDirectCredentials } from "./direct-routes.js";
 import type { AppInstanceAdapter } from "./app-instance-adapter.js";
@@ -44,6 +47,8 @@ export interface CollaborationResourceServices {
 }
 
 const MAX_STREAM_BYTES = 256 * 1024 * 1024;
+/** The adapter normalizes the key exactly like the owner's own bridge; here it is only bounded. */
+const DataReadQuerySchema = z.object({ key: z.string().min(1).max(256) }).strict();
 
 function safeResponseContentType(value: string | undefined): string {
   if (!value) return "application/octet-stream";
@@ -254,6 +259,17 @@ export function registerResourceRoutes(routes: Hono, options: CollaborationRoute
     }));
   }));
 
+  routes.get("/api/collaboration/scopes/:scopeId/apps/:appId/data", async (c) => handle(c, async () => {
+    const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
+    const appId = CollaborationAppInstanceIdSchema.parse(c.req.param("appId"));
+    const { key } = DataReadQuerySchema.parse(exactQuery(c, ["key"]));
+    const apps = requireApps(requireResources(options));
+    if (!apps.readData) throw new ResourceCatalogError("unavailable");
+    const context = await authorize(options, c, new Uint8Array(), "read", scopeId);
+    c.header("Cache-Control", "private, no-store");
+    return c.json(CollaborativeAppDataReadResponseSchema.parse(await apps.readData(context, appId, key)));
+  }));
+
   routes.get("/api/collaboration/scopes/:scopeId/apps/:appId/assets/:assetPath{.+}", async (c) => handle(c, async () => {
     const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
     const appId = CollaborationAppInstanceIdSchema.parse(c.req.param("appId"));
@@ -279,6 +295,8 @@ export function registerResourceRoutes(routes: Hono, options: CollaborationRoute
       });
       throw error;
     }
+    // ENG-579: the platform launcher installs the read-only bridge only for view-only shares.
+    if (instance.access === "read_only" && assetPath === "index.html") c.header(COLLABORATIVE_APP_ACCESS_HEADER, "read_only");
     return streamResponse(c, asset, assetPath.split("/").at(-1) ?? "asset", options);
   }));
 

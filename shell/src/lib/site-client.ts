@@ -1,4 +1,4 @@
-import { SITE_PUBLISH_CLIENT_TIMEOUT_MS, SitePublishRequestSchema, SiteMetadataSchema, SitePublishingSchema, SiteRecordSchema, SiteSubmissionsResponseSchema, SiteSlugAvailabilitySchema, type SiteSlugAvailability, type SiteRecord, type SitePublishing, type SiteSubmission, type SiteSubmissionsResponse, SiteEmailInvitationsCapabilitySchema, type SiteEmailInvitationsCapability, SiteEmailInvitationCreateRequestSchema, SiteEmailInvitationCreateResponseSchema, SiteEmailInvitationMutationRequestSchema, SiteEmailInvitationMutationResponseSchema, SiteEmailInvitationPageSchema, SiteInvitationAuditPageSchema, SiteIdSchema, type SiteEmailInvitationPage } from "@matrix-os/contracts";
+import { SITE_PUBLISH_CLIENT_TIMEOUT_MS, SitePublishRequestSchema, SiteMetadataSchema, SitePublishingSchema, SiteRecordSchema, SiteSubmissionsResponseSchema, SiteSlugAvailabilitySchema, type SiteSlugAvailability, type SiteRecord, type SitePublishing, type SiteSubmission, type SiteSubmissionsResponse, SiteEmailInvitationReadinessSchema, type SiteEmailInvitationReadiness, SiteEmailInvitationCreateRequestSchema, SiteEmailInvitationCreateResponseSchema, SiteEmailInvitationMutationRequestSchema, SiteEmailInvitationMutationResponseSchema, SiteEmailInvitationPageSchema, SiteInvitationAuditPageSchema, SiteIdSchema, type SiteEmailInvitationPage } from "@matrix-os/contracts";
 import type { z } from "zod/v4";
 
 type SiteEmailInvitationCreateResponse = z.infer<typeof SiteEmailInvitationCreateResponseSchema>;
@@ -17,7 +17,7 @@ export interface SiteClient {
   rollback(app: string, value: { versionId: string; baseRevision: number }, signal: AbortSignal): Promise<SiteRecord>;
   unpublish(app: string, revision: number, signal: AbortSignal): Promise<SiteRecord>;
   getConfig(app: string, signal: AbortSignal): Promise<SitePublishing>;
-  emailInvitationCapabilities?(app: string, signal: AbortSignal): Promise<SiteEmailInvitationsCapability>;
+  emailInvitationCapabilities?(app: string, signal: AbortSignal): Promise<SiteEmailInvitationReadiness>;
   emailInvitations(app: string, signal: AbortSignal, cursor?: string | null): Promise<SiteEmailInvitationPage>;
   createEmailInvitations(app: string, value: { baseRevision: number; emailAddresses: string[] }, signal: AbortSignal): Promise<SiteEmailInvitationCreateResponse>;
   resendEmailInvitation(app: string, id: string, value: { baseRevision: number; invitationRevision: number }, signal: AbortSignal): Promise<SiteEmailInvitationMutationResponse>;
@@ -74,7 +74,7 @@ export function createSiteClient(transport: SiteTransport): SiteClient {
       const value = await transport.get<{ manifest?: { publishing?: unknown } }>(`/api/apps/${encodeURIComponent(app)}/manifest`, { signal });
       return SitePublishingSchema.parse(value.manifest?.publishing ?? { data: {}, forms: [] });
     },
-    emailInvitationCapabilities: async (app, signal) => SiteEmailInvitationsCapabilitySchema.parse(
+    emailInvitationCapabilities: async (app, signal) => SiteEmailInvitationReadinessSchema.parse(
       await transport.get(`${sitePath(app)}/email-invitation-capabilities`, { signal })),
     emailInvitations: async (app, signal, cursor = null) => SiteEmailInvitationPageSchema.parse(
       await transport.get(`${sitePath(app)}/invitations?limit=50${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`, { signal })),

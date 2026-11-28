@@ -31,7 +31,7 @@ import {
 } from "@matrix-os/contracts";
 
 import { gatewayRequestUrl } from "./answers";
-import { buildGatewayRequestUrl, fetchAuthenticatedJson, fetchAuthenticatedResponse } from "./http";
+import { buildGatewayRequestUrl, createRequestTimeout, fetchAuthenticatedJson, fetchAuthenticatedResponse, type RequestToken } from "./http";
 
 const CHATS_UNAVAILABLE_ERROR = "Chats unavailable. Try again.";
 const CHAT_CREATE_ERROR = "Could not start a new chat. Try again.";
@@ -67,7 +67,7 @@ function validProjectId(projectId: string): boolean {
 }
 
 function fetchChatPage(
-  clerkToken: string,
+  clerkToken: RequestToken,
   computerGatewayUrl: string,
   { cursor, limit = CHAT_PAGE_MAX, projectId }: ChatPageOptions & { projectId?: string },
 ): Promise<CanonicalChatListResponse> {
@@ -96,7 +96,7 @@ function fetchChatPage(
  * `nextCursor` has older chats after it, even when the page itself is empty.
  */
 export function fetchChats(
-  clerkToken: string,
+  clerkToken: RequestToken,
   computerGatewayUrl: string,
   options: ChatPageOptions = {},
 ): Promise<CanonicalChatListResponse> {
@@ -105,7 +105,7 @@ export function fetchChats(
 
 /** One page of the chats in the project with this id (not its slug). */
 export function fetchProjectChats(
-  clerkToken: string,
+  clerkToken: RequestToken,
   computerGatewayUrl: string,
   projectId: string,
   options: ChatPageOptions = {},
@@ -131,7 +131,7 @@ export interface ChatSearchOptions {
  * start of a word. An empty query has no results and makes no request.
  */
 export async function searchChats(
-  clerkToken: string,
+  clerkToken: RequestToken,
   computerGatewayUrl: string,
   query: string,
   { limit = CHAT_SEARCH_DEFAULT_LIMIT, projectId, scope }: ChatSearchOptions = {},
@@ -166,7 +166,7 @@ export async function searchChats(
  * itself, which is as much a success as `"aborted"`.
  */
 export async function cancelChatRun(
-  clerkToken: string,
+  clerkToken: RequestToken,
   computerGatewayUrl: string,
   chatId: string,
   runId: string,
@@ -200,7 +200,7 @@ export async function cancelChatRun(
  * answered as `"already_accepted"`.
  */
 export async function retryChatTurn(
-  clerkToken: string,
+  clerkToken: RequestToken,
   computerGatewayUrl: string,
   chatId: string,
   turnId: string,
@@ -247,7 +247,7 @@ export function isChatUnread(record: CanonicalChatRecord): boolean {
  * `baseVersion` is not the chat's current read version.
  */
 export async function updateChatReadState(
-  clerkToken: string,
+  clerkToken: RequestToken,
   computerGatewayUrl: string,
   chatId: string,
   request: CanonicalUpdateChatReadStateRequest,
@@ -272,7 +272,7 @@ export async function updateChatReadState(
 }
 
 export async function createChat(
-  clerkToken: string,
+  clerkToken: RequestToken,
   computerGatewayUrl: string,
   input: CanonicalCreateChatRequest,
 ): Promise<CanonicalChatRecord> {
@@ -295,7 +295,7 @@ export async function createChat(
 }
 
 export function fetchChatDetail(
-  clerkToken: string,
+  clerkToken: RequestToken,
   computerGatewayUrl: string,
   chatId: string,
   { timeoutMs }: { timeoutMs?: number } = {},
@@ -312,13 +312,16 @@ export function fetchChatDetail(
   } catch {
     return Promise.reject(new Error(CHAT_DETAIL_ERROR));
   }
+  // Recovery reads supply a deadline that covers every wake attempt.
+  const deadline = timeoutMs === undefined ? undefined : createRequestTimeout(timeoutMs);
   return fetchAuthenticatedJson({
     url: url + "&routineReceiptVersion=1",
     token: clerkToken,
     schema: CanonicalChatDetailResponseSchema,
     errorMessage: CHAT_DETAIL_ERROR,
     timeoutMs,
-  });
+    signal: deadline?.signal,
+  }).finally(() => deadline?.cancel());
 }
 
 /**
@@ -326,7 +329,7 @@ export function fetchChatDetail(
  * answers that it has no such chat; any other failure rejects.
  */
 export function chatExists(
-  clerkToken: string,
+  clerkToken: RequestToken,
   computerGatewayUrl: string,
   chatId: string,
   timeoutMs?: number,
@@ -350,7 +353,7 @@ export function chatExists(
 }
 
 export async function admitChatTurn(
-  clerkToken: string,
+  clerkToken: RequestToken,
   computerGatewayUrl: string,
   chatId: string,
   input: CanonicalCreateChatTurnRequest,
@@ -378,7 +381,7 @@ export async function admitChatTurn(
 }
 
 export function fetchChatProviderCatalog(
-  clerkToken: string,
+  clerkToken: RequestToken,
   computerGatewayUrl: string,
 ): Promise<CanonicalProviderCatalog> {
   let url: string;

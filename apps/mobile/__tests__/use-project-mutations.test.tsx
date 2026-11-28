@@ -124,7 +124,8 @@ describe("project mutations", () => {
       });
 
       await waitFor(() => expect(names(result)).toEqual(["Trip", "Field notes", "Site"]));
-      expect(mockCreateProject).toHaveBeenCalledWith("session-token", gatewayUrl, { name: "Trip" });
+      expect(mockCreateProject).toHaveBeenCalledWith(expect.any(Function), gatewayUrl, { name: "Trip" });
+      await expect(mockCreateProject.mock.calls[0]![0]()).resolves.toBe("session-token");
     });
 
     it("shows the new project before the list has been read again", async () => {
@@ -254,7 +255,8 @@ describe("project mutations", () => {
       });
 
       await waitFor(() => expect(names(result)).toEqual(["Website", "Field notes"]));
-      expect(mockRenameProject).toHaveBeenCalledWith("session-token", gatewayUrl, "site", "Website");
+      expect(mockRenameProject).toHaveBeenCalledWith(expect.any(Function), gatewayUrl, "site", "Website");
+      await expect(mockRenameProject.mock.calls[0]![0]()).resolves.toBe("session-token");
     });
 
     it("keeps the old name when the server refuses, and reads the list again", async () => {
@@ -292,7 +294,8 @@ describe("project mutations", () => {
       });
 
       await waitFor(() => expect(names(result)).toEqual(["Field notes"]));
-      expect(mockArchiveProject).toHaveBeenCalledWith("session-token", gatewayUrl, "site");
+      expect(mockArchiveProject).toHaveBeenCalledWith(expect.any(Function), gatewayUrl, "site");
+      await expect(mockArchiveProject.mock.calls[0]![0]()).resolves.toBe("session-token");
     });
 
     it("keeps the project and says why when work is still running in it", async () => {

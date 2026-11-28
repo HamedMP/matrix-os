@@ -3,6 +3,8 @@ import type { Kysely } from "kysely";
 import type { CollaborationPlatformDatabase } from "./database.js";
 import { CollaborativeAppLaunchRepository, type PersistedAppLaunch } from "./app-launch-repository.js";
 
+/** Owner marker for a view-only share's entry document; only the exact value `read_only` is kept. */
+export const APP_ACCESS_HEADER = "x-matrix-app-access";
 const DEFAULT_TTL_MS = 4 * 60_000;
 const DEFAULT_SWEEP_MS = 30_000;
 const DEFAULT_MAX_SESSIONS = 512;
@@ -294,6 +296,7 @@ export class CollaborativeAppLaunchSessions {
       "referrer-policy": "no-referrer",
     });
     if (length >= 0) headers.set("content-length", String(length));
+    if (response.headers.get(APP_ACCESS_HEADER) === "read_only") headers.set(APP_ACCESS_HEADER, "read_only");
     return new Response(response.body ? boundedStream(response.body, this.maxResponseBytes) : null, {
       status: response.status,
       headers,

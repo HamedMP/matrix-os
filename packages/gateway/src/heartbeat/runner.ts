@@ -1,3 +1,4 @@
+import { existsSync, readFileSync } from "node:fs";
 import type { Dispatcher } from "../dispatcher.js";
 import type { ChannelManager } from "../channels/manager.js";
 import { buildHeartbeatPrompt } from "./prompt.js";
@@ -16,6 +17,21 @@ export interface HeartbeatRunner {
   start(): void;
   stop(): void;
   runOnce(pendingEvents?: CronJob[]): Promise<void>;
+}
+
+/** Startup-only read of the `heartbeat` block in config.json; a missing or unreadable file yields defaults. */
+export function readHeartbeatConfig(
+  configPath: string,
+  onError: (context: string, error: unknown) => void,
+): Pick<HeartbeatConfig, "everyMinutes" | "activeHours"> {
+  try {
+    if (!existsSync(configPath)) return {};
+    const heartbeat = JSON.parse(readFileSync(configPath, "utf-8")).heartbeat ?? {};
+    return { everyMinutes: heartbeat.everyMinutes, activeHours: heartbeat.activeHours };
+  } catch (err: unknown) {
+    onError("Failed to load heartbeat config", err);
+    return {};
+  }
 }
 
 function isWithinActiveHours(
@@ -79,11 +95,12 @@ export function createHeartbeatRunner(config: HeartbeatConfig): HeartbeatRunner 
   return {
     start() {
       if (intervalHandle) return;
+      const intervalMs = everyMinutes * 60 * 1000;
       intervalHandle = setInterval(() => {
         runOnce().catch((err: unknown) => {
           console.warn("[heartbeat-runner] Scheduled heartbeat failed:", err instanceof Error ? err.message : String(err));
         });
-      }, everyMinutes * 60 * 1000);
+      }, intervalMs);
     },
 
     stop() {

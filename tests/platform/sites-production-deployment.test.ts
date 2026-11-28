@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import YAML from 'yaml';
 import { checkPublicSitesEnv } from '../../packages/platform/src/platform-startup-env.js';
 import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
-import { readSiteEmailCapability, type SiteEmailReadiness } from '../../packages/platform/src/sites/registration.js';
+import { deriveSiteEmailReadiness, readSiteEmailCapability, type SiteEmailReadiness } from '../../packages/platform/src/sites/registration.js';
 import { sql } from 'kysely';
 
 type Step = { name?: string; run?: string; if?: string };
@@ -102,10 +102,10 @@ afterEach(() => {
 });
 
 describe('production Matrix.page deployment contract', () => {
-  it('requires generation 3 and every independent readiness signal before enabling email access', async () => {
+  it('enables allowlist email access without mail delivery once every readiness signal holds', async () => {
     const { db } = await createTestPlatformDb();
     try {
-      const all: SiteEmailReadiness = { edgeExchange: true, clerkInline: true, lifecycleWebhook: true, mailDelivery: true };
+      const all: SiteEmailReadiness = { edgeExchange: true, clerkSatellite: true, lifecycleWebhook: true };
       const configured={MATRIX_PAGE_EMAIL_INVITATIONS_ENABLED:'true',SITES_EDGE_SECRET:'e'.repeat(40),
         CLERK_SECRET_KEY:'sk_live_'+'c'.repeat(32),NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:'pk_live_'+'p'.repeat(32),
         ACCOUNT_DELETION_SECRET:'d'.repeat(40)};
@@ -121,6 +121,38 @@ describe('production Matrix.page deployment contract', () => {
       expect(await readSiteEmailCapability(db, configured, all)).toBe(false);
     } finally { await destroyTestPlatformDb(db); }
   });
+  it('derives allowlist readiness from validated platform config, not from mail delivery', () => {
+    const webhook = 'whsec_' + Buffer.alloc(24, 7).toString('base64');
+    const env = { MATRIX_PAGE_EMAIL_EDGE_VERIFIED: 'true', MATRIX_PAGE_EMAIL_CLERK_SATELLITE_VERIFIED: 'true',
+      CLERK_USER_WEBHOOK_SIGNING_SECRET: webhook };
+    expect(deriveSiteEmailReadiness(env, { accountDeletionWired: true }))
+      .toEqual({ edgeExchange: true, clerkSatellite: true, lifecycleWebhook: true });
+    expect(deriveSiteEmailReadiness({}, { accountDeletionWired: true }))
+      .toEqual({ edgeExchange: false, clerkSatellite: false, lifecycleWebhook: false });
+    // The Clerk user webhook route answers 503 without the account-deletion runtime.
+    expect(deriveSiteEmailReadiness(env, { accountDeletionWired: false }).lifecycleWebhook).toBe(false);
+    for (const value of ['', 'whsec_', 'whsec_short', 'sk_live_' + 'x'.repeat(32), ` ${webhook}`, 'whsec_not base64!!!!!!!!'])
+      expect(deriveSiteEmailReadiness({ ...env, CLERK_USER_WEBHOOK_SIGNING_SECRET: value },
+        { accountDeletionWired: true }).lifecycleWebhook, value).toBe(false);
+    for (const value of ['1', 'TRUE', 'yes', ' true'])
+      expect(deriveSiteEmailReadiness({ ...env, MATRIX_PAGE_EMAIL_EDGE_VERIFIED: value,
+        MATRIX_PAGE_EMAIL_CLERK_SATELLITE_VERIFIED: value }, { accountDeletionWired: true }))
+        .toMatchObject({ edgeExchange: false, clerkSatellite: false });
+  });
+
+  it('carries the allowlist switches through every Cloud Run deploy so a redeploy cannot drop them', () => {
+    // Fault detected: `gcloud run deploy --set-env-vars` replaces the whole env, so
+    // switches set by hand would vanish on the next push and silently hide the Private tab.
+    const flags = ['MATRIX_PAGE_EMAIL_INVITATIONS_ENABLED', 'MATRIX_PAGE_EMAIL_EDGE_VERIFIED',
+      'MATRIX_PAGE_EMAIL_CLERK_SATELLITE_VERIFIED'];
+    const env = YAML.parse(workflow).jobs.deploy.env as Record<string, string>;
+    for (const flag of flags) {
+      expect(env[flag], flag).toBe(`\${{ vars.${flag} || 'false' }}`);
+      expect(step('Deploy tagged revision'), flag).toContain(`${flag}=\${${flag}}`);
+      expect(step('Deploy production-role revision'), flag).toContain(`${flag}=\${${flag}}`);
+    }
+  });
+
   it('narrows endpoint parse failures without hiding unexpected validation errors', () => {
     expect(sitesEnvScript).toContain('catch (error)');
     expect(sitesEnvScript).toContain('error instanceof TypeError');

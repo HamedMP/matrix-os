@@ -31,17 +31,15 @@ export function useBotChat(chatId: string | null, gatewayUrl: string | null) {
     queryKey: mobileQueryKeys.botChat(userId ?? "signed-out", gatewayUrl ?? "none", chatId ?? "none"),
     enabled,
     queryFn: async () => {
-      const token = await getToken();
-      if (!token || !chatId || !gatewayUrl) throw new Error("Bot status could not be loaded. Try again.");
-      return fetchNativeBotChat(token, gatewayUrl, chatId);
+      if (!chatId || !gatewayUrl) throw new Error("Bot status could not be loaded. Try again.");
+      return fetchNativeBotChat(getToken, gatewayUrl, chatId);
     },
     refetchInterval: ({ state }) => botChatRefetchInterval(state.data, streamLive),
     refetchIntervalInBackground: false,
   });
-  const requireAuth = async () => {
-    const token = await getToken();
-    if (!token || !chatId || !gatewayUrl || !query.data) throw new Error("Bot action unavailable. Try again.");
-    return { token, gatewayUrl, chatId, agentId: query.data.agentId };
+  const requireActionContext = () => {
+    if (!enabled || !chatId || !gatewayUrl || !query.data) throw new Error("Bot action unavailable. Try again.");
+    return { requestToken: getToken, gatewayUrl, chatId, agentId: query.data.agentId };
   };
   return {
     resolved: enabled && query.isSuccess,
@@ -52,22 +50,22 @@ export function useBotChat(chatId: string | null, gatewayUrl: string | null) {
       if (result.isError) throw new Error("Bot status could not be loaded. Try again.");
     },
     updateModel: async (selection: CanonicalChatModelSelection) => {
-      const auth = await requireAuth();
+      const auth = requireActionContext();
       const revision = query.data?.revision;
       if (!revision) throw new Error("Bot model could not be loaded. Refresh and try again.");
-      await updateNativeBotModel(auth.token, auth.gatewayUrl, auth.agentId, revision, selection);
+      await updateNativeBotModel(auth.requestToken, auth.gatewayUrl, auth.agentId, revision, selection);
     },
     resolve: async (interactionId: string, input: ResolveBotInteractionRequest) => {
-      const auth = await requireAuth();
-      return resolveNativeBotInteraction(auth.token, auth.gatewayUrl, auth.chatId, interactionId, input);
+      const auth = requireActionContext();
+      return resolveNativeBotInteraction(auth.requestToken, auth.gatewayUrl, auth.chatId, interactionId, input);
     },
     revoke: async (grantId: string) => {
-      const auth = await requireAuth();
-      await revokeNativeBotGrant(auth.token, auth.gatewayUrl, auth.agentId, grantId);
+      const auth = requireActionContext();
+      await revokeNativeBotGrant(auth.requestToken, auth.gatewayUrl, auth.agentId, grantId);
     },
     memory: async (itemId: string, action: "confirm" | "forget", input: BotMemoryMutationRequest) => {
-      const auth = await requireAuth();
-      await mutateNativeBotMemory(auth.token, auth.gatewayUrl, auth.agentId, itemId, action, input);
+      const auth = requireActionContext();
+      await mutateNativeBotMemory(auth.requestToken, auth.gatewayUrl, auth.agentId, itemId, action, input);
     },
   };
 }

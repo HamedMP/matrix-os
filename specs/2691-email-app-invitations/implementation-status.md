@@ -1,3 +1,23 @@
+# Allowlist mode — 2026-11-26 (ENG-590)
+
+Requester chose to enable private sharing without email: owners add addresses,
+copy the Matrix.page link themselves, and a verified Clerk email must match.
+Delivery stays deferred. Live checks the same day: production Clerk refuses
+`https://matrix.page` (`origin_invalid`), so the gate must become a Clerk
+satellite like `ai-insights.app`; the deployed Worker already forwards the
+email exchange. Plan and readiness rules: spec amendment; tasks T067–T073.
+The capability stays off in production until the requester sets the platform
+env and passes the manual Clerk checklist.
+
+Implemented on `feat/email-invite-allowlist` (T067–T071): derived readiness
+wired in `main.ts`, no-delivery create/renew with a 30-day window and a
+500-entry owner cap, site contract v4 readiness, allowlist copy in the shared
+Share UI, and the satellite gate plus `https://matrix.page/<uuid>` return
+allowlist on the Matrix sign-in/up pages. Automated: 85 Sites/Share/auth test
+files (838 passed, PostgreSQL 14 lane included), typecheck, pattern scan and
+react-doctor on the changed component. Not claimed: real Clerk satellite
+behavior, live per-surface visual evidence.
+
 # Implementation and automated qualification — 2026-11-17
 
 Tracking: [ENG-29](https://linear.app/matrix-os/issue/ENG-29/ship-secure-collaboration-and-sharing-across-matrix-os).

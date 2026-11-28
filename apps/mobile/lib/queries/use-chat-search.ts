@@ -25,7 +25,7 @@ export function useChatSearch(query: string, options: Pick<ChatSearchOptions, "p
     queryFn: async () => {
       const session = await gateway.session();
       if (!session) throw new Error("Search unavailable.");
-      return searchChats(session.token, session.gatewayUrl, text, {
+      return searchChats(session.getToken ?? session.token, session.gatewayUrl, text, {
         ...(projectId ? { projectId } : {}),
         ...(scope ? { scope } : {}),
       });

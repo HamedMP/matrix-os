@@ -237,7 +237,34 @@ describe("collaborative app authenticated launch facade", () => {
     expect(html).toContain("},70000)");
     expect(html).not.toContain("},10000)");
     expect(html).not.toMatch(/credential|proof|token|ownerCookie/i);
+    // A collaborative share gets no read-only compatibility bridge.
+    expect(html).not.toContain("matrix:shared-app:read-data");
     expect(request).toHaveBeenCalledWith("index.html", expect.any(AbortSignal));
+  });
+
+  // ENG-579: an app that isn't collaborative opens view-only with a read bridge for db.* and readData.
+  it("installs the view-only bridge only when the owner marks the entry document read_only", async () => {
+    const launchFor = async (marker: string | null) => {
+      request.mockImplementation(async (assetPath: string) => new Response("<main>shared</main>", { headers: {
+        "content-type": assetPath.endsWith(".html") ? "text/html; charset=utf-8" : "text/javascript; charset=utf-8",
+        ...(marker ? { "x-matrix-app-access": marker } : {}),
+      } }));
+      const created = await routes.request(`/api/collaboration/shared-apps/${scopeId}/launch`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-test-actor": actorId },
+        body: JSON.stringify({ clientRequestId: crypto.randomUUID(), expectedShareRevision: "1", expectedBuildId: app.buildId }),
+      });
+      const { entryUrl } = await created.json() as { entryUrl: string };
+      const asset = await routes.request(entryUrl, { headers: { "x-test-actor": actorId } });
+      return { html: await asset.text(), header: asset.headers.get("x-matrix-app-access") };
+    };
+    const readOnly = await launchFor("read_only");
+    expect(readOnly.html).toContain("matrix:shared-app:read-data");
+    expect(readOnly.html).toContain("MatrixOS.readOnly=true");
+    expect(readOnly.header).toBeNull();
+    for (const spoofed of ["full", "READ_ONLY"]) {
+      expect((await launchFor(spoofed)).html).not.toContain("matrix:shared-app:read-data");
+    }
   });
 
   it("admits only a fresh member even when the organization listing is stale or truncated", async () => {

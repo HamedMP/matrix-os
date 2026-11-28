@@ -18,7 +18,7 @@ postgres('site invitation delivery outbox across independent PostgreSQL connecti
   await dbA.executor.insertInto('public_sites').values({id:siteId,owner_id:owner.ownerId,machine_id:owner.machineId,
    app_slug:owner.appSlug,title:'Shared invitation',description:'',slug:null,revision:1,status:'published',
    access_mode:'private_email',active_version:null,created_at:new Date().toISOString()}).execute();
-  const created=await createSiteEmailInvitations(dbA,owner,{baseRevision:1,emailAddresses:['recipient@example.com']});
+  const created=await createSiteEmailInvitations(dbA,owner,{baseRevision:1,emailAddresses:['recipient@example.com']},{delivery:'email'});
   return {siteId,owner,invitationId:(created.results[0] as {invitation:{id:string}}).invitation.id};}
  beforeAll(async()=>{admin=new pg.Pool({connectionString:postgresUrl,max:1});await admin.query(`CREATE SCHEMA "${schema}"`);
   dbA=createPlatformDb(url('mail-a'));await dbA.ready;dbB=createPlatformDb(url('mail-b'));await dbB.ready;

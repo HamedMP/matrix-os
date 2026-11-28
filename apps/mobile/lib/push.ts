@@ -7,6 +7,7 @@ import { CanonicalChatIdSchema, MatrixComputerHandleSchema, ThreadIdSchema } fro
 
 import { fetchPushRegistrationStatus, refreshPushRegistration, updatePushRegistration } from "@/lib/requests/settings";
 import { ensureNotificationChannels } from "@/lib/notification-channels";
+import type { RequestToken } from "@/lib/requests/http";
 
 const PUSH_TOKEN_KEY = "matrix_os_expo_push_token";
 const PUSH_IDENTITY_KEY = "matrix_os_push_identity";
@@ -166,7 +167,7 @@ export function addNotificationResponseListener(
 }
 
 export interface PushRegistrationSession {
-  clerkToken: string;
+  clerkToken: RequestToken;
   gatewayUrl: string;
   /** Client-only account/computer identity for stale-response and event guards. */
   scopeKey?: string;

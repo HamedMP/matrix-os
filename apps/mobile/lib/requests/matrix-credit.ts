@@ -1,7 +1,7 @@
 import { z } from "zod/v4";
 
 import { gatewayRequestUrl } from "./answers";
-import { fetchAuthenticatedJson } from "./http";
+import { fetchAuthenticatedJson, type RequestToken } from "./http";
 
 const CREDIT_UNAVAILABLE_ERROR = "Credit balance unavailable. Try again.";
 // A ledger reading older than this is not shown as the current balance.
@@ -54,7 +54,7 @@ function chatAvailableMicrousd(usage: ManagedCreditUsage, now: number): number |
  * or null when the server does not report one. Read-only.
  */
 export async function fetchMatrixCreditBalance(
-  clerkToken: string,
+  clerkToken: RequestToken,
   computerGatewayUrl: string,
   now: number = Date.now(),
 ): Promise<number | null> {

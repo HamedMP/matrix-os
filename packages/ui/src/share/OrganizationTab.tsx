@@ -1,6 +1,6 @@
 "use client";
 import type { ReactNode } from "react";
-import { Check, ExternalLink, Link2, X } from "lucide-react";
+import { Check, ExternalLink, Link2, Users, X } from "lucide-react";
 import * as SelectPrimitive from "@radix-ui/react-select";
 import { Select, SelectContent, SelectGroup, SelectLabel, SelectTrigger } from "../Select";
 import { InlineError, ShareBadge, ShareButton, Spinner } from "./share-controls";
@@ -66,11 +66,11 @@ function OrganizationCard({ organizations, selected, onSelect, pinned, trailing 
 }
 
 /** Shared state: badge, copy-link and stop icon buttons. Stopping is one click and reversible. */
-function SharedControls({ name, orgLink, busy, onStop }: { name: string; orgLink: string | null; busy: boolean; onStop: () => void }) {
+function SharedControls({ name, orgLink, busy, viewOnly, onStop }: { name: string; orgLink: string | null; busy: boolean; viewOnly: boolean; onStop: () => void }) {
   const copy = useCopy();
   const copyState = copy.label("org", "");
   return <>
-    <ShareBadge tone="success"><Check aria-hidden="true" strokeWidth={2.6} />Shared</ShareBadge>
+    <ShareBadge tone="success"><Check aria-hidden="true" strokeWidth={2.6} />{viewOnly ? "Shared · View only" : "Shared"}</ShareBadge>
     <ShareButton variant="ghost" size="icon" className="size-8" aria-label={`Copy ${name} link`} title={copyState || `Copy ${name} link`} disabled={!orgLink}
       onClick={() => { if (orgLink) copy.copy("org", orgLink); }}>
       {copyState === "Copied" ? <Check className="size-3.5 text-[var(--share-success-fg)]" /> : <Link2 className="size-3.5" />}
@@ -92,7 +92,7 @@ function DoneCard({ onDismiss }: { onDismiss: () => void }) {
   </div>;
 }
 
-// react-doctor-disable-next-line react-doctor/no-high-complexity-react-function -- one view switch over the org-share flow steps (idle, checking, shared, two-step, done); each step's body is already its own component.
+// react-doctor-disable-next-line react-doctor/no-high-complexity-react-function -- one view switch over the org-share flow steps (idle, checking, shared, setting up, done); each step's body is already its own component.
 export function OrganizationTab({ organizations, selectedId, onSelect, flow, orgLink, onOpenChat, busy }: {
   organizations: ShareOrganization[];
   selectedId: string;
@@ -106,47 +106,63 @@ export function OrganizationTab({ organizations, selectedId, onSelect, flow, org
   const selected = organizations.find((organization) => organization.organizationId === selectedId) ?? organizations[0];
   if (!selected) return null;
   const name = selected.name;
-  const steps = flow.step === "required" || flow.step === "running" || flow.step === "applying";
-  const canShare = (flow.step === "idle" && !flow.shared) || flow.step === "checking";
+  const settingUp = flow.step === "running" || flow.step === "applying";
+  const canShare = !flow.shared && flow.step !== "applying";
   const trailing = flow.shared
-    ? <SharedControls name={name} orgLink={orgLink} busy={busy} onStop={() => void flow.stop()} />
+    ? <SharedControls name={name} orgLink={orgLink} busy={busy} viewOnly={flow.viewOnly} onStop={() => void flow.stop()} />
     : canShare ? <ShareButton variant="primary" size="sm" aria-label={`Share with ${name}`} disabled={busy || flow.step === "checking"} onClick={() => flow.share(selected.organizationId)}>
       {flow.step === "checking" ? <Spinner /> : null}Share
     </ShareButton> : null;
   return <div className="flex flex-col gap-3">
-    <OrganizationCard organizations={organizations} selected={selected} onSelect={onSelect} pinned={flow.shared || steps || busy} trailing={trailing} />
-    {steps ? <CollaborativeSteps flow={flow} organizationId={selected.organizationId} onOpenChat={onOpenChat} /> : null}
-    {flow.step === "done" ? <DoneCard onDismiss={flow.dismissDone} /> : null}
+    <OrganizationCard organizations={organizations} selected={selected} onSelect={onSelect} pinned={flow.shared || settingUp || busy} trailing={trailing} />
+    {flow.step === "done" ? <DoneCard onDismiss={flow.dismissDone} />
+      : <CollaborativeSuggestion flow={flow} organizationId={selected.organizationId} onOpenChat={onOpenChat} />}
     {flow.notice ? <InlineError>{flow.notice}</InlineError> : null}
   </div>;
 }
 
-function CollaborativeSteps({ flow, organizationId, onOpenChat }: { flow: OrganizationShareFlow; organizationId: string; onOpenChat: () => void }) {
-  const busy = flow.step === "running" || flow.step === "applying";
-  return <ol aria-label="Two steps to share" className="m-0 flex list-none flex-col rounded-xl border border-[var(--share-border)] bg-[var(--share-panel)] p-3">
-    <li className="flex gap-3">
-      <span className="flex shrink-0 flex-col items-center">
-        <span aria-hidden="true" className="flex size-6 items-center justify-center rounded-full bg-[var(--share-primary)] text-xs font-semibold text-[var(--share-primary-fg)]">{busy ? <Spinner className="size-[13px]" /> : "1"}</span>
-        <span aria-hidden="true" className="my-1 min-h-3 w-px flex-1 bg-[var(--share-input)]" />
-      </span>
-      <div className="flex min-w-0 flex-1 flex-col gap-0.5 pb-3.5 pt-0.5">
-        <span className="text-[13px] font-semibold">Make it collaborative</span>
-        <span className="text-xs leading-[17px] text-[var(--share-muted-fg)]">{busy ? "Setting up…" : "Claude sets it up in a new chat."}</span>
-        <div className="mt-2 flex gap-2">
-          {busy
-            ? <ShareButton size="sm" className="font-semibold" onClick={onOpenChat}>Open chat<ExternalLink aria-hidden="true" className="size-[13px]" /></ShareButton>
-            : <ShareButton variant="primary" size="sm" onClick={() => void flow.startInChats(organizationId)}>Start in Chats<ExternalLink aria-hidden="true" className="size-[13px]" /></ShareButton>}
-        </div>
-      </div>
-    </li>
-    <li className="flex gap-3">
-      <span aria-hidden="true" className="flex size-6 shrink-0 items-center justify-center rounded-full border border-[var(--share-input)] bg-[var(--share-bg)] text-xs font-semibold text-[var(--share-subtle-fg)]">2</span>
-      <div className="flex min-w-0 flex-1 flex-col gap-0.5 pt-0.5">
-        <span className="text-[13px] font-semibold text-[var(--share-muted-fg)]">Share</span>
-      </div>
-    </li>
-    <li className="mt-1.5 flex justify-end">
+function suggestionText(flow: OrganizationShareFlow, collaborative: boolean, settingUp: boolean): string {
+  if (collaborative) return "Everyone can view and edit the same data.";
+  if (settingUp) return "Setting up…";
+  if (flow.viewOnly) return "Teammates can view but not edit. Claude can set up shared editing in a new chat.";
+  return flow.shared
+    ? "Claude can set up shared editing in a new chat."
+    : "Teammates can view it once shared. Claude can set up shared editing in a new chat.";
+}
+
+function SuggestionIcon({ collaborative, settingUp }: { collaborative: boolean; settingUp: boolean }) {
+  if (collaborative) {
+    return <span role="img" aria-label="Done" className="flex size-6 shrink-0 items-center justify-center rounded-full bg-[var(--share-success-bg)] text-[var(--share-success-fg)]"><Check aria-hidden="true" className="size-3.5" strokeWidth={2.6} /></span>;
+  }
+  return <span aria-hidden="true" className="flex size-6 shrink-0 items-center justify-center rounded-full border border-[var(--share-input)] bg-[var(--share-bg)] text-[var(--share-subtle-fg)]">{settingUp ? <Spinner className="size-[13px]" /> : <Users className="size-3.5" />}</span>;
+}
+
+function SuggestionActions({ flow, organizationId, settingUp, onOpenChat }: { flow: OrganizationShareFlow; organizationId: string; settingUp: boolean; onOpenChat: () => void }) {
+  if (settingUp) {
+    return <div className="mt-2 flex items-center gap-2">
+      <ShareButton size="sm" className="font-semibold" onClick={onOpenChat}>Open chat<ExternalLink aria-hidden="true" className="size-[13px]" /></ShareButton>
       <ShareButton variant="link" onClick={() => void flow.cancel()}>Cancel</ShareButton>
-    </li>
-  </ol>;
+    </div>;
+  }
+  return <div className="mt-2 flex items-center gap-2">
+    <ShareButton size="sm" onClick={() => void flow.startInChats(organizationId)}>Start in Chats<ExternalLink aria-hidden="true" className="size-[13px]" /></ShareButton>
+  </div>;
+}
+
+/**
+ * ENG-579: making the app collaborative is an optional suggestion. It stays in the tab and shows a
+ * green tick once the current build is collaborative; until then members can only view.
+ */
+function CollaborativeSuggestion({ flow, organizationId, onOpenChat }: { flow: OrganizationShareFlow; organizationId: string; onOpenChat: () => void }) {
+  const settingUp = flow.step === "running" || flow.step === "applying";
+  // A finished setup still applying its share keeps Cancel until the share settles.
+  const collaborative = flow.collaborative && !settingUp;
+  return <section aria-label="Make it collaborative" className="flex gap-3 rounded-xl border border-[var(--share-border)] bg-[var(--share-panel)] p-3">
+    <SuggestionIcon collaborative={collaborative} settingUp={settingUp} />
+    <div className="flex min-w-0 flex-1 flex-col gap-0.5 pt-0.5">
+      <span className="text-[13px] font-semibold">{collaborative ? "Collaborative" : "Make it collaborative"}</span>
+      <span className="text-xs leading-[17px] text-[var(--share-muted-fg)]">{suggestionText(flow, collaborative, settingUp)}</span>
+      {collaborative ? null : <SuggestionActions flow={flow} organizationId={organizationId} settingUp={settingUp} onOpenChat={onOpenChat} />}
+    </div>
+  </section>;
 }

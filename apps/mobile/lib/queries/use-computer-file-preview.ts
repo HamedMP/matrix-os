@@ -27,9 +27,8 @@ export function useComputerFilePreview(path: string) {
     enabled: authEnabled && Boolean(computer) && Boolean(path),
     gcTime: 0,
     queryFn: async () => {
-      const token = await getToken();
-      if (!token || !computer) throw new Error("File preview unavailable.");
-      return fetchFilePreview(token, `${HOSTED_GATEWAY_URL}${computer.gatewayPath}`, path);
+      if (!computer) throw new Error("File preview unavailable.");
+      return fetchFilePreview(getToken, `${HOSTED_GATEWAY_URL}${computer.gatewayPath}`, path);
     },
   });
 

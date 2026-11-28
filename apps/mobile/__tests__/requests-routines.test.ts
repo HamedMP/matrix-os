@@ -29,6 +29,33 @@ it("sends only an explicit revision-bound control through the normal native auth
   expect(request.mock.calls[0][1].method).toBe("POST");
   expect(JSON.parse(request.mock.calls[0][1].body)).toEqual({status: "paused", baseRevision: 3});
 });
+it.each(["paused", "active", "archived"] as const)("uses a renewed bearer to set a schedule to %s after wake", async status => {
+  jest.useFakeTimers();
+  jest.spyOn(Math, "random").mockReturnValue(0);
+  const receipt = {routineId: id, status, revision: 4};
+  const startedAt = Date.now();
+  const getToken = async () => Date.now() - startedAt < 500 ? "expiring" : "renewed";
+  const wakingSession = async () => ({...await session(), token: await getToken(), getToken});
+  request.mockResolvedValueOnce(new Response('{"runtimeState":"waking"}', {
+    status: 503, headers: {"Retry-After": "1"},
+  })).mockImplementationOnce(async (_url: string, init: RequestInit) => {
+    const valid = new Headers(init.headers).get("authorization") === "Bearer renewed";
+    return new Response(JSON.stringify(valid ? receipt : {}), {status: valid ? 200 : 401});
+  });
+  try {
+    const input = {status, baseRevision: 3};
+    const result = createNativeRoutineClient(wakingSession).control(id, input).catch((error: unknown) => error);
+    await jest.advanceTimersByTimeAsync(1_000);
+    expect(await result).toEqual(receipt);
+    expect(request.mock.calls.map(([url, init]) => [url, init.method, init.headers.Authorization, JSON.parse(init.body)])).toEqual(
+      ["expiring", "renewed"].map(token => [
+        `https://app.matrix-os.com/vm/test/api/bot-routines/${id}/control?runtime=dev`, "POST", `Bearer ${token}`, input,
+      ]),
+    );
+  } finally {
+    jest.useRealTimers();
+  }
+});
 it("rejects owner fields and malformed identifiers before making an HTTP call", async () => {
   const api = createNativeRoutineClient(session);
   await expect(async () => api.control(id, {status: "paused", baseRevision: 3, ownerId: "foreign"} as never)).rejects.toThrow();

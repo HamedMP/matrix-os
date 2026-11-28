@@ -11,6 +11,7 @@ import type { Kysely, Transaction } from "kysely";
 import { z } from "zod/v4";
 import type { BridgeQueryBody } from "../app-db-contracts.js";
 import { normalizeAppStorageSlug } from "../app-db-types.js";
+import { SHAREABLE_APP_READINESS_STATUSES, appShareAccess, type CollaborativeAppShareAccess } from "./collaborative-app-access.js";
 import { CollaborationAuthorizationError, type AuthorizedCollaborationContext, type CollaborationAuthority } from "./authority.js";
 import { BridgeJsonError, toBridgeJson } from "./bridge-json.js";
 import type { OwnerCollaborationDatabase } from "./database.js";
@@ -38,6 +39,8 @@ const EnvelopeSchema = z.object({
   expectedRevision: z.number().int().nonnegative(),
   action: z.unknown(),
 }).strict();
+/** Same normalization as the owner's `/api/bridge/data`: unsupported characters are removed. */
+const DataKeySchema = z.string().min(1).max(256).transform((key) => key.replace(/[^A-Za-z0-9_-]/g, "")).pipe(z.string().min(1));
 const READ_ACTIONS: readonly BridgeQueryBody["action"][] = ["find", "findOne", "count", "schema", "appInfo"];
 const MUTATION_ACTIONS: readonly BridgeQueryBody["action"][] = ["insert", "bulkInsert", "update", "compareAndSwap", "bulkUpdate", "delete"];
 
@@ -50,6 +53,8 @@ export interface AppInstanceDescription {
   incarnation: string;
   /** Present only for a new exact-build collaborative binding. */
   collaborativeBuildId?: string;
+  /** ENG-579: member access derived from the bound readiness; absent without a binding. */
+  access?: CollaborativeAppShareAccess;
   /** Where the app's static assets live for the asset route. */
   assetNamespace: { ownerId: string; projectId: string | null };
 }
@@ -58,6 +63,8 @@ export interface AppInstanceAdapter {
   describe(context: AuthorizedCollaborationContext, appId: string): Promise<AppInstanceDescription>;
   query(context: AuthorizedCollaborationContext, appId: string, action: unknown): Promise<{ result: unknown; revision: number }>;
   mutate(context: AuthorizedCollaborationContext, appId: string, envelope: unknown): Promise<{ result: unknown; revision: number; replayed: boolean }>;
+  /** ENG-579: one owner key-value entry of an organization-shared app, for its `readData` bridge call. */
+  readData?(context: AuthorizedCollaborationContext, appId: string, key: string): Promise<{ value: string | null }>;
 }
 
 function standaloneNamespace(scopeId: string, appId: string): string {
@@ -99,6 +106,8 @@ export function createAppInstanceAdapter(options: {
   now?: () => Date;
   createEventId?: () => string;
   onCommitted?(scopeId: string): Promise<void>;
+  /** The owner's app key-value store; shared `readData` is unavailable without it. */
+  kv?: { read(app: string, key: string): Promise<string | null> };
 }): AppInstanceAdapter {
   const now = options.now ?? (() => new Date());
   const createEventId = options.createEventId ?? randomUUID;
@@ -163,11 +172,12 @@ export function createAppInstanceAdapter(options: {
       .innerJoin("collaboration_app_readiness as readiness", "readiness.id", "binding.readiness_id")
       .innerJoin("collaboration_resource_catalog as catalog", "catalog.id", "binding.catalog_id")
       .selectAll("binding")
+      .select("readiness.status as readiness_status")
       .where("binding.scope_id", "=", context.scopeId)
       .where("binding.state", "=", "active")
       .whereRef("binding.build_id", "=", "readiness.build_id")
       .whereRef("binding.registration_incarnation", "=", "readiness.registration_incarnation")
-      .where("readiness.status", "=", "ready")
+      .where("readiness.status", "in", SHAREABLE_APP_READINESS_STATUSES)
       .where("readiness.invalidated_at", "is", null)
       .whereRef("readiness.catalog_id", "=", "catalog.id")
       .whereRef("readiness.registration_incarnation", "=", "catalog.incarnation")
@@ -214,7 +224,7 @@ export function createAppInstanceAdapter(options: {
         readiness: "ready",
         collaborationMode: record.collaborationMode,
         incarnation: record.incarnation,
-        ...(binding ? { collaborativeBuildId: binding.build_id } : {}),
+        ...(binding ? { collaborativeBuildId: binding.build_id, access: appShareAccess(binding.readiness_status) ?? "read_only" } : {}),
         assetNamespace: { ownerId: root.ownerId, projectId: root.projectId },
       };
     } catch (error: unknown) {
@@ -344,5 +354,32 @@ export function createAppInstanceAdapter(options: {
     }
   }
 
-  return { describe, query, mutate };
+  async function readData(context: AuthorizedCollaborationContext, rawAppId: string, rawKey: string) {
+    const appId = AppIdSchema.safeParse(rawAppId);
+    const key = DataKeySchema.safeParse(rawKey);
+    if (context.resourceKind !== "app" || !appId.success || !key.success) throw new ProjectAppAdapterError("invalid_action");
+    if (!options.kv) throw new ProjectAppAdapterError("app_unavailable");
+    try {
+      const current = await options.authority.authorize({ scopeId: context.scopeId, actorId: context.actorId, action: "read" });
+      const root = await standaloneRoot(current, appId.data);
+      const { record } = await resolveApp(root.projectId, appId.data);
+      if (root.incarnation !== record.incarnation) throw new ProjectAppAdapterError("app_unavailable");
+      const requireLiveShare = () => options.db.transaction().execute(async (trx) => {
+        await requireLiveScope(trx, current, false);
+        // Only an exact-build organization share exposes owner key-value data.
+        if (!await requireCollaborativeBinding(trx, current, "share")) throw new ProjectAppAdapterError("not_found");
+      });
+      await requireLiveShare();
+      // Same namespace the owner's own bridge writes: the app identity without separators.
+      const value = await options.kv.read(appId.data.replace(/[^A-Za-z0-9_-]/g, ""), key.data);
+      // Recheck after the read: a stop that committed while the value was in flight returns nothing.
+      await requireLiveShare();
+      if (value !== null && Buffer.byteLength(value) > MAX_RESULT_BYTES) throw new ProjectAppAdapterError("unavailable");
+      return { value };
+    } catch (error: unknown) {
+      throw mapError(error);
+    }
+  }
+
+  return { describe, query, mutate, readData };
 }

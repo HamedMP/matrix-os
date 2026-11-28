@@ -5,6 +5,8 @@ export class CollaborationAuthorizationError extends Error {
   constructor(
     public readonly code: CollaborationAuthorizationErrorCode,
     message: string,
+    /** ENG-579: a `forbidden` write to an app shared read-only; routes expose it as `read_only`. */
+    public readonly reason?: "read_only",
   ) {
     super(message);
     this.name = "CollaborationAuthorizationError";

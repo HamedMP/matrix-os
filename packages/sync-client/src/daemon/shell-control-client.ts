@@ -10,7 +10,7 @@ export interface DaemonShellControlClientOptions {
 export function createDaemonShellControlClient(options: DaemonShellControlClientOptions) {
   async function client() {
     const auth = await options.loadAuth();
-    return createShellClient({ gatewayUrl: options.config.gatewayUrl, token: auth?.accessToken, timeoutMs: 10_000 });
+    return createShellClient({ gatewayUrl: options.config.gatewayUrl, token: auth?.accessToken });
   }
 
   return {

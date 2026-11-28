@@ -73,7 +73,7 @@ describe("the permission mode a project chat starts with", () => {
 
     await startChat("Draft the case study");
 
-    expect(requests.admitChatTurn).toHaveBeenCalledWith(TOKEN, GATEWAY_URL, "chat_new", expect.objectContaining({
+    expect(requests.admitChatTurn).toHaveBeenCalledWith(expect.any(Function), GATEWAY_URL, "chat_new", expect.objectContaining({
       selection: sonnet, permissionMode: "supervised",
     }));
   });
@@ -85,7 +85,7 @@ describe("the permission mode a project chat starts with", () => {
 
     await startChat("Draft the case study");
 
-    expect(requests.admitChatTurn).toHaveBeenCalledWith(TOKEN, GATEWAY_URL, "chat_new", expect.objectContaining({
+    expect(requests.admitChatTurn).toHaveBeenCalledWith(expect.any(Function), GATEWAY_URL, "chat_new", expect.objectContaining({
       permissionMode: "full_access",
     }));
   });
@@ -97,7 +97,7 @@ describe("the permission mode a project chat starts with", () => {
 
     await startChat("Draft the case study");
 
-    expect(requests.admitChatTurn).toHaveBeenCalledWith(TOKEN, GATEWAY_URL, "chat_new", expect.objectContaining({
+    expect(requests.admitChatTurn).toHaveBeenCalledWith(expect.any(Function), GATEWAY_URL, "chat_new", expect.objectContaining({
       permissionMode: "auto",
     }));
     await waitFor(() => expect(shell.setPermissionModeOverride).toHaveBeenCalledWith("auto"));
@@ -111,7 +111,7 @@ describe("the permission mode a project chat starts with", () => {
 
     await startChat("Draft the case study");
 
-    expect(requests.admitChatTurn).toHaveBeenCalledWith(TOKEN, GATEWAY_URL, "chat_new", expect.objectContaining({
+    expect(requests.admitChatTurn).toHaveBeenCalledWith(expect.any(Function), GATEWAY_URL, "chat_new", expect.objectContaining({
       permissionMode: "supervised",
     }));
     expect(composerChoices.choice("user_a:alice:primary")?.permissionMode).toBe("full_access");

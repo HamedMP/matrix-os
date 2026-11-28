@@ -73,6 +73,15 @@ describe("background agent runtime", () => {
     expect(await h.runtime.isRunning(ref)).toBe(false);
   });
 
+  it("reports whether any background agent service is running", async () => {
+    const h = await harness();
+    expect(await h.runtime.anyRunning()).toBe(false);
+    const ref = await h.runtime.start({ sessionId: "sess_any", launch: h.launch });
+    expect(await h.runtime.anyRunning()).toBe(true);
+    await h.runtime.stop(ref);
+    expect(await h.runtime.anyRunning()).toBe(false);
+  });
+
   it("selects a retained anonymous-pipe launch only for an explicit private host callback", async () => {
     const h = await harness(), onReady = vi.fn();
     const launch = { ...h.launch, command: process.execPath, args: [resolve("packages/gateway/src/coding-agents/codex-app-server-runner.mjs")] };

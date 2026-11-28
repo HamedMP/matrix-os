@@ -1,12 +1,47 @@
 {
   "version": "0.1.32",
   "channel": "stable",
-  "date": "2026-11-26",
+  "date": "2026-11-27",
   "locale": "en",
-  "title": "Your Mac, right in Chat",
-  "shortTitle": "Mac from Chat",
-  "summary": "Pair your Mac once, verify supported work from a private Chat, and get results back in the same conversation. Terminals are faster, and Connect Apps is easier to navigate.",
+  "title": "Build projects, share your apps",
+  "shortTitle": "Projects and sharing",
+  "summary": "Your selected agent can guide a project from its first questions to reviewed setup files, all inside Chat. You can also share apps you create with your organization right away—view-only until they are collaborative—alongside smoother Mac verification, connections, chats, and terminals.",
   "highlights": [
+    {
+      "tag": "New",
+      "title": "Project setup, guided by your agent",
+      "body": "Start in Project Chat, answer focused questions, add Skills or connections, review the generated guidance, and save only when you are ready.",
+      "surfaces": [
+        "web-desktop",
+        "web-canvas",
+        "electron-desktop"
+      ],
+      "art": "agents",
+      "tone": "lime",
+      "prs": [
+        3572,
+        3573,
+        3644,
+        3653
+      ]
+    },
+    {
+      "tag": "New",
+      "title": "Share your apps right away",
+      "body": "Share an app you create with your organization even before it supports collaboration. Members can open it view-only, while Matrix helps you make it collaborative when everyone needs to edit.",
+      "surfaces": [
+        "web-desktop",
+        "web-canvas",
+        "electron-desktop"
+      ],
+      "art": "sync",
+      "tone": "teal",
+      "prs": [
+        3707,
+        3708,
+        3709
+      ]
+    },
     {
       "tag": "New",
       "title": "Verify work on your Mac from Chat",
@@ -14,8 +49,8 @@
       "surfaces": [
         "electron-desktop"
       ],
-      "art": "sync",
-      "tone": "teal",
+      "art": "terminal",
+      "tone": "ink",
       "prs": [
         3455,
         3457,
@@ -28,42 +63,40 @@
         3486,
         3489
       ]
-    },
-    {
-      "tag": "Improved",
-      "title": "Connect Apps, organized",
-      "body": "Connected tools, available connections and the app gallery now appear in clearer groups. Connect Apps is also available through Matrix Core when you need it in Chat.",
-      "surfaces": [
-        "web-desktop",
-        "electron-desktop"
-      ],
-      "art": "sparkle",
-      "tone": "sand",
-      "prs": [
-        3704,
-        3705
-      ]
-    },
-    {
-      "tag": "Improved",
-      "title": "Terminals that keep up",
-      "body": "Terminal windows switch and stream faster. Slow or unreadable workspace recovery no longer holds up your other terminals.",
-      "surfaces": [
-        "web-desktop",
-        "electron-desktop"
-      ],
-      "art": "terminal",
-      "tone": "ink",
-      "prs": [
-        3536,
-        3663
-      ]
     }
   ],
   "items": [
     {
+      "kind": "improved",
+      "text": "Connect Apps is organized into clearer groups and is available through Matrix Core."
+    },
+    {
+      "kind": "improved",
+      "text": "Sent Chat messages appear immediately, and the first reply stays visible when a new Chat opens."
+    },
+    {
+      "kind": "fixed",
+      "text": "Terminal commands keep their final output after they exit."
+    },
+    {
+      "kind": "improved",
+      "text": "Terminal windows switch and stream faster, while slow workspace recovery no longer holds up the rest."
+    },
+    {
+      "kind": "fixed",
+      "text": "Default Matrix apps no longer offer new sharing, and Web shows one clear Share entry for apps you create."
+    },
+    {
+      "kind": "fixed",
+      "text": "Apps you have not checked for collaboration now show as not checked instead of unavailable."
+    },
+    {
       "kind": "fixed",
       "text": "Managed Codex sessions can use code mode reliably."
+    },
+    {
+      "kind": "improved",
+      "text": "Coding-agent sign-in is clearer, and Codex can reuse an existing account on your computer."
     },
     {
       "kind": "fixed",
@@ -102,6 +135,29 @@
     3711,
     3519,
     3687,
-    3699
+    3699,
+    3520,
+    3659,
+    3743,
+    3734,
+    3680,
+    3681,
+    3682,
+    3683,
+    3690,
+    3691,
+    3692,
+    3693,
+    3694,
+    3702,
+    3754,
+    3720,
+    3761,
+    3765,
+    3703,
+    3706,
+    3774,
+    3787,
+    3792
   ]
 }

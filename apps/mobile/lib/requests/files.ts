@@ -4,6 +4,8 @@ import {
   buildGatewayRequestUrl,
   fetchAuthenticatedJson,
   fetchAuthenticatedResponse,
+  resolveRequestToken,
+  type RequestToken,
 } from "@/lib/requests/http";
 
 const FILES_UNAVAILABLE_ERROR = "Files unavailable. Try again.";
@@ -60,7 +62,7 @@ export type FilePreview =
     };
 
 export function fetchFileList(
-  clerkToken: string,
+  clerkToken: RequestToken,
   computerGatewayUrl: string,
   path: string,
 ): Promise<FileListResponse> {
@@ -92,7 +94,7 @@ export function isValidNewFileEntryName(value: string): boolean {
 }
 
 export function createFolder(
-  clerkToken: string,
+  clerkToken: RequestToken,
   computerGatewayUrl: string,
   parentPath: string,
   name: string,
@@ -107,7 +109,7 @@ export function createFolder(
 }
 
 export function createFile(
-  clerkToken: string,
+  clerkToken: RequestToken,
   computerGatewayUrl: string,
   parentPath: string,
   name: string,
@@ -116,13 +118,13 @@ export function createFile(
 }
 
 export async function fetchFilePreview(
-  clerkToken: string,
+  clerkToken: RequestToken,
   computerGatewayUrl: string,
   path: string,
   maxBytes = DEFAULT_FILE_PREVIEW_BYTES,
 ): Promise<FilePreview> {
   const safePath = normalizeFilePath(path);
-  if (!clerkToken.trim() || !safePath || maxBytes <= 0) {
+  if (!safePath || maxBytes <= 0) {
     throw new Error(FILES_UNAVAILABLE_ERROR);
   }
 
@@ -135,10 +137,11 @@ export async function fetchFilePreview(
   }
 
   if (isImagePath(safePath)) {
+    const bearer = await resolveRequestToken(clerkToken, FILES_UNAVAILABLE_ERROR);
     return {
       kind: "image",
       uri: rawFileUri,
-      authorization: `Bearer ${clerkToken}`,
+      authorization: `Bearer ${bearer}`,
     };
   }
 
@@ -192,7 +195,7 @@ function normalizeFilePath(path: string): string | null {
 }
 
 async function createFileEntry(
-  clerkToken: string,
+  clerkToken: RequestToken,
   computerGatewayUrl: string,
   parentPath: string,
   name: string,

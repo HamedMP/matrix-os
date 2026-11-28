@@ -328,8 +328,8 @@ describe("chat composer attachments", () => {
 
     await waitFor(() => expect(composer.result.current.isSending).toBe(false));
     expect(mockUploadChatAttachment.mock.calls.map((call) => [call[0], call[1], call[2].name])).toEqual([
-      ["clerk-token", gatewayUrl, "flowers.jpg"],
-      ["clerk-token", gatewayUrl, "falls.jpg"],
+      [expect.any(Function), gatewayUrl, "flowers.jpg"],
+      [expect.any(Function), gatewayUrl, "falls.jpg"],
     ]);
     expect(mockCreateChat.mock.calls[0][2]).toMatchObject({ title: "What are these?" });
     expect(mockAdmitChatTurn.mock.calls[0][3].parts).toEqual([
@@ -343,17 +343,30 @@ describe("chat composer attachments", () => {
       .toBeLessThan(mockCreateChat.mock.invocationCallOrder[0]!);
   });
 
-  it("asks for the session token again after uploading, for what follows", async () => {
-    mockGetToken.mockResolvedValueOnce("clerk-token").mockResolvedValueOnce("fresh-token");
+  it("gives upload, create and admission access to the current session bearer", async () => {
+    const used: string[] = [];
+    mockGetToken.mockResolvedValue("fresh-token")
+      .mockResolvedValueOnce("computer-token")
+      .mockResolvedValueOnce("upload-token");
+    mockUploadChatAttachment.mockImplementationOnce(async (getToken: () => Promise<string>) => {
+      used.push(await getToken());
+      return { path: placeOf("flowers"), created: true };
+    });
+    mockCreateChat.mockImplementationOnce(async (getToken: () => Promise<string>) => {
+      used.push(await getToken());
+      return { chat: { id: "chat_new", revision: 1 } };
+    });
+    mockAdmitChatTurn.mockImplementationOnce(async (getToken: () => Promise<string>) => {
+      used.push(await getToken());
+      return admissionFor("chat_new", "msg_new");
+    });
     const composer = renderComposer();
     attach(composer, "flowers");
 
     act(() => { composer.result.current.send(); });
     await waitFor(() => expect(composer.result.current.isSending).toBe(false));
 
-    expect(mockUploadChatAttachment.mock.calls[0][0]).toBe("clerk-token");
-    expect(mockCreateChat.mock.calls[0][0]).toBe("fresh-token");
-    expect(mockAdmitChatTurn.mock.calls[0][0]).toBe("fresh-token");
+    expect(used).toEqual(["upload-token", "fresh-token", "fresh-token"]);
   });
 
   it("sends attachments alone, with no text, and titles the new chat after them", async () => {
@@ -392,7 +405,7 @@ describe("chat composer attachments", () => {
     expect(composer.result.current.optimisticMessages).toMatchObject([{ text: "What are these?", failed: true }]);
     expect(mockCreateChat).not.toHaveBeenCalled();
     expect(mockAdmitChatTurn).not.toHaveBeenCalled();
-    expect(mockRemoveChatAttachment.mock.calls).toEqual([["clerk-token", gatewayUrl, placeOf("flowers")]]);
+    expect(mockRemoveChatAttachment.mock.calls).toEqual([[expect.any(Function), gatewayUrl, placeOf("flowers")]]);
 
     // "Edit" gives everything back to the composer.
     act(() => { composer.result.current.editUnsent(FIRST_SEND); });

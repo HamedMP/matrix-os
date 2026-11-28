@@ -26,7 +26,7 @@ export function useProjectChats(projectId: string | null) {
     queryFn: async ({ pageParam }) => {
       const session = await gateway.session();
       if (!session || !projectId) throw new Error("Chats unavailable.");
-      return fetchProjectChats(session.token, session.gatewayUrl, projectId, { cursor: pageParam });
+      return fetchProjectChats(session.getToken ?? session.token, session.gatewayUrl, projectId, { cursor: pageParam });
     },
     // An empty page that still has a cursor is not the end of the list.
     getNextPageParam: (last) => last.nextCursor,

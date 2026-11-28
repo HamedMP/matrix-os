@@ -3,7 +3,9 @@ import { QueryClient, QueryClientProvider, notifyManager, useQuery } from "@tans
 import { act, renderHook, waitFor } from "@testing-library/react-native";
 
 import { useAgents, useArchiveAgent, useEnsureAgentChat } from "../lib/queries/use-agents";
-import { AgentRequestError } from "../lib/requests/bots";
+import { AgentRequestError, ensureAgentDirectChat } from "../lib/requests/bots";
+import { useActiveGateway } from "../lib/queries/use-active-gateway";
+import { useSavedAgentChat } from "../components/agents/use-saved-agent-chat";
 import { mobileQueryKeys } from "../lib/requests/query-keys";
 import { disposeTestQueryClient } from "./query-test-cleanup";
 
@@ -18,7 +20,7 @@ jest.mock("@clerk/clerk-expo", () => ({
     isLoaded: true,
     isSignedIn: mockSession.isSignedIn,
     userId: mockSession.userId,
-    getToken: async () => mockSession.token,
+    getToken: mockGetToken,
   }),
 }));
 jest.mock("@/lib/storage", () => ({ HOSTED_GATEWAY_URL: "https://app.matrix-os.com" }));
@@ -32,6 +34,7 @@ jest.mock("@/lib/requests", () => ({
 }));
 
 const gatewayUrl = "https://app.matrix-os.com/vm/alice";
+const mockGetToken = async () => mockSession.token;
 const inbox = { id: "bot_inbox001", name: "Inbox helper", revision: 3, archived: false };
 const brief = { id: "bot_brief001", name: "Daily brief", revision: 1, archived: false };
 
@@ -66,6 +69,24 @@ function renderAgents() {
   }, { wrapper });
   mounted.push(rendered.unmount);
   return rendered;
+}
+
+function mockWakeWithTokenExpiry(successBody: unknown) {
+  const wakeBody = JSON.stringify({ runtimeState: "waking" });
+  const fetchMock = jest.spyOn(global, "fetch");
+  fetchMock.mockImplementationOnce(async () => {
+    mockSession.token = "renewed-token";
+    return {
+      ok: false, status: 503,
+      headers: { get: () => "1" },
+      clone: () => ({ text: async () => wakeBody }),
+    } as unknown as Response;
+  });
+  fetchMock.mockImplementation(async (_url, init) => {
+    const renewed = (init?.headers as Record<string, string>).Authorization === "Bearer renewed-token";
+    return { ok: renewed, status: renewed ? 200 : 401, json: async () => renewed ? successBody : {} } as Response;
+  });
+  return fetchMock;
 }
 
 /** The archive action alone, as on a screen that does not itself show the list. */
@@ -110,7 +131,7 @@ describe("agent hooks", () => {
       await waitFor(() => expect(names(result)).toEqual(["Inbox helper", "Daily brief"]));
       expect(result.current.list.agentsEnabled).toBe(true);
       expect(result.current.list.isPending).toBe(false);
-      expect(mockFetchAgents).toHaveBeenCalledWith("session-token", gatewayUrl);
+      expect(mockFetchAgents).toHaveBeenCalledWith(expect.any(Function), gatewayUrl);
     });
 
     it("says so when agents are switched off on this computer", async () => {
@@ -163,7 +184,7 @@ describe("agent hooks", () => {
         await expect(result.current.ensure.mutateAsync("bot_inbox001")).resolves.toBe("chat_inbox");
       });
 
-      expect(mockEnsureAgentDirectChat).toHaveBeenCalledWith("session-token", gatewayUrl, "bot_inbox001");
+      expect(mockEnsureAgentDirectChat).toHaveBeenCalledWith(mockGetToken, gatewayUrl, "bot_inbox001");
       await waitFor(() => expect(result.current.chats).toBe("chats v2"));
     });
 
@@ -188,6 +209,57 @@ describe("agent hooks", () => {
 
       expect(mockEnsureAgentDirectChat).not.toHaveBeenCalled();
     });
+
+    it("renews the bearer before retrying a wake refusal to open the agent's chat", async () => {
+      mockEnsureAgentDirectChat.mockImplementation(ensureAgentDirectChat);
+      const { result } = renderAgents();
+      await waitFor(() => expect(names(result)).toHaveLength(2));
+      const fetchMock = mockWakeWithTokenExpiry({ chatId: "chat_inbox" });
+      try {
+        await act(async () => {
+          await expect(result.current.ensure.mutateAsync(inbox.id)).resolves.toBe("chat_inbox");
+        });
+        const url = `${gatewayUrl}/api/chat-agents/${inbox.id}/direct-chat`;
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+        expect(fetchMock).toHaveBeenNthCalledWith(1, url, expect.objectContaining({
+          method: "POST", headers: expect.objectContaining({ Authorization: "Bearer session-token" }),
+        }));
+        expect(fetchMock).toHaveBeenNthCalledWith(2, url, expect.objectContaining({
+          method: "POST", headers: expect.objectContaining({ Authorization: "Bearer renewed-token" }),
+        }));
+      } finally {
+        fetchMock.mockRestore();
+      }
+    });
+  });
+
+  describe("useSavedAgentChat", () => {
+    it("renews the bearer before retrying a wake refusal to read scheduled history", async () => {
+      const client = testQueryClient();
+      client.setQueryData(mobileQueryKeys.activeComputer("user_a"), {
+        handle: "alice", runtimeSlot: "primary", gatewayPath: "/vm/alice",
+      });
+      const wrapper = ({ children }: { children: ReactNode }) => (
+        <QueryClientProvider client={client}>{children}</QueryClientProvider>
+      );
+      const fetchMock = mockWakeWithTokenExpiry({ agentId: inbox.id });
+      try {
+        const target = { chatId: "chat_inbox", scope: "user_a:alice:primary" };
+        const { result, unmount } = renderHook(() => useSavedAgentChat(inbox.id, target, useActiveGateway()), { wrapper });
+        mounted.push(unmount);
+        await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2), { timeout: 3_000 });
+        const url = `${gatewayUrl}/api/chats/chat_inbox/bot`;
+        expect(fetchMock).toHaveBeenNthCalledWith(1, url, expect.objectContaining({
+          headers: { Authorization: "Bearer session-token" }, method: undefined,
+        }));
+        expect(fetchMock).toHaveBeenNthCalledWith(2, url, expect.objectContaining({
+          headers: { Authorization: "Bearer renewed-token" }, method: undefined,
+        }));
+        await waitFor(() => expect(result.current).toMatchObject({ chatId: "chat_inbox", failed: false }));
+      } finally {
+        fetchMock.mockRestore();
+      }
+    });
   });
 
   describe("useArchiveAgent", () => {
@@ -209,7 +281,7 @@ describe("agent hooks", () => {
       });
 
       await waitFor(() => expect(names(result)).toEqual(["Daily brief"]));
-      expect(mockArchiveAgent).toHaveBeenCalledWith("session-token", gatewayUrl, "bot_inbox001", 3);
+      expect(mockArchiveAgent).toHaveBeenCalledWith(mockGetToken, gatewayUrl, "bot_inbox001", 3);
     });
 
     it("shows the agent gone before the list has been read again", async () => {

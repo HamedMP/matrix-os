@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import {
   createHeartbeatRunner,
+  readHeartbeatConfig,
   type HeartbeatRunner,
 } from "../../../packages/gateway/src/heartbeat/runner.js";
 import { buildHeartbeatPrompt } from "../../../packages/gateway/src/heartbeat/prompt.js";
@@ -42,6 +43,17 @@ describe("T120c: Heartbeat runner", () => {
   afterEach(() => {
     vi.useRealTimers();
     rmSync(homePath, { recursive: true, force: true });
+  });
+
+  it("reads the heartbeat block from config.json and falls back to defaults", () => {
+    const configPath = join(homePath, "system", "config.json");
+    const onError = vi.fn();
+    expect(readHeartbeatConfig(configPath, onError)).toEqual({});
+    writeFileSync(configPath, JSON.stringify({ heartbeat: { everyMinutes: 45, activeHours: { start: "08:00", end: "20:00" } } }));
+    expect(readHeartbeatConfig(configPath, onError)).toEqual({ everyMinutes: 45, activeHours: { start: "08:00", end: "20:00" } });
+    writeFileSync(configPath, "{not json");
+    expect(readHeartbeatConfig(configPath, onError)).toEqual({});
+    expect(onError).toHaveBeenCalledOnce();
   });
 
   it("invokes dispatcher on interval", async () => {

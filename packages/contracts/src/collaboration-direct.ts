@@ -468,6 +468,7 @@ export const COLLABORATION_DIRECT_ROUTES: readonly CollaborationDirectRoute[] = 
   home("GET", `${SCOPE}/drive/files/:fileId`, { response: "OrganizationDriveDownloadSchema" }),
   home("GET", `${SCOPE}/apps/:appId`),
   home("POST", `${SCOPE}/apps/:appId/view`),
+  home("GET", `${SCOPE}/apps/:appId/data`, { response: "CollaborativeAppDataReadResponseSchema" }),
   home("GET", `${SCOPE}/apps/:appId/assets/:assetPath`),
   home("POST", `${SCOPE}/apps/:appId/actions`),
   home("GET", `${SCOPE}/terminal`, { response: "CollaborationTerminalSchema" }),

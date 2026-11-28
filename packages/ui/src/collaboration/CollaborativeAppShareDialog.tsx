@@ -79,7 +79,9 @@ export function CollaborativeAppShareDialog({
     </label>
     <section className="mt-4 rounded-xl border p-4 text-sm">
       <h3 className="font-medium">{active ? `Shared with ${organizationName}` : `Everyone in ${organizationName}`}</h3>
-      <p className="mt-2 text-[var(--text-secondary)]">Everyone currently in {organizationName}, including guests, gets full app access while they remain a member.</p>
+      <p className="mt-2 text-[var(--text-secondary)]">{readiness?.status === "blocked"
+        ? `Everyone currently in ${organizationName}, including guests, can view the app and its data while they remain a member. Make it collaborative so they can edit too.`
+        : `Everyone currently in ${organizationName}, including guests, gets full app access while they remain a member.`}</p>
       <p className="mt-2 text-[var(--text-secondary)]">The app stays owned by you. Stopping sharing removes organization access and does not delete or change your app data.</p>
     </section>
     {failure ? <p role="alert" className="mt-3 text-sm">{failure}</p> : null}
@@ -88,7 +90,7 @@ export function CollaborativeAppShareDialog({
       <button type="button" className="rounded-lg border px-3 py-2 text-sm" onClick={onClose}>Done</button>
       {active
         ? <button type="button" className="rounded-lg border px-3 py-2 text-sm" disabled={pending || !stopEnabled} onClick={() => void stop()}>{pending ? "Stopping…" : "Stop sharing"}</button>
-        : <button type="button" className="rounded-lg border px-3 py-2 text-sm" disabled={pending || readiness?.status !== "ready"} onClick={() => void create()}>{pending ? "Sharing…" : "Share with everyone"}</button>}
+        : <button type="button" className="rounded-lg border px-3 py-2 text-sm" disabled={pending || (readiness?.status !== "ready" && readiness?.status !== "blocked")} onClick={() => void create()}>{pending ? "Sharing…" : "Share with everyone"}</button>}
     </div>
   </Dialog>;
 }

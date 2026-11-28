@@ -1,15 +1,37 @@
 import React from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react-native";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react-native";
 import { CanonicalInputMessage } from "@/components/CanonicalInputMessage";
 import { longClaudeQuestion } from "../../../tests/fixtures/long-claude-question";
 
-jest.mock("@clerk/clerk-expo", () => ({ useAuth: () => ({ getToken: async () => "test-token" }) }));
+let mockToken = "test-token";
+jest.mock("@clerk/clerk-expo", () => ({ useAuth: () => ({ getToken: async () => mockToken }) }));
 jest.mock("micromark", () => ({ micromark: jest.fn() }));
 jest.mock("micromark-extension-gfm", () => ({ gfm: jest.fn(), gfmHtml: jest.fn() }));
 const request = { id: "evt_input", runId: "run_test", requestId: "input_test", title: "Choose direction", pending: true, submitted: false, resolved: false, timestamp: 0,
   questions: [{ questionId: "direction", header: "Direction", allowOther: false, secret: false, question: "Which direction?", options: [{ label: "North", description: "Go north" }] }] };
 const props = { chatId: "chat_test", gatewayUrl: "https://app.matrix-os.com/vm/test", onSettled: jest.fn() };
-afterEach(() => jest.restoreAllMocks());
+afterEach(() => { mockToken = "test-token"; jest.restoreAllMocks(); });
+it("submits the same answer with a renewed token after wake", async () => {
+  jest.useFakeTimers();
+  jest.spyOn(Math, "random").mockReturnValue(0);
+  const transport = jest.spyOn(global, "fetch").mockImplementationOnce(async () => {
+    mockToken = "renewed";
+    return new Response('{"runtimeState":"waking"}', { status: 503, headers: { "Retry-After": "1" } });
+  }).mockImplementationOnce(async (_url, init) => {
+    const valid = new Headers(init?.headers).get("authorization") === "Bearer renewed";
+    return new Response(JSON.stringify({ requestId: "input_test", submission: "accepted" }), { status: valid ? 200 : 401 });
+  });
+  try {
+    render(<CanonicalInputMessage {...props} request={request} />);
+    fireEvent.press(screen.getByText("North"));
+    fireEvent.press(screen.getByText("Submit answer"));
+    await act(async () => { await jest.advanceTimersByTimeAsync(1_000); });
+    expect(screen.getByText("Answer submitted; awaiting confirmation.")).toBeTruthy();
+    expect(transport.mock.calls[1]?.[1]?.body).toBe(transport.mock.calls[0]?.[1]?.body);
+  } finally {
+    jest.useRealTimers();
+  }
+});
 it("renders complete long explanations and submits the original selected label", async () => {
   const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue({ ok: true, json: async () => ({ requestId: "input_test", submission: "accepted" }) } as Response);
   render(<CanonicalInputMessage {...props} request={{ ...request, questions: [{

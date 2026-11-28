@@ -23,7 +23,7 @@ export function useCancelRun() {
     mutationFn: async ({ chatId, runId, clientRequestId }: CancelRunInput) => {
       const session = await gateway.session();
       if (!session) throw new Error("Could not stop the run. Try again.");
-      return cancelChatRun(session.token, session.gatewayUrl, chatId, runId, clientRequestId ?? canonicalChatRequestId());
+      return cancelChatRun(session.getToken ?? session.token, session.gatewayUrl, chatId, runId, clientRequestId ?? canonicalChatRequestId());
     },
     // Not awaited, so the button is released as soon as the request is.
     onSettled: (_answer, _error, { chatId }) => {

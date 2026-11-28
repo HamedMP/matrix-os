@@ -120,7 +120,9 @@ else record();
     expect(dockerfile).toContain("COPY packages/kernel/package.json packages/kernel/package.json");
     expect(dockerfile).toContain("COPY packages/mcp-browser/package.json packages/mcp-browser/package.json");
     expect(dockerfile).toContain("COPY packages/sync-client/package.json packages/sync-client/package.json");
-    expect(dockerfile).toContain("RUN pnpm --filter '@matrix-os/gateway' build");
+    expect(dockerfile).toContain(
+      "RUN NODE_OPTIONS=--max-old-space-size=4096 pnpm --filter '@matrix-os/gateway' build",
+    );
     expect(dockerfile).toContain("/app/packages/gateway/dist ./packages/gateway/dist");
     expect(dockerfile).toContain("/app/packages/kernel/dist ./packages/kernel/dist");
     expect(dockerfile).toContain("/app/packages/gateway/package.json ./packages/gateway/package.json");

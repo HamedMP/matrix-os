@@ -37,7 +37,6 @@ describe("sending a file from the phone", () => {
       headers: { Authorization: "Bearer clerk-token", "Content-Type": "image/jpeg" },
       signal,
     });
-    // The response's own headers are not passed on.
     expect(result).toEqual({ status: 200, body: "{\"ok\":true}" });
   });
 
@@ -47,6 +46,19 @@ describe("sending a file from the phone", () => {
     await expect(putDeviceFile({
       uri: "file:///cache/big.zip", url: "https://example.test/blob", headers: {}, signal: new AbortController().signal,
     })).resolves.toEqual({ status: 413, body: "{\"error\":\"payload_too_large\"}" });
+  });
+
+  it("passes Retry-After through from a native wake refusal regardless of header casing", async () => {
+    mockUpload.mockResolvedValue({
+      status: 503, body: '{"runtimeState":"waking"}', headers: { "Retry-After": "2" },
+    });
+
+    const result = await putDeviceFile({
+      uri: "file:///cache/flowers.jpg", url: "https://example.test/blob",
+      headers: {}, signal: new AbortController().signal,
+    });
+
+    expect(result).toEqual({ status: 503, body: '{"runtimeState":"waking"}', retryAfter: "2" });
   });
 
   it("fails when the file cannot be read or the upload is ended", async () => {

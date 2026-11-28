@@ -86,6 +86,35 @@ function normalizedAddress(raw: string): { normalized: string; display: string }
   return { normalized: display.toLowerCase(), display };
 }
 
+/**
+ * Allowlist mode (spec 2691 amendment, ENG-590) sends no email: entries carry
+ * delivery_state 'suppressed', no outbox row, and a 30-day claim window. The
+ * 'email' path keeps the deferred outbox/worker contract for a later release.
+ */
+export type SiteInvitationDelivery = 'none' | 'email';
+export interface SiteInvitationWriteOptions { delivery?: SiteInvitationDelivery }
+const DAY_MS = 86400_000;
+const claimWindowMs = (delivery: SiteInvitationDelivery) => (delivery === 'email' ? 7 : 30) * DAY_MS;
+const initialDeliveryState = (delivery: SiteInvitationDelivery) => delivery === 'email' ? 'queued' as const : 'suppressed' as const;
+
+const MAX_OWNER_PENDING_ALLOWLIST = 500;
+async function assertOwnerPendingCapacity(db: PlatformDB, ownerId: string, additional: number, exceptInvitationId?: string) {
+  if (!additional) return;
+  let query = db.executor.selectFrom('public_site_email_invitations as i')
+    .innerJoin('public_sites as s', 's.id', 'i.site_id')
+    .select(sql<number>`count(*)::int`.as('pending'))
+    .where('s.owner_id', '=', ownerId)
+    .where('i.state', '=', 'pending').where('i.expires_at', '>', new Date());
+  if (exceptInvitationId) query = query.where('i.id', '!=', exceptInvitationId);
+  const { pending } = await query.executeTakeFirstOrThrow();
+  if (pending + additional > MAX_OWNER_PENDING_ALLOWLIST) throw new SiteError('unavailable');
+}
+function assertOwnerCapacity(db: PlatformDB, delivery: SiteInvitationDelivery, ownerId: string, additional: number, exceptInvitationId?: string) {
+  return delivery === 'email'
+    ? assertOwnerDeliveryCapacity(db, ownerId, additional, exceptInvitationId)
+    : assertOwnerPendingCapacity(db, ownerId, additional, exceptInvitationId);
+}
+
 const MAX_OWNER_OUTSTANDING_DELIVERIES = 500;
 async function assertOwnerDeliveryCapacity(db: PlatformDB, ownerId: string, additional: number, exceptInvitationId?: string) {
   if (!additional) return;
@@ -103,11 +132,13 @@ async function assertOwnerDeliveryCapacity(db: PlatformDB, ownerId: string, addi
   if (outstanding + additional > MAX_OWNER_OUTSTANDING_DELIVERIES) throw new SiteError('unavailable');
 }
 
-/** One owner transaction persists inventory, delivery intent, and audit before any mail call. */
-export async function createSiteEmailInvitations(db: PlatformDB, owner: SiteOwner, raw: unknown) {
+/** One owner transaction persists inventory, any delivery intent, and audit before any mail call. */
+export async function createSiteEmailInvitations(db: PlatformDB, owner: SiteOwner, raw: unknown,
+  options: SiteInvitationWriteOptions = {}) {
   const parsed = SiteEmailInvitationCreateRequestSchema.safeParse(raw);
   if (!parsed.success) throw new SiteError('invalid_request');
   const input = parsed.data;
+  const delivery = options.delivery ?? 'none';
   return withSiteOwnerAdmission(db, owner.ownerId, async trx => {
     await assertCurrentPublishingRuntime(trx, owner);
     const site = await trx.executor.selectFrom('public_sites').selectAll()
@@ -129,7 +160,7 @@ export async function createSiteEmailInvitations(db: PlatformDB, owner: SiteOwne
       .where('site_id', '=', site.id).where('normalized_email', 'in', valid.map(entry => entry.address.normalized))
       .orderBy('normalized_email', 'asc').orderBy('id', 'asc').forUpdate().execute() : [];
     const known = new Map(rows.map(row => [row.normalized_email, row]));
-    await assertOwnerDeliveryCapacity(trx, owner.ownerId,
+    await assertOwnerCapacity(trx, delivery, owner.ownerId,
       valid.filter(entry => !known.has(entry.address.normalized)).length);
     const results: Array<Record<string, unknown>> = new Array(input.emailAddresses.length);
     let createdCount = 0;
@@ -141,9 +172,9 @@ export async function createSiteEmailInvitations(db: PlatformDB, owner: SiteOwne
       const invitationId = randomUUID();
       await trx.executor.insertInto('public_site_email_invitations').values({
         id: invitationId, site_id: site.id, normalized_email: entry.address.normalized,
-        display_email: entry.address.display, generation: '1', state: 'pending', delivery_state: 'queued',
+        display_email: entry.address.display, generation: '1', state: 'pending', delivery_state: initialDeliveryState(delivery),
         invited_by_clerk_user_id: owner.ownerId, accepted_clerk_user_id: null,
-        created_at: now, issued_at: now, expires_at: new Date(now.getTime() + 7 * 86400_000),
+        created_at: now, issued_at: now, expires_at: new Date(now.getTime() + claimWindowMs(delivery)),
         accepted_at: null, revoked_at: null, state_reason: null, updated_at: now, revision: '0',
       }).onConflict(oc => oc.columns(['site_id', 'normalized_email']).doNothing()).execute();
       const inserted = await trx.executor.selectFrom('public_site_email_invitations').selectAll()
@@ -153,7 +184,7 @@ export async function createSiteEmailInvitations(db: PlatformDB, owner: SiteOwne
         continue;
       }
       createdCount++;
-      await trx.executor.insertInto('public_site_invitation_deliveries').values({
+      if (delivery === 'email') await trx.executor.insertInto('public_site_invitation_deliveries').values({
         id: randomUUID(), invitation_id: invitationId, invitation_generation: '1', idempotency_key: randomUUID(),
         state: 'queued', attempts: 0, available_at: now, lease_token: null, lease_until: null,
         provider_message_id: null, failure_code: null, sent_at: null, created_at: now, updated_at: now,
@@ -174,6 +205,7 @@ export async function createSiteEmailInvitations(db: PlatformDB, owner: SiteOwne
 
 async function mutateSiteEmailInvitation(
   db: PlatformDB, owner: SiteOwner, invitationId: string, raw: unknown, action: 'resend' | 'revoke',
+  delivery: SiteInvitationDelivery = 'none',
 ) {
   const id = SiteIdSchema.safeParse(invitationId);
   const parsed = SiteEmailInvitationMutationRequestSchema.safeParse(raw);
@@ -195,7 +227,7 @@ async function mutateSiteEmailInvitation(
         || ['failed', 'ambiguous', 'suppressed'].includes(invitation.delivery_state)));
     if (action === 'resend' ? !canResend : invitation.state !== 'pending' && invitation.state !== 'accepted')
       throw new SiteError('conflict');
-    if (action === 'resend') await assertOwnerDeliveryCapacity(trx, owner.ownerId, 1, id.data);
+    if (action === 'resend') await assertOwnerCapacity(trx, delivery, owner.ownerId, 1, id.data);
     const generation = Number(invitation.generation);
     if (!Number.isSafeInteger(generation + 1) || !Number.isSafeInteger(Number(invitation.revision) + 1))
       throw new SiteError('conflict');
@@ -219,9 +251,9 @@ async function mutateSiteEmailInvitation(
       .where('state', 'in', ['queued', 'leased', 'failed', 'ambiguous']).execute();
     const changed = action === 'resend'
       ? await trx.executor.updateTable('public_site_email_invitations').set({
-        generation: String(generation + 1), state: 'pending', delivery_state: 'queued',
+        generation: String(generation + 1), state: 'pending', delivery_state: initialDeliveryState(delivery),
         accepted_clerk_user_id: null, accepted_at: null, revoked_at: null, state_reason: null,
-        issued_at: now, expires_at: new Date(now.getTime() + 7 * 86400_000),
+        issued_at: now, expires_at: new Date(now.getTime() + claimWindowMs(delivery)),
         updated_at: now, revision: String(Number(invitation.revision) + 1),
       }).where('id', '=', id.data).where('site_id', '=', site.id)
         .where('generation', '=', invitation.generation).where('revision', '=', invitation.revision)
@@ -233,7 +265,7 @@ async function mutateSiteEmailInvitation(
         .where('generation', '=', invitation.generation).where('revision', '=', invitation.revision)
         .returningAll().executeTakeFirst();
     if (!changed) throw new SiteError('conflict');
-    if (action === 'resend') {
+    if (action === 'resend' && delivery === 'email') {
       await trx.executor.insertInto('public_site_invitation_deliveries').values({
         id: randomUUID(), invitation_id: id.data, invitation_generation: changed.generation,
         idempotency_key: randomUUID(), state: 'queued', attempts: 0, available_at: now,
@@ -253,8 +285,10 @@ async function mutateSiteEmailInvitation(
   });
 }
 
-export function resendSiteEmailInvitation(db: PlatformDB, owner: SiteOwner, invitationId: string, raw: unknown) {
-  return mutateSiteEmailInvitation(db, owner, invitationId, raw, 'resend');
+/** In allowlist mode this is the owner's "Renew": a new generation and window, nothing sent. */
+export function resendSiteEmailInvitation(db: PlatformDB, owner: SiteOwner, invitationId: string, raw: unknown,
+  options: SiteInvitationWriteOptions = {}) {
+  return mutateSiteEmailInvitation(db, owner, invitationId, raw, 'resend', options.delivery ?? 'none');
 }
 export function revokeSiteEmailInvitation(db: PlatformDB, owner: SiteOwner, invitationId: string, raw: unknown) {
   return mutateSiteEmailInvitation(db, owner, invitationId, raw, 'revoke');

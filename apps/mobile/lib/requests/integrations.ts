@@ -1,6 +1,6 @@
 import { z } from "zod/v4";
 
-import { buildGatewayRequestUrl, fetchAuthenticatedJson } from "@/lib/requests/http";
+import { buildGatewayRequestUrl, fetchAuthenticatedJson, type RequestToken } from "@/lib/requests/http";
 
 const INTEGRATIONS_UNAVAILABLE_ERROR = "Integrations unavailable. Try again.";
 const INTEGRATION_REFRESH_ERROR = "Could not refresh connection. Try again.";
@@ -82,7 +82,7 @@ export type IntegrationService = z.infer<typeof IntegrationServiceSchema>;
 export type ConnectedIntegration = z.output<typeof ConnectedIntegrationWireSchema>;
 
 export function fetchAvailableIntegrations(
-  clerkToken: string,
+  clerkToken: RequestToken,
   computerGatewayUrl: string,
 ): Promise<IntegrationService[]> {
   return fetchAuthenticatedJson({
@@ -94,7 +94,7 @@ export function fetchAvailableIntegrations(
 }
 
 export function fetchConnectedIntegrations(
-  clerkToken: string,
+  clerkToken: RequestToken,
   computerGatewayUrl: string,
 ): Promise<ConnectedIntegration[]> {
   return fetchAuthenticatedJson({
@@ -106,7 +106,7 @@ export function fetchConnectedIntegrations(
 }
 
 export async function refreshIntegrationConnection(
-  clerkToken: string,
+  clerkToken: RequestToken,
   computerGatewayUrl: string,
   connectionId: string,
 ): Promise<void> {
@@ -124,7 +124,7 @@ export async function refreshIntegrationConnection(
 }
 
 export async function deleteIntegrationConnection(
-  clerkToken: string,
+  clerkToken: RequestToken,
   computerGatewayUrl: string,
   connectionId: string,
 ): Promise<void> {
@@ -142,7 +142,7 @@ export async function deleteIntegrationConnection(
 }
 
 export async function createIntegrationConnectUrl(
-  clerkToken: string,
+  clerkToken: RequestToken,
   computerGatewayUrl: string,
   serviceId: string,
 ): Promise<string> {
@@ -163,7 +163,7 @@ export async function createIntegrationConnectUrl(
 }
 
 export async function syncIntegrationConnections(
-  clerkToken: string,
+  clerkToken: RequestToken,
   computerGatewayUrl: string,
 ): Promise<void> {
   await fetchAuthenticatedJson({

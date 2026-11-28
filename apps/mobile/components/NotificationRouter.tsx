@@ -3,6 +3,7 @@ import * as Notifications from "expo-notifications";
 import { useGlobalSearchParams, useNavigationContainerRef, useRouter, useSegments } from "expo-router";
 import { useQueryClient } from "@tanstack/react-query";
 import type { MatrixComputer } from "@matrix-os/contracts";
+import { RUNTIME_WAKE_ATTEMPT_TIMEOUT_MS } from "@matrix-os/contracts/runtime-lifecycle";
 
 import { useCanonicalChatSession } from "@/lib/canonical-chat-session-context";
 import {
@@ -36,7 +37,7 @@ const BEFORE_SHELL = new Set(["sign-in", "sign-in-computer"]);
 const PROJECT_CHAT = "projects/[projectId]/chats/[chatId]";
 /** Expo answers for the app after three seconds, so the foreground check stops sooner. */
 const FOREGROUND_LOOKUP_TIMEOUT_MS = 1_500;
-const TAP_LOOKUP_TIMEOUT_MS = 10_000;
+const CHAT_TAP_LOOKUP_TIMEOUT_MS = 10_000;
 
 function isChatOnScreen(segments: readonly string[]): boolean {
   return isChatScreen(segments)
@@ -58,7 +59,7 @@ function warn(scope: string, err: unknown) {
  */
 async function isChatOnComputer(session: GatewaySession, chatId: string): Promise<boolean> {
   try {
-    return await chatExists(session.token, session.gatewayUrl, chatId, TAP_LOOKUP_TIMEOUT_MS);
+    return await chatExists(session.getToken ?? session.token, session.gatewayUrl, chatId, CHAT_TAP_LOOKUP_TIMEOUT_MS);
   } catch (err: unknown) {
     warn("Notification chat lookup failed", err);
     return true;
@@ -109,7 +110,7 @@ export function NotificationRouter({ connected, setGateway }: NotificationRouter
       threadTerminal: async (threadId) => {
         const session = await gatewaySessionRef.current();
         if (!session) return null;
-        return fetchThreadTerminalSession(session.token, session.gatewayUrl, threadId, FOREGROUND_LOOKUP_TIMEOUT_MS);
+        return fetchThreadTerminalSession(session.getToken ?? session.token, session.gatewayUrl, threadId, FOREGROUND_LOOKUP_TIMEOUT_MS);
       },
     }));
     return () => Notifications.setNotificationHandler(defaultNotificationHandler);
@@ -128,10 +129,10 @@ export function NotificationRouter({ connected, setGateway }: NotificationRouter
     await Promise.allSettled([switchingRef.current]);
     // Read now rather than from this render, which a switch since may have outdated.
     const current = queryClient.getQueryData<MatrixComputer | null>(mobileQueryKeys.activeComputer(userId)) ?? null;
-    const token = current ? (await gatewaySession())?.token : null;
-    if (!current || !token) return null;
-    if (wanted === null || wanted === current.handle) return { token, gatewayUrl: hostedGatewayUrl(current) };
-    const inventory = await fetchComputers(token);
+    const session = current ? await gatewaySession() : null;
+    if (!current || !session?.token) return null;
+    if (wanted === null || wanted === current.handle) return { ...session, gatewayUrl: hostedGatewayUrl(current) };
+    const inventory = await fetchComputers(session.token);
     const matches = inventory.items.filter((computer) => computer.handle === wanted);
     // The account's own choice of computer outranks the phone's.
     if (matches.length !== 1 || (inventory.selectedSlot ?? matches[0].runtimeSlot) !== matches[0].runtimeSlot) {
@@ -144,7 +145,7 @@ export function NotificationRouter({ connected, setGateway }: NotificationRouter
     })();
     switchingRef.current = switching;
     await switching;
-    return { token, gatewayUrl: hostedGatewayUrl(matches[0]) };
+    return { ...session, gatewayUrl: hostedGatewayUrl(matches[0]) };
   }, [gatewaySession, userId, queryClient, setGateway]);
 
   /**
@@ -174,12 +175,14 @@ export function NotificationRouter({ connected, setGateway }: NotificationRouter
         showChatScreenFromRoot(navigation, router);
         return;
       }
+      const requestToken = session.getToken ?? session.token;
       const terminal = await fetchThreadTerminalSession(
-        session.token, session.gatewayUrl, target.threadId, TAP_LOOKUP_TIMEOUT_MS,
+        requestToken, session.gatewayUrl, target.threadId, RUNTIME_WAKE_ATTEMPT_TIMEOUT_MS,
       );
+      if (!isLatest()) return;
       // A chat's own terminal is not listed: it attaches only with that chat's context.
       const listed = terminal !== null
-        && (await fetchTerminalSessions(session.token, session.gatewayUrl)).some((tab) => tab.id === terminal);
+        && (await fetchTerminalSessions(requestToken, session.gatewayUrl)).some((tab) => tab.id === terminal);
       if (!isLatest()) return;
       if (terminal !== null && listed) openTerminalFromRoot(navigation, router, terminal);
       else showChatList();

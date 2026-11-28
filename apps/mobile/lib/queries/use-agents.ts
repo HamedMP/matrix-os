@@ -21,7 +21,7 @@ export function useAgents() {
     queryFn: async () => {
       const session = await gateway.session();
       if (!session) throw new Error("Agents unavailable.");
-      return fetchAgents(session.token, session.gatewayUrl);
+      return fetchAgents(session.getToken ?? session.token, session.gatewayUrl);
     },
   });
 
@@ -49,7 +49,7 @@ export function useEnsureAgentChat() {
     mutationFn: async (agentId: string) => {
       const session = await gateway.session();
       if (!session) throw new AgentRequestError("unavailable");
-      return ensureAgentDirectChat(session.token, session.gatewayUrl, agentId);
+      return ensureAgentDirectChat(session.getToken ?? session.token, session.gatewayUrl, agentId);
     },
     // The chat may have just been created, and then the chat list has gained one.
     onSuccess: () => {
@@ -72,7 +72,7 @@ export function useArchiveAgent() {
     mutationFn: async ({ agentId, baseRevision }: { agentId: string; baseRevision: number }) => {
       const session = await gateway.session();
       if (!session) throw new AgentRequestError("unavailable");
-      return archiveAgent(session.token, session.gatewayUrl, agentId, baseRevision);
+      return archiveAgent(session.getToken ?? session.token, session.gatewayUrl, agentId, baseRevision);
     },
     // A list read still in flight was sent before this request, so its answer
     // would put the agent back after the server has archived it.

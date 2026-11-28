@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { z } from "zod/v4";
 
+import { Button } from "../Button.js";
 import {
   SharedAppTransportError,
   type SharedAppFailureCode,
@@ -27,11 +28,22 @@ const BridgeMessageSchema = z.discriminatedUnion("type", [
     type: z.literal("matrix:shared-app:retry"),
     requestId: z.string().min(8).max(128),
   }),
+  // ENG-579: `readData` of a view-only share; `action` carries the key.
+  z.strictObject({
+    type: z.literal("matrix:shared-app:read-data"),
+    requestId: z.string().min(8).max(128),
+    action: z.string().min(1).max(256),
+  }),
+  // ENG-579: the read-only bridge refused a write locally; show the view-only notice.
+  z.strictObject({
+    type: z.literal("matrix:shared-app:view-only"),
+  }),
 ]);
 const BRIDGE_READY_TIMEOUT_MS = 10_000;
 
 type ViewerState = "launching" | "ready" | SharedAppFailureCode;
 
+// react-doctor-disable-next-line react-doctor/no-high-complexity-react-function -- one viewer state machine (launch, bridge requests, recovery, view-only notice); request routing and the notice are already extracted helpers.
 export function SharedAppViewer({ target, transport }: {
   target: SharedAppTarget;
   transport: SharedAppTransport;
@@ -40,6 +52,8 @@ export function SharedAppViewer({ target, transport }: {
   const [entry, setEntry] = useState<{ targetKey: string; url: string } | null>(null);
   const [documentGeneration, setDocumentGeneration] = useState(0);
   const [state, setState] = useState<ViewerState>("launching");
+  /** A refused write on a view-only share keeps the app open with an inline notice. */
+  const [viewOnlyNotice, setViewOnlyNotice] = useState(false);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const mounted = useRef(true);
   const requestGeneration = useRef(0);
@@ -52,6 +66,13 @@ export function SharedAppViewer({ target, transport }: {
 
   const applyFailure = useCallback((error: unknown) => {
     const code = error instanceof SharedAppTransportError ? error.code : "unavailable";
+    if (code === "read_only") {
+      // A refused write (or refused retry) is final: clear any pending recovery and keep the app open.
+      pendingMutationRecovery.current = false;
+      setState(documentReady.current ? "ready" : "launching");
+      setViewOnlyNotice(true);
+      return;
+    }
     if (code === "uncertain") pendingMutationRecovery.current = true;
     if (code === "conflict" || code === "access_ended") pendingMutationRecovery.current = false;
     setState(pendingMutationRecovery.current ? "uncertain" : code);
@@ -138,16 +159,16 @@ export function SharedAppViewer({ target, transport }: {
       const parsed = BridgeMessageSchema.safeParse(event.data);
       if (!parsed.success) return;
       const request = parsed.data;
+      if (request.type === "matrix:shared-app:view-only") {
+        setViewOnlyNotice(true);
+        return;
+      }
       if (request.type === "matrix:shared-app:ready") {
         documentReady.current = true;
         setState(pendingMutationRecovery.current ? "uncertain" : "ready");
         return;
       }
-      const work = request.type === "matrix:shared-app:query"
-        ? transport.query(request.action)
-        : request.type === "matrix:shared-app:mutate"
-          ? transport.mutate(request.action, request.expectedRevision)
-          : recoverMutation();
+      const work = bridgeWork(transport, request, recoverMutation);
       const generation = activeDocumentGeneration.current;
       void work.then((result) => {
         if (mounted.current && activeDocumentGeneration.current === generation) reply(event, request.requestId, { ok: true, result });
@@ -206,6 +227,29 @@ export function SharedAppViewer({ target, transport }: {
         </button> : null}
       </section>
     </div> : null}
+    <ViewOnlyNotice visible={viewOnlyNotice && state === "ready"} onDismiss={() => setViewOnlyNotice(false)} />
+  </div>;
+}
+
+type BridgeRequest = Exclude<z.infer<typeof BridgeMessageSchema>, { type: "matrix:shared-app:ready" | "matrix:shared-app:view-only" }>;
+
+function bridgeWork(
+  transport: SharedAppTransport,
+  request: BridgeRequest,
+  recoverMutation: () => Promise<unknown>,
+): Promise<unknown> {
+  if (request.type === "matrix:shared-app:query") return transport.query(request.action);
+  if (request.type === "matrix:shared-app:mutate") return transport.mutate(request.action, request.expectedRevision);
+  if (request.type === "matrix:shared-app:read-data") return transport.readData(request.action);
+  return recoverMutation();
+}
+
+/** ENG-579: a refused write on a view-only share; the app and the teammate's input stay in place. */
+function ViewOnlyNotice({ visible, onDismiss }: { visible: boolean; onDismiss: () => void }) {
+  if (!visible) return null;
+  return <div role="status" className="absolute inset-x-3 bottom-3 flex items-center gap-3 rounded-xl border bg-[var(--bg-primary)] px-4 py-3 text-sm shadow-lg">
+    <span className="min-w-0 flex-1">This app is view-only. Ask the owner to make it collaborative.</span>
+    <Button type="button" variant="secondary" size="sm" onClick={onDismiss}>Dismiss</Button>
   </div>;
 }
 

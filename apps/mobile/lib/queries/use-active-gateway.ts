@@ -8,6 +8,7 @@ import { HOSTED_GATEWAY_URL } from "@/lib/storage";
 export interface GatewaySession {
   token: string;
   gatewayUrl: string;
+  getToken?: () => Promise<string | null>;
 }
 
 /**
@@ -31,7 +32,7 @@ export function useActiveGateway() {
   // The same function while the computer stays, so what is built on it can be kept.
   const session = useCallback(async (): Promise<GatewaySession | null> => {
     const token = await getToken();
-    return token && gatewayUrl ? { token, gatewayUrl } : null;
+    return token && gatewayUrl ? { token, gatewayUrl, getToken } : null;
   }, [getToken, gatewayUrl]);
 
   return {

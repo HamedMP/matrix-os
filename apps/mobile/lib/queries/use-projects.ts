@@ -22,9 +22,8 @@ export function useProjects() {
     queryKey: mobileQueryKeys.projects(userId ?? "signed-out", computerKey),
     enabled: authEnabled && Boolean(computer),
     queryFn: async () => {
-      const token = await getToken();
-      if (!token || !computer) throw new Error("Projects unavailable.");
-      return fetchProjects(token, `${HOSTED_GATEWAY_URL}${computer.gatewayPath}`);
+      if (!computer) throw new Error("Projects unavailable.");
+      return fetchProjects(getToken, `${HOSTED_GATEWAY_URL}${computer.gatewayPath}`);
     },
     staleTime: 60_000,
   });

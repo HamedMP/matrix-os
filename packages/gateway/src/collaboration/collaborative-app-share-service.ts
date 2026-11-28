@@ -15,6 +15,7 @@ import type {
   AtomicCollaborativeAppShareRecord,
   CollaborativeAppShareRepository,
 } from "./collaborative-app-share-repository.js";
+import { isShareableAppReadiness } from "./collaborative-app-access.js";
 import { canonicalJson } from "./direct-crypto.js";
 import type { CollaborationResourceCatalog } from "./resource-catalog.js";
 
@@ -127,7 +128,7 @@ export class CollaborativeAppShareService {
       catalogId: resolved.current.build.catalogId,
       buildId: resolved.current.build.buildId,
     });
-    if (!readiness || readiness.status !== "ready" || readiness.invalidatedAt) {
+    if (!readiness || !isShareableAppReadiness(readiness.status, readiness.invalidatedAt)) {
       return { eligible: false, reason: "not_ready" };
     }
     if (readiness.build.buildId !== resolved.current.build.buildId
@@ -216,7 +217,7 @@ export class CollaborativeAppShareService {
       ownerId, catalogId: token.catalogId, buildId: token.buildId,
     });
     if (!readiness || readiness.id !== token.readinessId || readiness.revision !== token.readinessRevision
-      || readiness.build.buildId !== token.buildId || readiness.status !== "ready" || readiness.invalidatedAt) {
+      || readiness.build.buildId !== token.buildId || !isShareableAppReadiness(readiness.status, readiness.invalidatedAt)) {
       throw new CollaborativeAppShareServiceError("conflict");
     }
     const created = await this.options.shares.createAtomic({
@@ -348,7 +349,7 @@ export class CollaborativeAppShareService {
   ): Promise<CollaborativeAppShare> {
     const state = share.binding.state === "stopped"
       ? "stopped"
-      : readiness.status === "ready" && !readiness.invalidatedAt
+      : isShareableAppReadiness(readiness.status, readiness.invalidatedAt)
         && readiness.build.buildId === share.binding.buildId
         ? "active"
         : "needs_recheck";

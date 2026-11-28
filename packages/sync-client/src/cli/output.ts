@@ -1,3 +1,14 @@
+import {
+  classifyRuntimeWakeText,
+  fetchWithRuntimeWake,
+  MAX_RUNTIME_WAKE_BODY_CHARS,
+  RUNTIME_WAKE_ATTEMPT_TIMEOUT_MS,
+  RUNTIME_WAKE_MESSAGES,
+  RUNTIME_WAKE_NOTICE_DELAY_MS,
+  RuntimeWakeError,
+  type RuntimeWakeSignal,
+} from "@matrix-os/contracts/runtime-lifecycle";
+
 export const CLI_OUTPUT_VERSION = 1;
 
 const GENERIC_MESSAGES: Record<string, string> = {
@@ -23,6 +34,9 @@ const GENERIC_MESSAGES: Record<string, string> = {
   terminal_agent_blocked: "The agent is waiting for a person. Read its screen first, or pass --force.",
   terminal_finished: "That terminal has finished.",
   not_found: "Terminal not found.",
+  runtime_waking: RUNTIME_WAKE_MESSAGES.runtime_waking,
+  runtime_busy: RUNTIME_WAKE_MESSAGES.runtime_busy,
+  runtime_unavailable: RUNTIME_WAKE_MESSAGES.runtime_unavailable,
 };
 
 export function formatCliSuccess(data: Record<string, unknown>): string {
@@ -78,4 +92,120 @@ export function formatNdjsonEvent(
   data: Record<string, unknown>,
 ): string {
   return `${JSON.stringify({ v: CLI_OUTPUT_VERSION, type, data })}\n`;
+}
+
+/**
+ * Gateway fetch that waits for a sleeping Matrix computer to wake (spec 2691,
+ * ENG-520). Every attempt gets its own `AbortSignal.timeout(timeoutMs)`.
+ * Mutating requests are retried only when the platform answered with
+ * `runtimeState`, which it sends before proxying, so the request never
+ * reached the computer. Once a wait passes 3 s, one notice line goes to
+ * stderr (never stdout, so piped output stays clean). Throws
+ * `RuntimeWakeError` (code `runtime_waking`, `runtime_busy`, or
+ * `runtime_unavailable`) once retrying stops.
+ */
+export async function fetchWithWakeRetry(
+  fetchImpl: typeof fetch,
+  url: string,
+  init: RequestInit,
+  timeoutMs = RUNTIME_WAKE_ATTEMPT_TIMEOUT_MS,
+): Promise<Response> {
+  let noticeTimer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const { response, exhausted } = await fetchWithRuntimeWake(
+      () => fetchImpl(url, { ...init, signal: AbortSignal.timeout(timeoutMs) }),
+      {
+        method: init.method,
+        onWaiting: () => {
+          if (noticeTimer) return;
+          noticeTimer = setTimeout(() => {
+            process.stderr.write(`${RUNTIME_WAKE_MESSAGES.notice}\n`);
+          }, RUNTIME_WAKE_NOTICE_DELAY_MS);
+          noticeTimer.unref?.();
+        },
+      },
+    );
+    if (exhausted) {
+      throw new RuntimeWakeError(exhausted.kind);
+    }
+    return response;
+  } finally {
+    clearTimeout(noticeTimer);
+  }
+}
+
+/**
+ * Refused websocket upgrades. The `ws` package emits `unexpected-response`
+ * with the request and response when an upgrade is answered without a 101;
+ * a 503 wake response there means the Matrix computer is still waking
+ * (spec 2691, ENG-520).
+ */
+
+const UPGRADE_REFUSAL_READ_TIMEOUT_MS = 2_000;
+
+interface UpgradeRefusal {
+  status: number;
+  retryAfter: string | null;
+  body: string;
+}
+
+interface UpgradeRefusalMessage {
+  statusCode?: unknown;
+  headers?: Record<string, unknown>;
+  on?: (event: string, listener: (...args: unknown[]) => void) => unknown;
+  resume?: () => unknown;
+}
+
+export function ignoreAbandonedSocketError(err: unknown): void {
+  console.warn("[shell] abandoned attach socket reported an error", err instanceof Error ? err.name : "unknown_error");
+}
+
+function destroyUpgradeRequest(req: unknown): void {
+  if (req && typeof req === "object" && typeof (req as { destroy?: unknown }).destroy === "function") {
+    (req as { destroy: () => void }).destroy();
+  }
+}
+
+/** Reads the status, Retry-After, and a bounded body of a refused websocket upgrade. */
+function readUpgradeRefusal(res: unknown): Promise<UpgradeRefusal | null> {
+  if (!res || typeof res !== "object") return Promise.resolve(null);
+  const message = res as UpgradeRefusalMessage;
+  const status = typeof message.statusCode === "number" ? message.statusCode : 0;
+  const header = message.headers?.["retry-after"];
+  const retryAfter = typeof header === "string" ? header : null;
+  if (status !== 503 || typeof message.on !== "function") {
+    message.resume?.();
+    return Promise.resolve({ status, retryAfter, body: "" });
+  }
+  const on = message.on.bind(message);
+  return new Promise((resolve) => {
+    let body = "";
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      resolve({ status, retryAfter, body });
+    };
+    const timer = setTimeout(finish, UPGRADE_REFUSAL_READ_TIMEOUT_MS);
+    timer.unref?.();
+    on("data", (chunk: unknown) => {
+      if (done) return;
+      body += Buffer.isBuffer(chunk) ? chunk.toString("utf8") : String(chunk);
+      // Past the cap it cannot be a wake response; stop reading.
+      if (body.length > MAX_RUNTIME_WAKE_BODY_CHARS) finish();
+    });
+    on("end", finish);
+    on("error", (err: unknown) => {
+      console.warn("[shell] refused upgrade body unreadable", err instanceof Error ? err.name : "unknown_error");
+      finish();
+    });
+  });
+}
+
+/** Reads a refused upgrade, releases its request, and returns its wake signal, if any. */
+export async function readUpgradeRefusalWake(req: unknown, res: unknown): Promise<RuntimeWakeSignal | null> {
+  const refusal = await readUpgradeRefusal(res);
+  destroyUpgradeRequest(req);
+  return refusal ? classifyRuntimeWakeText(refusal.status, refusal.retryAfter, refusal.body) : null;
 }

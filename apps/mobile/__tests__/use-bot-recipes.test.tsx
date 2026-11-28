@@ -6,9 +6,10 @@ import { useBotRecipes } from "../lib/queries/use-bot-recipes";
 
 const mockFetchNativeBotRecipes = jest.fn();
 const mockInstantiateNativeBot = jest.fn();
+const mockGetToken = async () => "session-token";
 
 jest.mock("@clerk/clerk-expo", () => ({
-  useAuth: () => ({ isLoaded: true, isSignedIn: true, userId: "user_a", getToken: async () => "session-token" }),
+  useAuth: () => ({ isLoaded: true, isSignedIn: true, userId: "user_a", getToken: mockGetToken }),
 }));
 jest.mock("@/lib/requests/bots", () => ({
   fetchNativeBotRecipes: (...args: unknown[]) => mockFetchNativeBotRecipes(...args),
@@ -55,10 +56,10 @@ describe("useBotRecipes create", () => {
     });
     await result.current.create(recipe, "req_ijklmnop");
 
-    expect(mockInstantiateNativeBot).toHaveBeenNthCalledWith(1, "session-token", gatewayUrl, {
+    expect(mockInstantiateNativeBot).toHaveBeenNthCalledWith(1, mockGetToken, gatewayUrl, {
       recipe, clientRequestId: "req_abcdefgh", selection,
     });
-    expect(mockInstantiateNativeBot).toHaveBeenNthCalledWith(2, "session-token", gatewayUrl, {
+    expect(mockInstantiateNativeBot).toHaveBeenNthCalledWith(2, mockGetToken, gatewayUrl, {
       recipe, clientRequestId: "req_ijklmnop",
     });
   });
@@ -68,7 +69,7 @@ describe("useBotRecipes create", () => {
 
     await result.current.create(recipe, "req_abcdefgh", undefined, "  Morning brief ");
 
-    expect(mockInstantiateNativeBot).toHaveBeenCalledWith("session-token", gatewayUrl, {
+    expect(mockInstantiateNativeBot).toHaveBeenCalledWith(mockGetToken, gatewayUrl, {
       recipe, clientRequestId: "req_abcdefgh", name: "Morning brief",
     });
   });
@@ -78,7 +79,7 @@ describe("useBotRecipes create", () => {
 
     await result.current.create(recipe, "req_abcdefgh", selection, "   ");
 
-    expect(mockInstantiateNativeBot).toHaveBeenCalledWith("session-token", gatewayUrl, {
+    expect(mockInstantiateNativeBot).toHaveBeenCalledWith(mockGetToken, gatewayUrl, {
       recipe, clientRequestId: "req_abcdefgh", selection,
     });
   });
@@ -105,7 +106,7 @@ describe("useBotRecipes refetch", () => {
     });
 
     expect(mockFetchNativeBotRecipes).toHaveBeenCalledTimes(2);
-    expect(mockFetchNativeBotRecipes).toHaveBeenLastCalledWith("session-token", gatewayUrl);
+    expect(mockFetchNativeBotRecipes).toHaveBeenLastCalledWith(expect.any(Function), gatewayUrl);
     // The hook hears of the answer a moment after the read itself resolves.
     await waitFor(() => expect(result.current.recipes).toEqual(templates));
     expect(result.current.isError).toBe(false);

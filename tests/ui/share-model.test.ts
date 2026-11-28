@@ -83,7 +83,7 @@ describe("in-memory email invitation stub", () => {
     const result = await adapter.invite("app", { emailAddresses: ["A@b.co", "a@b.co", "nope"], baseRevision: siteRevision }, signal);
     expect(result.results.map((entry) => entry.outcome)).toEqual(["queued", "duplicate_in_batch", "invalid"]);
     const page = await adapter.list("app", signal);
-    expect(page.invitations).toMatchObject([{ emailAddress: "a@b.co", state: "pending", expiresAt: "2026-11-22T00:00:00.000Z" }]);
+    expect(page.invitations).toMatchObject([{ emailAddress: "a@b.co", state: "pending", expiresAt: "2026-12-15T00:00:00.000Z" }]);
     await expect(adapter.revoke("app", "id-1", { baseRevision: siteRevision, invitationRevision: 1 }, signal)).rejects.toMatchObject({ status: 409 });
     await adapter.revoke("app", "id-1", { baseRevision: page.siteRevision, invitationRevision: 1 }, signal);
     expect((await adapter.list("app", signal)).invitations).toEqual([]);

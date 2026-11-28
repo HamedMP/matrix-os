@@ -66,4 +66,18 @@ describe("terminal live ownership", () => {
     expect(revoked).toHaveBeenCalledOnce();
     expect(ownership.role(KEY, "web")).toBe("observer");
   });
+  it("counts live attached viewers and drops stale ones", () => {
+    let now = 1_000_000;
+    const ownership = createTerminalLiveOwnership({ now: () => now, staleAfterMs: 90_000 });
+    expect(ownership.attachedViewerCount()).toBe(0);
+    ownership.attach({ key: KEY, viewerId: "web", exclusive: false, onRevoked: vi.fn() });
+    ownership.attach({ key: `${KEY}2`, viewerId: "cli", exclusive: false, onRevoked: vi.fn() });
+    expect(ownership.attachedViewerCount()).toBe(2);
+    now += 60_000;
+    ownership.touch(KEY, "web");
+    now += 60_000;
+    expect(ownership.attachedViewerCount()).toBe(1);
+    ownership.detach(KEY, "web");
+    expect(ownership.attachedViewerCount()).toBe(0);
+  });
 });

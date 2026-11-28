@@ -1,21 +1,24 @@
 import { useEffect } from "react";
+import { RUNTIME_WAKE_MESSAGES } from "@matrix-os/contracts/runtime-lifecycle";
 import { AccessibilityInfo, Platform, Text, View } from "react-native";
 import Animated, { useAnimatedStyle, useSharedValue, withTiming } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { FullWindowOverlay } from "react-native-screens";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 
+import { runtimeWakeTracker, type RuntimeWakeTracker } from "@/lib/requests/http";
 import { useReduceMotion } from "@/lib/use-reduce-motion";
-import { TOAST_DURATION_MS, useToast, type Toast } from "@/lib/toast";
+import { TOAST_DURATION_MS, dismissToast, showToast, useToast, type Toast } from "@/lib/toast";
 
 import { Icon } from "./Icon";
-import { AlertIcon, CheckIcon } from "./icons";
+import { AlertIcon, CheckIcon, LoadingIcon } from "./icons";
 
 /** How long a toast takes to fade in, and again to fade out before it ends. */
 export const TOAST_FADE_MS = 180;
 // How far it slides down as it appears, unless the person has asked for less motion.
 const TOAST_SLIDE = 8;
 const TOAST_ICON_SIZE = 16;
+const TOAST_ICONS = { success: CheckIcon, error: AlertIcon, progress: LoadingIcon } as const;
 // Between the status bar and the toast.
 const TOAST_GAP = 8;
 
@@ -24,7 +27,8 @@ const TOAST_GAP = 8;
  * is there and without taking its taps. Mounted once, at the root, above the
  * tabs and the side panel.
  */
-export function ToastHost() {
+export function ToastHost({ wakeSource = runtimeWakeTracker }: { wakeSource?: RuntimeWakeSource | null } = {}) {
+  useRuntimeWakeNotice(wakeSource);
   const toast = useToast();
   const insets = useSafeAreaInsets();
 
@@ -42,6 +46,51 @@ export function ToastHost() {
   return host;
 }
 
+type RuntimeWakeSource = Pick<RuntimeWakeTracker, "subscribe">;
+
+/**
+ * Shows the shared gateway waking state (spec 2691, ENG-520) through the
+ * shared toast host: "Waking your Matrix computer…" while a request has
+ * waited 3 s or more for a wake and any request is still waiting, and the
+ * typed reason when one request stops retrying.
+ * Holds no React state, so nothing updates after it unmounts.
+ */
+function useRuntimeWakeNotice(source: RuntimeWakeSource | null) {
+  useEffect(() => {
+    if (!source) return undefined;
+    let noticeId: number | null = null;
+    // Parallel requests fail together; say it once, with one haptic.
+    let lastFailure: { code: string; at: number } | null = null;
+    const hideNotice = () => {
+      if (noticeId === null) return;
+      dismissToast(noticeId);
+      noticeId = null;
+    };
+    const unsubscribe = source.subscribe((event) => {
+      if (event.type === "failed") {
+        // A failure ends only that request's wait. The tracker sends `visible: false` once no request
+        // is waiting; until then the persistent notice stays and returns after this temporary toast.
+        const now = Date.now();
+        if (lastFailure?.code === event.code && now - lastFailure.at < TOAST_DURATION_MS) return;
+        lastFailure = { code: event.code, at: now };
+        showToast(RUNTIME_WAKE_MESSAGES[event.code], "error");
+        return;
+      }
+      if (!event.visible) {
+        hideNotice();
+        return;
+      }
+      if (noticeId === null) {
+        noticeId = showToast(RUNTIME_WAKE_MESSAGES.notice, "progress", { persistent: true });
+      }
+    });
+    return () => {
+      unsubscribe();
+      hideNotice();
+    };
+  }, [source]);
+}
+
 function ToastPill({ toast }: { toast: Toast }) {
   const { theme } = useUnistyles();
   const reduceMotion = useReduceMotion();
@@ -51,6 +100,8 @@ function ToastPill({ toast }: { toast: Toast }) {
     // Read out once on both platforms; a live region as well would read it twice on Android.
     AccessibilityInfo.announceForAccessibility(toast.message);
     shown.set(withTiming(1, { duration: TOAST_FADE_MS }));
+    // A persistent toast is taken away by whoever showed it, without a fade.
+    if (toast.persistent) return undefined;
     // The toast itself ends in `lib/toast`; this only fades it out first.
     const fadeOut = setTimeout(() => {
       shown.set(withTiming(0, { duration: TOAST_FADE_MS }));
@@ -70,7 +121,7 @@ function ToastPill({ toast }: { toast: Toast }) {
       style={[styles.pill, animatedStyle]}
     >
       <Icon
-        icon={toast.tone === "error" ? AlertIcon : CheckIcon}
+        icon={TOAST_ICONS[toast.tone]}
         size={TOAST_ICON_SIZE}
         color={theme.v2.colors.onControlPrimary}
         strokeWidth={2}

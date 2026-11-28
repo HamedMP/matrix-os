@@ -7,7 +7,7 @@ import {
   SiteEmailInvitationCreateRequestSchema, SiteEmailInvitationCreateResponseSchema,
   SiteEmailInvitationMutationRequestSchema, SiteEmailInvitationMutationResponseSchema,
   SiteEmailInvitationPageSchema, SiteEmailInvitationListQuerySchema,
-  SiteEmailViewerExchangeSchema, SiteEmailInvitationsCapabilitySchema,
+  SiteEmailViewerExchangeSchema, SiteEmailInvitationsCapabilitySchema, SiteEmailInvitationReadinessSchema,
 } from "../../packages/contracts/src/sites.js";
 
 describe("public site contracts", () => {
@@ -168,5 +168,15 @@ describe("email invitation production contracts", () => {
     expect(SiteEmailViewerExchangeSchema.safeParse({ emailAddress: "recipient@example.com" }).success).toBe(false);
     expect(SiteEmailInvitationsCapabilitySchema.safeParse({ privateEmailInvitations: false }).success).toBe(true);
     expect(SiteEmailInvitationsCapabilitySchema.safeParse({ privateEmailInvitations: true, provider: "secret" }).success).toBe(false);
+  });
+
+  it("advertises allowlist mode only on the readiness endpoint so older clients fail closed", () => {
+    const allowlist = { privateEmailInvitations: true, emailDelivery: "none" };
+    expect(SiteEmailInvitationReadinessSchema.parse(allowlist)).toEqual(allowlist);
+    expect(SiteEmailInvitationReadinessSchema.parse({ privateEmailInvitations: false })).toEqual({ privateEmailInvitations: false });
+    for (const value of [{ privateEmailInvitations: true, emailDelivery: "email" }, { ...allowlist, provider: "secret" }])
+      expect(SiteEmailInvitationReadinessSchema.safeParse(value).success).toBe(false);
+    // Bundles shipped before allowlist mode parse this payload with the old strict schema.
+    expect(SiteEmailInvitationsCapabilitySchema.safeParse(allowlist).success).toBe(false);
   });
 });

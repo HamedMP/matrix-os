@@ -131,7 +131,7 @@ import { initializeJevRuntime } from "./jev/runtime.js";
 import { createJevRoutes } from "./jev/routes.js";
 import { createProductionJevInboxRuntime } from "./jev/inbox-production.js";
 import { createJevService } from "./jev/service.js";
-import { createHeartbeatRunner, type HeartbeatRunner } from "./heartbeat/runner.js";
+import { createHeartbeatRunner, readHeartbeatConfig, type HeartbeatRunner } from "./heartbeat/runner.js";
 import { createInteractionLogger, type InteractionLogger } from "./logger.js";
 import { extractMemoriesLocal } from "./memory-extractor.js";
 import type { ReadinessResponse } from "./onboarding/activation-contracts.js";
@@ -265,6 +265,8 @@ import { registerGatewayMessagingRoutes, registerGatewaySyncAndSocialRoutes } fr
 import { registerOperationalRoutes } from "./server/operational-routes.js";
 import { registerShellTerminalRoutes } from "./server/shell-terminal-routes.js";
 import { registerSystemOperatorRoutes } from "./server/system-operator-routes.js";
+import { registerLifecycleRoutes } from "./server/lifecycle-routes.js";
+import { createLifecycleReadGuard, gatewayLifecycleSources, readLifecycleStatus } from "./lifecycle/status.js";
 import { createPlatformSpeechHostConfigRoutes } from "./speech/host-activation.js";
 import { createPlatformFundedAiHostConfigRoutes } from "./funded-host-activation.js";
 import { createHerdrChatTerminalRoute } from "./chat/herdr-terminal-route.js";
@@ -1131,7 +1133,7 @@ export async function createGateway(config: GatewayConfig) {
   });
 
   const configPath = join(homePath, "system/config.json");
-  const { channelManager, pushAdapter, closeChannels } = initializeGatewayChannels({
+  const { channelManager, pushAdapter, closeChannels, ready: channelsReady } = initializeGatewayChannels({
     homePath, configPath, dispatcher, conversations, codingAgentThreadStore,
     codingAgentNotificationPreferenceStore, finalizeWithSummary, logBestEffortFailure, channelStt: speechRuntime.channelStt,
     pushTokens: ownerDatabaseServices?.pushTokens ?? null, notificationServices: ownerDatabaseServices,
@@ -1140,29 +1142,14 @@ export async function createGateway(config: GatewayConfig) {
   // Cron service -- scheduled tasks from ~/system/cron.json
   const cronStore = createCronStore(join(homePath, "system", "cron.json"));
   const cronService: CronService = createCronService({
-    store: cronStore,
+    store: cronStore, catchUpAfter: channelsReady,
     onTrigger: createCronChannelTrigger({ channelManager, logBestEffortFailure }),
   });
   cronService.start();
 
   // Heartbeat runner -- periodic kernel invocation
-  let heartbeatConfig: { everyMinutes?: number; activeHours?: { start: string; end: string } } = {};
-  try {
-    if (existsSync(configPath)) {
-      const cfg = JSON.parse(readFileSync(configPath, "utf-8"));
-      heartbeatConfig = cfg.heartbeat ?? {};
-    }
-  } catch (err: unknown) {
-    logBestEffortFailure("Failed to load heartbeat config", err);
-  }
-
-  const proactiveHeartbeat: HeartbeatRunner = createHeartbeatRunner({
-    homePath,
-    dispatcher,
-    channelManager,
-    everyMinutes: heartbeatConfig.everyMinutes,
-    activeHours: heartbeatConfig.activeHours,
-  });
+  const heartbeatConfig = readHeartbeatConfig(configPath, logBestEffortFailure);
+  const proactiveHeartbeat: HeartbeatRunner = createHeartbeatRunner({ homePath, dispatcher, channelManager, ...heartbeatConfig });
   proactiveHeartbeat.start();
 
   let approvalPolicy: ApprovalPolicy = DEFAULT_APPROVAL_POLICY;
@@ -1413,6 +1400,13 @@ export async function createGateway(config: GatewayConfig) {
     app, homePath, model: config.model, runningVersion, interactionLogger, pushAdapter,
     posthogErrorTracker, ownerTelemetryDistinctId, upgradeBodyLimit, logBestEffortFailure,
   });
+  const lifecycleReadGuard = createLifecycleReadGuard();
+  registerLifecycleRoutes({ app, readStatus: () => readLifecycleStatus(gatewayLifecycleSources({
+    ownerDatabaseConfigured: Boolean(databaseUrl), chatDb: chatRepository?.kysely ?? null,
+    bots: botServices ? { routines: Boolean(botServices.routines) } : null,
+    terminals: terminalLiveOwnership, backgroundAgents: backgroundAgentRuntime, cron: cronService,
+    dispatcher, readGuard: lifecycleReadGuard,
+  })) });
 
   // Spec 101: Hermes dashboard proxy (loopback only, auth-gated)
   const hermesDashboardUrl = process.env.HERMES_DASHBOARD_URL

@@ -1,7 +1,7 @@
 import { TerminalRefSchema, ThreadIdSchema } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 
-import { buildGatewayRequestUrl, fetchAuthenticatedJson } from "@/lib/requests/http";
+import { buildGatewayRequestUrl, fetchAuthenticatedJson, type RequestToken } from "@/lib/requests/http";
 
 const THREAD_UNAVAILABLE_ERROR = "Thread unavailable.";
 
@@ -16,7 +16,7 @@ const ThreadTerminalResponseSchema = z.object({
  * as the terminal screen names it, or null when it runs in none.
  */
 export async function fetchThreadTerminalSession(
-  clerkToken: string,
+  clerkToken: RequestToken,
   computerGatewayUrl: string,
   threadId: string,
   timeoutMs?: number,

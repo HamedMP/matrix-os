@@ -725,11 +725,11 @@ jobs:
       - name: Routine CLI PostgreSQL qualification
         env:
           MATRIX_ROUTINE_CLI_TEST_POSTGRES_URL: ${{ env.MATRIX_TEST_POSTGRES_URL }}
-        # Every routine file creates its own schema, so three files share the
-        # disposable database safely; one worker took 8-11 minutes on hosted runners.
+        # One worker: with three on a 4-vCPU runner, about a third of runs failed
+        # on routine timing races (ENG-591). This lane runs beside funded-postgres.
         run: |
           : "${MATRIX_TEST_POSTGRES_URL:?Disposable PostgreSQL test URL required}"
-          pnpm exec vitest run --config vitest.routine-cli-integration.config.ts tests/gateway/bots/routine-cli-*.postgres.integration.ts --maxWorkers=3
+          pnpm exec vitest run --config vitest.routine-cli-integration.config.ts tests/gateway/bots/routine-cli-*.postgres.integration.ts --maxWorkers=1
 
       - name: Routine acceptance capture and preflight contracts
         run: node --test tests/gateway/bots/routine-acceptance-capture.test.mjs tests/gateway/bots/routine-acceptance-preflight.test.mjs

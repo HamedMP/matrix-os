@@ -1,8 +1,8 @@
 import { BotDirectChatResponseSchema, CanonicalChatIdSchema } from "@matrix-os/contracts";
-import { buildGatewayRequestUrl, fetchAuthenticatedJson } from "./http";
+import { buildGatewayRequestUrl, fetchAuthenticatedJson, type RequestToken } from "./http";
 
 /** Retained binding read does not require an active Bot definition or create a Chat. */
-export async function fetchSavedBotChatIdentity(token: string, gatewayUrl: string, chatId: string) {
+export async function fetchSavedBotChatIdentity(token: RequestToken, gatewayUrl: string, chatId: string) {
   const id = CanonicalChatIdSchema.parse(chatId);
   const result = await fetchAuthenticatedJson({
     url: buildGatewayRequestUrl(gatewayUrl, `/api/chats/${encodeURIComponent(id)}/bot`), token,

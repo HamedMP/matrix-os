@@ -61,6 +61,31 @@ describe("collaborative app owner sharing controls", () => {
     expect(await screen.findByRole("button", { name: "Share app" })).toBeEnabled();
   });
 
+  // ENG-579: an app that isn't collaborative shares view-only instead of being blocked.
+  it("explains view-only access and still shares an app whose build is blocked", async () => {
+    const blocked = { ...readiness, status: "blocked" as const, verifiedAt: undefined,
+      checks: readiness.checks.map((check) => check.code === "change_signal"
+        ? { code: check.code, status: "blocked" as const, action: "Subscribe to shared change signals in the built app and recheck." }
+        : check) };
+    const api = {
+      get: vi.fn(async (path: string) => path.endsWith("/readiness") ? blocked : null),
+      post: vi.fn(async (path: string) => path.endsWith("/preflight") ? {
+        eligible: true, catalogId: readiness.build.catalogId, resourceRevision: "0",
+        readinessId: readiness.readinessId, buildId: readiness.build.buildId,
+        confirmationToken: "token_payload.signature_value",
+      } : share),
+      delete: vi.fn(),
+    };
+    render(<CollaborativeAppShareButton appId="team-tracker" api={api}
+      organizationId="org_matrix_team" organizationName="Matrix team" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Share app" }));
+    expect(await screen.findByText(/can view the app and its data while they remain a member/)).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Share with everyone" }));
+    await waitFor(() => expect(api.post).toHaveBeenLastCalledWith("/api/collaboration/apps/team-tracker/share", expect.objectContaining({
+      organizationId: "org_matrix_team",
+    })));
+  });
+
   it("confirms full access for every current member and creates from a fresh preflight", async () => {
     const onShareChanged = vi.fn().mockResolvedValue(undefined);
     const api = {

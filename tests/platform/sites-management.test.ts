@@ -7,7 +7,8 @@ import { createSitesService } from '../../packages/platform/src/sites/service.js
 import { createSiteManagementRoutes } from '../../packages/platform/src/sites/management-routes.js';
 import { registerSiteRoutes } from '../../packages/platform/src/sites/registration.js';
 import { randomUUID } from 'node:crypto';
-import { SITE_MANAGEMENT_CONTRACT_VERSION, SITE_MANAGEMENT_CONTRACT_VERSION_HEADER } from '@matrix-os/contracts';
+import { createSitePlatformClient } from '../../packages/gateway/src/sites/platform-client.js';
+import { SITE_ALLOWLIST_READINESS_VERSION, SITE_MANAGEMENT_CONTRACT_VERSION, SITE_MANAGEMENT_CONTRACT_VERSION_HEADER } from '@matrix-os/contracts';
 import { seedLegacyAccessLink } from './site-legacy-access-links.js';
 let db: PlatformDB;
 let app: Hono;
@@ -193,19 +194,50 @@ it.each(['NaN', '-1', '1.5', '1e12', '9999999999999999'])('rejects an invalid in
 it('advertises disabled invitation readiness before publication without creating a site', async () => {
  const url='/internal/containers/launch/sites/not-published/email-invitation-capabilities?runtimeSlot=primary';
  expect((await app.request(url)).status).toBe(401);
- const response=await app.request(url,{headers:{authorization:'Bearer '+token}});
+ const response=await app.request(url,{headers:{authorization:'Bearer '+token,[SITE_MANAGEMENT_CONTRACT_VERSION_HEADER]:SITE_ALLOWLIST_READINESS_VERSION}});
  expect(response.status).toBe(200);
  expect(response.headers.get('cache-control')).toBe('no-store');
- expect(await response.json()).toEqual({privateEmailInvitations:false});
+ expect(await response.json()).toEqual({privateEmailInvitations:false,emailDelivery:'none'});
  expect(await db.executor.selectFrom('public_sites').select('id').where('app_slug','=','not-published').execute()).toEqual([]);
 });
 it('reads readiness through verified machine authority and rejects untrusted query input', async () => {
  const enabled=vi.fn(async()=>true);
  const ready=new Hono().route('/internal/containers/:handle/sites',createSiteManagementRoutes({db,platformSecret:secret,service:createSitesService({db}),emailEnabled:enabled}));
  const url='/internal/containers/launch/sites/not-published/email-invitation-capabilities?runtimeSlot=primary';
+ const current={authorization:'Bearer '+token,[SITE_MANAGEMENT_CONTRACT_VERSION_HEADER]:SITE_ALLOWLIST_READINESS_VERSION};
  expect((await ready.request(url)).status).toBe(401);
  expect(enabled).not.toHaveBeenCalled();
- const response=await ready.request(url,{headers:{authorization:'Bearer '+token}});
- expect(await response.json()).toEqual({privateEmailInvitations:true});
- expect((await ready.request(url+'&enabled=true',{headers:{authorization:'Bearer '+token}})).status).toBe(400);
+ const response=await ready.request(url,{headers:current});
+ expect(await response.json()).toEqual({privateEmailInvitations:true,emailDelivery:'none'});
+ expect((await ready.request(url+'&enabled=true',{headers:current})).status).toBe(400);
+});
+it('keeps allowlist readiness off for gateways that cannot show allowlist copy', async () => {
+ const ready=new Hono().route('/internal/containers/:handle/sites',createSiteManagementRoutes({db,platformSecret:secret,service:createSitesService({db}),emailEnabled:async()=>true}));
+ const url='/internal/containers/launch/sites/not-published/email-invitation-capabilities?runtimeSlot=primary';
+ for(const version of [undefined,'2','3']){
+  const response=await ready.request(url,{headers:{authorization:'Bearer '+token,...(version?{[SITE_MANAGEMENT_CONTRACT_VERSION_HEADER]:version}:{})}});
+  expect(await response.json(),version).toEqual({privateEmailInvitations:false});
+ }
+});
+// Fault detected: a Gateway sending v4 on every Sites call made a Platform that knows only
+// v2/v3 reject explicit access modes on publish/edit and drop them from reads. Ordinary calls
+// must use contract 3 (what that Platform accepted); only the readiness read may use 4.
+it('round-trips ordinary Sites calls from the real Gateway client on contract 3 and readiness on 4', async () => {
+ expect(SITE_MANAGEMENT_CONTRACT_VERSION).toBe('3');
+ await db.executor.insertInto('public_sites').values({id:randomUUID(),owner_id:'user_launch',machine_id:identity.machineId,app_slug:'mixed-contract',title:'Mixed',description:'',slug:null,revision:1,status:'published',access_mode:'public',active_version:null,created_at:new Date().toISOString()}).execute();
+ const platform=new Hono().route('/internal/containers/:handle/sites',createSiteManagementRoutes({db,platformSecret:secret,service:createSitesService({db}),emailEnabled:async()=>true}));
+ const sent:string[]=[];
+ vi.stubGlobal('fetch',async(input:URL|string,init:RequestInit)=>{
+  sent.push(String((init.headers as Record<string,string>)[SITE_MANAGEMENT_CONTRACT_VERSION_HEADER]));
+  const url=new URL(String(input));
+  return platform.request(url.pathname+url.search,init);
+ });
+ try{
+  const gateway=createSitePlatformClient({url:'https://platform.example',token,handle:'launch',runtimeSlot:'primary'});
+  await expect(gateway.request('mixed-contract','PATCH',{title:'Edited',accessMode:'public',baseRevision:1}))
+   .resolves.toMatchObject({title:'Edited',accessMode:'public',revision:2});
+  await expect(gateway.request('mixed-contract','GET')).resolves.toMatchObject({accessMode:'public',revision:2});
+  await expect(gateway.emailInvitationCapabilities!('mixed-contract')).resolves.toEqual({privateEmailInvitations:true,emailDelivery:'none'});
+  expect(sent).toEqual(['3','3',SITE_ALLOWLIST_READINESS_VERSION]);
+ }finally{vi.unstubAllGlobals();}
 });

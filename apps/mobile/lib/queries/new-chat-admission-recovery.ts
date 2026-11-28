@@ -11,8 +11,8 @@ export class NewChatDeliveryUnconfirmedError extends Error {
 
 /**
  * A dropped request can still be committing on the computer. Check immediately,
- * then four more times a second apart. Each read has a two-second timeout, so
- * recovery is bounded to fourteen seconds of network reads and waiting.
+ * then four more times a second apart. Each read has a two-second deadline,
+ * including any wake wait, to keep recovery within fourteen seconds.
  * Reads never resubmit the prompt; a later retry keeps its original request IDs.
  */
 export async function recoverNewChatAdmission({ gatewayUrl, chatId, turnRequestId, getToken }: {
@@ -24,11 +24,7 @@ export async function recoverNewChatAdmission({ gatewayUrl, chatId, turnRequestI
   for (let attempt = 0; attempt < 5; attempt += 1) {
     if (attempt > 0) await new Promise<void>((resolve) => setTimeout(resolve, 1_000));
     try {
-      // Recovery may follow an upload and a timed-out admission. Refresh the
-      // minute-long session token instead of repeating reads with an expired one.
-      const token = await getToken();
-      if (!token) throw new Error("Session unavailable");
-      const detail = await fetchChatDetail(token, gatewayUrl, chatId, { timeoutMs: 2_000 });
+      const detail = await fetchChatDetail(getToken, gatewayUrl, chatId, { timeoutMs: 2_000 });
       const turn = detail.turns.find((candidate) => candidate.clientRequestId === turnRequestId);
       const message = detail.messages.find((candidate) => candidate.id === turn?.inputMessageId);
       const run = detail.runs.find((candidate) => candidate.turnId === turn?.id);

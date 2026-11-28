@@ -9,6 +9,7 @@ import {
   buildGatewayRequestUrl,
   fetchAuthenticatedJson,
   fetchAuthenticatedResponse,
+  type RequestToken,
 } from "@/lib/requests/http";
 
 const TERMINALS_UNAVAILABLE_ERROR = "Terminals unavailable. Try again.";
@@ -116,7 +117,7 @@ export function isValidTerminalSessionName(value: string): boolean {
 }
 
 export function fetchTerminalSessions(
-  clerkToken: string,
+  clerkToken: RequestToken,
   computerGatewayUrl: string,
 ): Promise<TerminalSession[]> {
   let url: string;
@@ -136,7 +137,7 @@ export function fetchTerminalSessions(
 
 /** Create a tab in the computer's main workspace and return its serialized TerminalRef. */
 export async function createTerminalSession(
-  clerkToken: string,
+  clerkToken: RequestToken,
   computerGatewayUrl: string,
   name: string,
 ): Promise<string> {
@@ -170,7 +171,7 @@ export async function createTerminalSession(
 }
 
 export async function renameTerminalSession(
-  clerkToken: string,
+  clerkToken: RequestToken,
   computerGatewayUrl: string,
   session: TerminalSessionRef & Pick<TerminalSession, "revision">,
   nextName: string,
@@ -199,7 +200,7 @@ export async function renameTerminalSession(
 }
 
 export async function deleteTerminalSession(
-  clerkToken: string,
+  clerkToken: RequestToken,
   computerGatewayUrl: string,
   session: TerminalSessionRef,
 ): Promise<void> {

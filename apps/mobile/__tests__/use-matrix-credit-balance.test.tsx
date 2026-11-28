@@ -61,7 +61,7 @@ describe("useMatrixCreditBalance", () => {
     await waitFor(() => expect(result.current.balanceMicrousd).toBe(18_400_000));
     expect(result.current.label).toBe("$18.40");
     expect(result.current.isPending).toBe(false);
-    expect(mockFetchMatrixCreditBalance).toHaveBeenCalledWith("session-token", "https://app.matrix-os.com/vm/alice");
+    expect(mockFetchMatrixCreditBalance).toHaveBeenCalledWith(expect.any(Function), "https://app.matrix-os.com/vm/alice");
   });
 
   it("has no label when the server reports no balance", async () => {

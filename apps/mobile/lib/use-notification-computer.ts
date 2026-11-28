@@ -33,8 +33,8 @@ export function useNotificationComputer() {
   const key = `${userId ?? "self-hosted"}:${url ?? "none"}`;
   const session = useCallback(async (): Promise<PushRegistrationSession | null> => {
     if (!client || !url) return null;
-    const token = await client.getAuthToken();
-    return token ? { clerkToken: token, gatewayUrl: url, scopeKey: key } : null;
+    const getToken = async () => (await client.getAuthToken()) ?? null;
+    return await getToken() ? { clerkToken: getToken, gatewayUrl: url, scopeKey: key } : null;
   }, [client, url, key]);
   return useMemo(() => ({ client, url, key, name, address, session }), [client, url, key, name, address, session]);
 }
