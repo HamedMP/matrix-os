@@ -314,7 +314,7 @@ export async function forwardBotInference(
       ? { env: { ANTHROPIC_AUTH_TOKEN: managedInitial.lease.token, ANTHROPIC_BASE_URL: managedInitial.lease.relayBaseUrl } } : binding.openaiApi
       ? { env: { OPENAI_API_KEY: await deps.matrixOpenAi!.credential(binding, signal) } } : binding.anthropicApi
       ? { env: { ANTHROPIC_API_KEY: await deps.matrixAnthropic!.credential(binding, signal) } }
-      : resolveInferenceCredentials(accessSourceId, { requestClass: binding.requestClass, claimKey: request.runtimeHandle }, signal, deps));
+      : resolveInferenceCredentials(accessSourceId as KernelCredentialAccessSourceId, { requestClass: binding.requestClass, claimKey: request.runtimeHandle }, signal, deps));
     const env = launch.env;
     if (lifecycle.aborted) return failure(request.requestId, "action_denied");
     const apiKey = binding.openaiApi ? env?.OPENAI_API_KEY : env?.ANTHROPIC_API_KEY;
