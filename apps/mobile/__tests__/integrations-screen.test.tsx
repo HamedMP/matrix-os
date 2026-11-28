@@ -177,7 +177,7 @@ describe("drawer integrations screen", () => {
   it.each(["matrix", "pipedream"])("lets a pilot user explicitly connect Gmail with %s", async method => {
     mockGmailConnectionOptions.mockResolvedValue({ methods: ["matrix", "pipedream"], defaultMethod: "matrix" });
     mockStartConnection.mockResolvedValue("https://pipedream.com/connect/test");
-    const open = jest.spyOn(Linking, "openURL").mockResolvedValue(true);
+    const open = jest.spyOn(Linking, "openURL").mockResolvedValue(undefined);
     const view = render(<IntegrationsScreen />);
     fireEvent.press(screen.getByLabelText("Connect Gmail integration"));
     fireEvent.press(await screen.findByLabelText(method === "matrix" ? "Connect with Matrix (internal preview)" : "Connect with Pipedream"));
@@ -192,7 +192,7 @@ describe("drawer integrations screen", () => {
     mockUseComputerIntegrations.mockReturnValue(initial);
     mockGmailConnectionOptions.mockResolvedValue({ methods: ["matrix", "pipedream"], defaultMethod: "matrix" });
     mockStartConnection.mockResolvedValue("https://app.matrix-os.com/auth/gmail?state=opaque");
-    const open = jest.spyOn(Linking, "openURL").mockResolvedValue(true);
+    const open = jest.spyOn(Linking, "openURL").mockResolvedValue(undefined);
     const view = render(<IntegrationsScreen />);
     fireEvent.press(screen.getByLabelText("Connect Gmail integration"));
     fireEvent.press(await screen.findByLabelText("Connect with Matrix (internal preview)"));
@@ -214,7 +214,7 @@ describe("drawer integrations screen", () => {
     mockUseComputerIntegrations.mockReturnValue(initial);
     mockGmailConnectionOptions.mockResolvedValue({ methods: ["pipedream"], defaultMethod: "pipedream" });
     mockStartConnection.mockImplementation(async (_service, options) => { options.onAttempt(attemptId); return "https://pipedream.com/connect/test"; });
-    const open = jest.spyOn(Linking, "openURL").mockResolvedValue(true);
+    const open = jest.spyOn(Linking, "openURL").mockResolvedValue(undefined);
     const view = render(<IntegrationsScreen />);
     fireEvent.press(screen.getByLabelText("Connect Gmail integration"));
     await act(async () => {});
@@ -281,7 +281,7 @@ describe("drawer integrations screen", () => {
     let resolve!: (value: string) => void;
     mockGmailConnectionOptions.mockResolvedValue({ methods: ["matrix", "pipedream"], defaultMethod: "matrix" });
     mockStartConnection.mockReturnValue(new Promise(value => { resolve = value; }));
-    const open = jest.spyOn(Linking, "openURL").mockResolvedValue(true);
+    const open = jest.spyOn(Linking, "openURL").mockResolvedValue(undefined);
     const view = render(<IntegrationsScreen />);
     fireEvent.press(screen.getByLabelText("Connect Gmail integration"));
     fireEvent.press(await screen.findByLabelText("Connect with Matrix (internal preview)"));

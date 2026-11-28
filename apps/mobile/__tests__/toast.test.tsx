@@ -33,7 +33,9 @@ describe("ToastHost", () => {
     render(<ToastHost />);
     expect(screen.UNSAFE_queryByType(FullWindowOverlay)).toBeNull();
 
-    act(() => showToast("Connection deleted"));
+    act(() => {
+      showToast("Connection deleted");
+    });
     expect(screen.UNSAFE_getByType(FullWindowOverlay)).toBeTruthy();
     expect(screen.getByText("Connection deleted")).toBeTruthy();
 
@@ -46,7 +48,9 @@ describe("ToastHost", () => {
     Platform.OS = "android";
     try {
       render(<ToastHost />);
-      act(() => showToast("Connection deleted"));
+      act(() => {
+        showToast("Connection deleted");
+      });
 
       expect(screen.getByText("Connection deleted")).toBeTruthy();
       expect(screen.UNSAFE_queryByType(FullWindowOverlay)).toBeNull();
@@ -59,7 +63,9 @@ describe("ToastHost", () => {
     const announce = jest.spyOn(AccessibilityInfo, "announceForAccessibility");
     render(<ToastHost />);
 
-    act(() => showToast("Text copied"));
+    act(() => {
+      showToast("Text copied");
+    });
 
     expect(screen.getByText("Text copied")).toBeTruthy();
     expect(screen.UNSAFE_getByType(Icon).props.icon).toBe(CheckIcon);
@@ -76,9 +82,13 @@ describe("ToastHost", () => {
     jest.mocked(Haptics.notificationAsync).mockClear();
     render(<ToastHost />);
 
-    act(() => showToast("Terminal renamed"));
+    act(() => {
+      showToast("Terminal renamed");
+    });
     expect(Haptics.notificationAsync).toHaveBeenLastCalledWith(Haptics.NotificationFeedbackType.Success);
-    act(() => showToast("Could not rename terminal. Try again.", "error"));
+    act(() => {
+      showToast("Could not rename terminal. Try again.", "error");
+    });
     expect(Haptics.notificationAsync).toHaveBeenLastCalledWith(Haptics.NotificationFeedbackType.Warning);
     expect(Haptics.notificationAsync).toHaveBeenCalledTimes(2);
   });
@@ -94,7 +104,9 @@ describe("ToastHost", () => {
   it("marks a failure as an alert, with its own icon", () => {
     render(<ToastHost />);
 
-    act(() => showToast("Could not copy text. Try again.", "error"));
+    act(() => {
+      showToast("Could not copy text. Try again.", "error");
+    });
 
     expect(screen.getByTestId("toast").props.accessibilityRole).toBe("alert");
     expect(screen.UNSAFE_getByType(Icon).props.icon).toBe(AlertIcon);
@@ -103,9 +115,13 @@ describe("ToastHost", () => {
   it("lets a later toast take the place of an earlier one, for its whole time", () => {
     render(<ToastHost />);
 
-    act(() => showToast("Text copied"));
+    act(() => {
+      showToast("Text copied");
+    });
     act(() => jest.advanceTimersByTime(SHOWN_FOR - 100));
-    act(() => showToast("Chat ID copied"));
+    act(() => {
+      showToast("Chat ID copied");
+    });
 
     expect(screen.queryByText("Text copied")).toBeNull();
     // The first toast's timers end with it and do not hide the second early.
@@ -117,7 +133,9 @@ describe("ToastHost", () => {
 
   it("drops the toast, and its timer, when its host goes", () => {
     const view = render(<ToastHost />);
-    act(() => showToast("Text copied"));
+    act(() => {
+      showToast("Text copied");
+    });
     expect(jest.getTimerCount()).toBeGreaterThan(0);
 
     view.unmount();
@@ -128,7 +146,9 @@ describe("ToastHost", () => {
   });
 
   it("shows nothing when no host is mounted", () => {
-    act(() => showToast("Text copied"));
+    act(() => {
+      showToast("Text copied");
+    });
     expect(jest.getTimerCount()).toBe(0);
 
     render(<ToastHost />);
@@ -138,7 +158,9 @@ describe("ToastHost", () => {
   it("keeps a toast whose dismissal names an earlier one", () => {
     render(<ToastHost />);
 
-    act(() => showToast("Text copied"));
+    act(() => {
+      showToast("Text copied");
+    });
     act(() => dismissToast(-1));
 
     expect(screen.getByText("Text copied")).toBeTruthy();
@@ -147,7 +169,9 @@ describe("ToastHost", () => {
   it("sits under the status bar, across the width of the screen", () => {
     render(<ToastHost />);
 
-    act(() => showToast("Text copied"));
+    act(() => {
+      showToast("Text copied");
+    });
 
     expect(StyleSheet.flatten(screen.getByTestId("toast-host").props.style)).toMatchObject({
       position: "absolute",

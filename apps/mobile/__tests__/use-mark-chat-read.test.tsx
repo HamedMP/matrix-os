@@ -380,7 +380,9 @@ describe("useMarkChatRead", () => {
     const { client, rerender } = renderMarkRead(detail(unread));
     await ready();
     await advance();
-    act(() => client.setQueryData(mobileQueryKeys.activeComputer("user_a"), { handle: "bob", runtimeSlot: "primary", gatewayPath: "/vm/bob" }));
+    act(() => {
+      client.setQueryData(mobileQueryKeys.activeComputer("user_a"), { handle: "bob", runtimeSlot: "primary", gatewayPath: "/vm/bob" });
+    });
     rerender({ shown: detail({ ...unread, markedUnread: true, version: 8 }) });
     await act(async () => finish(detail(read).record));
     expect(client.getQueryData<CanonicalChatDetailResponse>(detailKey)?.record.readState).toEqual(unread);
