@@ -30,7 +30,7 @@ function isPreviewRuntime(handle: string | undefined, runtimeSlot: string | unde
   return runtimeSlot === handle || runtimeSlot === "preview";
 }
 
-function isPlatformUserProofValid(input: {
+export function isPlatformUserProofValid(input: {
   platformToken: string;
   platformUserId: string;
   platformUserProof: string | null;

@@ -1,5 +1,7 @@
 import { isSharedAppOpenPath } from "@matrix-os/contracts";
 import { isGmailOAuthCallback, isGmailPipedreamCallback } from './integration-public-path.js';
+import { loadPilotCohortPolicy, isPilotCohortMember } from '@matrix-os/contracts';
+import { isPilotAppCapabilityRequest } from './pilot-cohort-access.js';
 import { readAuthShellRequestBody, resolveAuthShellBrowserHost } from "./auth-shell-request.js";
 import { whatsappPrimaryHandoffResponse } from "./whatsapp/primary-handoff.js";
 import {
@@ -245,6 +247,7 @@ function platformRuntimeShellUnavailableResponse(
 }
 
 export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlewareOpts): MiddlewareHandler {
+  const pilotCohortPolicy = loadPilotCohortPolicy(opts.appEnv);
   const {
     db,
     docker,
@@ -672,6 +675,15 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         };
       }
     }
+    const pilotAppCapability = pilotCohortPolicy.status === 'enabled' && identity?.source === 'mobile-session'
+      && isPilotAppCapabilityRequest(c.req.method, path, c.req.url, cookieHeader);
+    if (pilotCohortPolicy.status !== 'disabled' && identity
+      && !pilotAppCapability
+      && !(explicitVmRoute && explicitVmRouteHasCredentiallessCapability && identity.source === 'static-route')
+      && !isPilotCohortMember(pilotCohortPolicy, identity.userId)) {
+      applyNoStoreHeaders(c);
+      return c.json({ error: 'Access unavailable' }, pilotCohortPolicy.status === 'invalid' ? 503 : 403);
+    }
     const isCookieRoutedShellAsset = Boolean(
       identity &&
       requestedRouteHandle &&
@@ -752,6 +764,11 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         || (identity.userId && !canClerkUserAccessMachine(machine, identity.userId))) {
         applyNoStoreHeaders(c);
         return c.text('Matrix OS computer unavailable', 404);
+      }
+      if (pilotCohortPolicy.status === 'enabled' && !identity.userId
+        && !isPilotCohortMember(pilotCohortPolicy, machine.clerkUserId)) {
+        applyNoStoreHeaders(c);
+        return c.json({ error: 'Access unavailable' }, 403);
       }
       const entitlement = await getRuntimeEntitlementDecisionForUser(
         db,
@@ -935,6 +952,10 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
     if (runningMachine) {
       runtimeSlot = runningMachine.runtimeSlot;
     }
+    if (pilotAppCapability && runningMachine && !isPilotCohortMember(pilotCohortPolicy, runningMachine.clerkUserId)) {
+      applyNoStoreHeaders(c);
+      return c.json({ error: 'Access unavailable' }, 403);
+    }
     if ((runningMachine && !canRouteMachineOnPreviewHost(host, runningMachine))
       || (requestedActiveMachine && !canRouteMachineOnPreviewHost(host, requestedActiveMachine))) {
       applyNoStoreHeaders(c);
@@ -1025,7 +1046,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         headers.set('accept-encoding', 'identity');
         // No `connection: close`: the customer VPS pool reuses warm TLS connections.
       }
-      if (platformSecret) {
+      if (platformSecret && !pilotAppCapability) {
         headers.set('authorization', `Bearer ${buildPlatformVerificationToken(runningMachine.handle, platformSecret)}`);
         const platformUserId =
           identity.source === 'static-route' ? runningMachine.clerkUserId : identity.userId;
@@ -1195,6 +1216,10 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
 
     const record = await getContainer(db, identity.handle);
     if (!record) return c.html(getNoContainerPage());
+    if (pilotAppCapability && !isPilotCohortMember(pilotCohortPolicy, record.clerkUserId)) {
+      applyNoStoreHeaders(c);
+      return c.json({ error: 'Access unavailable' }, 403);
+    }
 
     if (!entitlement.runtimeProxyAllowed) {
       const recovery = await maybeServeBillingRecoveryShell(c, host, identity, path);
@@ -1263,7 +1288,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       headers.set('accept-encoding', 'identity');
       headers.set('connection', 'close');
     }
-    if (platformSecret && isAppDomain) {
+    if (platformSecret && isAppDomain && !pilotAppCapability) {
       headers.set('authorization', `Bearer ${buildPlatformVerificationToken(record.handle, platformSecret)}`);
       const platformUserId =
         identity.source === 'static-route' ? record.clerkUserId : identity.userId;

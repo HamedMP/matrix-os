@@ -40,9 +40,9 @@ export function rejectWebSocketUpgrade(
   });
   const body = detail.jsonBody ?? '';
   const extra = (detail.retryAfter ? `Retry-After: ${detail.retryAfter}\r\n` : '')
-    + (body ? 'Content-Type: application/json\r\nCache-Control: no-store\r\n' : '');
+    + (body ? 'Content-Type: application/json\r\n' : '');
   socket.end(
-    `HTTP/1.1 ${status} ${UPGRADE_REJECTION_STATUS_TEXT[status]}\r\nConnection: close\r\n${extra}Content-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`,
+    `HTTP/1.1 ${status} ${UPGRADE_REJECTION_STATUS_TEXT[status]}\r\nConnection: close\r\nCache-Control: no-store\r\n${extra}Content-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`,
     () => socket.destroy(),
   );
 }
