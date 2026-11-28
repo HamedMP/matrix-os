@@ -22,6 +22,78 @@ describe('exact qualified lease manager', () => {
         expect(new Headers(init?.headers).get('authorization')).toBe(`Bearer ${config().runtimeAuthToken}`); expect(new Headers(init?.headers).get('content-length')).toBe(String(Buffer.byteLength(String(init?.body)))); }
     } finally { await manager.close(); }
   });
+  it('issues one credential for overlapping callers of an exact route and class', async () => {
+    const issue = Promise.withResolvers<Response>();
+    let issuedCount = 0;
+    const fetch = vi.fn<typeof globalThis.fetch>(async url => {
+      if (String(url).includes('/managed-route')) return Response.json({ protocol, route: qualifiedRouteFixture() });
+      issuedCount++;
+      return issuedCount === 1 ? issue.promise : new Response(null, { status: 429 });
+    });
+    const manager = createGoogleQualifiedCredentialManager(config(), { fetchFn: fetch, now: () => at.getTime() });
+    try {
+      const outcomes = Promise.allSettled(Array.from({ length: 4 }, () => manager.getCredential(request())));
+      await vi.waitFor(() => expect(issuedCount).toBeGreaterThan(0));
+      issue.resolve(Response.json(issued()));
+      const results = await outcomes;
+      expect(results.map(result => result.status)).toEqual(['fulfilled', 'fulfilled', 'fulfilled', 'fulfilled']);
+      expect(issuedCount).toBe(1);
+    } finally {
+      await manager.close();
+    }
+  });
+
+  it('keeps shared issuance alive when its first caller aborts', async () => {
+    const issue = Promise.withResolvers<Response>();
+    const started = Promise.withResolvers<AbortSignal | null | undefined>();
+    const caller = new AbortController();
+    let issuedCount = 0;
+    const fetch = vi.fn<typeof globalThis.fetch>(async (url, init) => {
+      if (String(url).includes('/managed-route')) return Response.json({ protocol, route: qualifiedRouteFixture() });
+      issuedCount++;
+      started.resolve(init?.signal);
+      return issuedCount === 1 ? issue.promise : new Response(null, { status: 429 });
+    });
+    const manager = createGoogleQualifiedCredentialManager(config(), { fetchFn: fetch, now: () => at.getTime() });
+    try {
+      const leader = expect(manager.getCredential({ ...request(), signal: caller.signal })).rejects.toThrow('Qualified AI unavailable');
+      const sharedSignal = await started.promise;
+      const follower = manager.getCredential(request()).then(lease => ({ lease }), error => ({ error }));
+      caller.abort();
+      await leader;
+      expect(sharedSignal?.aborted).toBe(false);
+      issue.resolve(Response.json(issued()));
+      expect(await follower).toMatchObject({ lease: { tokenId: issued().lease.credential.tokenId } });
+      expect(issuedCount).toBe(1);
+    } finally {
+      await manager.close();
+    }
+  });
+
+  it('validates the requested remaining lifetime separately for each shared caller', async () => {
+    const issue = Promise.withResolvers<Response>();
+    let issuedCount = 0;
+    const fetch = vi.fn<typeof globalThis.fetch>(async url => {
+      if (String(url).includes('/managed-route')) return Response.json({ protocol, route: qualifiedRouteFixture() });
+      issuedCount++;
+      return issuedCount === 1 ? issue.promise : new Response(null, { status: 429 });
+    });
+    const manager = createGoogleQualifiedCredentialManager(config(), { fetchFn: fetch, now: () => at.getTime() });
+    try {
+      const outcomes = Promise.allSettled([
+        manager.getCredential({ ...request(), minValidityMs: 16 * 60_000 }),
+        manager.getCredential(request()),
+      ]);
+      await vi.waitFor(() => expect(issuedCount).toBeGreaterThan(0));
+      issue.resolve(Response.json(issued()));
+      const results = await outcomes;
+      expect(results.map(result => result.status)).toEqual(['rejected', 'fulfilled']);
+      expect(issuedCount).toBe(1);
+    } finally {
+      await manager.close();
+    }
+  });
+
   it.each(['class', 'digest', 'owner', 'relay', 'legacy'])('rejects mismatched %s issuance without caching or legacy retry', async mismatch => {
     const f = fixture(); const value: any = f.response;
     if (mismatch === 'class') value.lease.requestClass = 'background'; if (mismatch === 'digest') value.binding.digest = 'd'.repeat(64);

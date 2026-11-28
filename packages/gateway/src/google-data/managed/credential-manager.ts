@@ -22,8 +22,22 @@ export interface GoogleQualifiedCredentialManager {
   close(): Promise<void>;
 }
 
+type IssueRequest = z.infer<typeof GoogleQualifiedFundedIssueRequestSchema>;
+type Issuance = { controller: AbortController; promise: Promise<GoogleQualifiedCredentialLease> };
+type RequestScope = { controller: AbortController; retain: (promise: Issuance['promise']) => void };
+
+async function waitForCredential(promise: Issuance['promise'], signal: AbortSignal) {
+  if (signal.aborted) deny();
+  const cancelled = Promise.withResolvers<never>();
+  const abort = () => cancelled.reject(new GoogleQualifiedCredentialError());
+  signal.addEventListener('abort', abort, { once: true });
+  try { return await Promise.race([promise, cancelled.promise]); }
+  finally { signal.removeEventListener('abort', abort); }
+}
+
 /** Separate exact lease cache; never shares legacy entries, requests or fallback behavior. At most32 cached
- * routes (LRU/expiry sweep),4 independent active operations; caller cancellation never owns another call. */
+ * routes (LRU/expiry sweep),4 independent active operations; caller cancellation never owns another call.
+ * In-flight issuance consumes its original operation slot until it settles. */
 export function createGoogleQualifiedCredentialManager(input: FundedAiRuntimeConfig,
   dependencies: { fetchFn?: typeof fetch; now?: () => number } = {}): GoogleQualifiedCredentialManager {
   const config = structuredClone(input); const fetchFn = dependencies.fetchFn ?? fetch; const now = dependencies.now ?? Date.now;
@@ -39,19 +53,36 @@ export function createGoogleQualifiedCredentialManager(input: FundedAiRuntimeCon
   const discoveryUrl = new URL(issue); discoveryUrl.pathname = issue.pathname.replace('/ai/funded-credential', '/ai/qualified/managed-route');
   const issueUrl = new URL(issue); issueUrl.pathname = issue.pathname.replace('/ai/funded-credential', '/ai/qualified/funded-credential');
   const cached = new Map<string, GoogleQualifiedCredentialLease>();
+  const issuing = new Map<string, Issuance>(); // At most four live entries; each owns an active slot until settlement.
   const active = new Set<AbortController>(); let closed = false; let revision = 0;
   let drained = Promise.resolve(); let finish: (() => void) | undefined; let closing: Promise<void> | undefined;
   const sweep = () => { for (const [key, value] of cached) if (Date.parse(value.expiresAt) <= now()) cached.delete(key); };
   const timer = setInterval(sweep, 30000); timer.unref?.();
-  async function bounded<T>(parent: AbortSignal | undefined, work: (signal: AbortSignal, live: () => void) => Promise<T>): Promise<T> {
+  const assertLive = (signal: AbortSignal, generation: number) => {
+    if (closed || signal.aborted || generation !== revision || !Number.isSafeInteger(now())) deny();
+  };
+  async function bounded<T>(parent: AbortSignal | undefined, work: (signal: AbortSignal, live: () => void, scope: RequestScope) => Promise<T>): Promise<T> {
     if (closed || active.size >= 4) deny(); sweep(); const generation = revision;
     const controller = new AbortController(); if (!active.size) drained = new Promise(resolve => { finish = resolve; }); active.add(controller);
-    const timeout = setTimeout(() => controller.abort(), config.requestTimeoutMs); timeout.unref?.();
-    const signal = parent ? AbortSignal.any([parent, controller.signal]) : controller.signal;
-    const live = () => { if (closed || signal.aborted || generation !== revision || !Number.isSafeInteger(now())) deny(); };
-    try { live(); const result = await work(signal, live); live(); return result; }
+    const callerDeadline = new AbortController();
+    const timeout = setTimeout(() => callerDeadline.abort(), config.requestTimeoutMs); timeout.unref?.();
+    const signals = [controller.signal, callerDeadline.signal];
+    if (parent) signals.push(parent);
+    const signal = AbortSignal.any(signals);
+    const live = () => assertLive(signal, generation);
+    const release = () => {
+      active.delete(controller);
+      if (!active.size) { finish?.(); finish = undefined; }
+    };
+    let retained: Issuance['promise'] | undefined;
+    const scope: RequestScope = { controller, retain: promise => { retained = promise; } };
+    try { live(); const result = await work(signal, live, scope); live(); return result; }
     catch (error) { if (error instanceof GoogleQualifiedCredentialError) throw error; throw new GoogleQualifiedCredentialError(); }
-    finally { clearTimeout(timeout); active.delete(controller); if (!active.size) { finish?.(); finish = undefined; } }
+    finally {
+      clearTimeout(timeout);
+      if (retained) void retained.then(release, release);
+      else release();
+    }
   }
   async function call<T>(url: URL, value: unknown, schema: z.ZodType<T>, signal: AbortSignal, live: () => void): Promise<T> {
     live(); const body = JSON.stringify(value); let reader: ReadableStreamDefaultReader<Uint8Array> | undefined; let stop!: () => void;
@@ -87,10 +118,29 @@ export function createGoogleQualifiedCredentialManager(input: FundedAiRuntimeCon
     const result = await call(discoveryUrl, request, GoogleQualifiedFundedDiscoveryResponseSchema, signal, live); live(); validRoute(result.route);
     if (result.route.api !== selector.api || result.route.canonicalModelId !== selector.canonicalModelId) deny(); return result.route;
   }
+  async function issueCredential(request: IssueRequest, route: GoogleQualifiedFundedRoute, key: string,
+    signal: AbortSignal, generation: number): Promise<GoogleQualifiedCredentialLease> {
+    const live = () => assertLive(signal, generation);
+    const result = await call(issueUrl, request, GoogleQualifiedFundedIssueResponseSchema, signal, live);
+    live();
+    validRoute(result.binding);
+    if (result.lease.identity.ownerId !== config.identity.ownerId || result.lease.identity.machineId !== config.identity.machineId
+      || result.lease.identity.runtimeSlot !== config.identity.runtimeSlot || result.lease.requestClass !== request.requestClass
+      || result.binding.requestClass !== request.requestClass || result.binding.digest !== route.digest
+      || JSON.stringify(result.binding.descriptor) !== JSON.stringify(route.descriptor)
+      || result.binding.api !== route.api || result.binding.canonicalModelId !== route.canonicalModelId
+      || Date.parse(result.lease.credential.issuedAt) > now() || Date.parse(result.lease.credential.expiresAt) - now() < 60000) deny();
+    const lease: GoogleQualifiedCredentialLease = { token: result.lease.credential.token, tokenId: result.lease.credential.tokenId,
+      expiresAt: result.lease.credential.expiresAt, relayBaseUrl: result.binding.relayBaseUrl, maxRunMs: config.maxRunMs,
+      requestClass: result.lease.requestClass, binding: result.binding };
+    if (cached.size >= 32) cached.delete(cached.keys().next().value!);
+    cached.set(key, lease);
+    return lease;
+  }
   return {
     identity: Object.freeze({ ...config.identity }),
     resolveRoute(selector, signal) { return bounded(signal, (current, live) => discover(selector, current, live)); },
-    getCredential(options) { return bounded(options.signal, async (signal, live) => {
+    getCredential(options) { return bounded(options.signal, async (signal, live, scope) => {
       const minValidity = Math.max(options.minValidityMs ?? config.maxRunMs + 60000, 60000);
       if (!Number.isSafeInteger(minValidity) || minValidity > 3600000) deny();
       const route = await discover(options, signal, live);
@@ -101,20 +151,31 @@ export function createGoogleQualifiedCredentialManager(input: FundedAiRuntimeCon
       if (existing && Date.parse(existing.expiresAt) - now() >= minValidity) {
         cached.delete(key); cached.set(key, existing); return structuredClone(existing);
       }
-      cached.delete(key);
-      const result = await call(issueUrl, request, GoogleQualifiedFundedIssueResponseSchema, signal, live); live(); validRoute(result.binding);
-      if (result.lease.identity.ownerId !== config.identity.ownerId || result.lease.identity.machineId !== config.identity.machineId
-        || result.lease.identity.runtimeSlot !== config.identity.runtimeSlot || result.lease.requestClass !== request.requestClass
-        || result.binding.requestClass !== request.requestClass || result.binding.digest !== route.digest
-        || JSON.stringify(result.binding.descriptor) !== JSON.stringify(route.descriptor)
-        || result.binding.api !== route.api || result.binding.canonicalModelId !== route.canonicalModelId
-        || Date.parse(result.lease.credential.issuedAt) > now() || Date.parse(result.lease.credential.expiresAt) - now() < minValidity) deny();
-      const lease: GoogleQualifiedCredentialLease = { token: result.lease.credential.token, tokenId: result.lease.credential.tokenId,
-        expiresAt: result.lease.credential.expiresAt, relayBaseUrl: result.binding.relayBaseUrl, maxRunMs: config.maxRunMs,
-        requestClass: result.lease.requestClass, binding: result.binding };
-      if (cached.size >= 32) cached.delete(cached.keys().next().value!); cached.set(key, lease); return structuredClone(lease);
+      let pending = issuing.get(key);
+      if (!pending) {
+        cached.delete(key);
+        live();
+        const generation = revision;
+        const issueSignal = AbortSignal.any([scope.controller.signal, AbortSignal.timeout(config.requestTimeoutMs)]);
+        const promise = Promise.resolve().then(() => issueCredential(request, route, key, issueSignal, generation)).finally(() => {
+          if (issuing.get(key)?.promise === promise) issuing.delete(key);
+        });
+        pending = { controller: scope.controller, promise };
+        issuing.set(key, pending);
+        scope.retain(promise);
+      }
+      const lease = await waitForCredential(pending.promise, signal);
+      live();
+      validRoute(lease.binding);
+      if (Date.parse(lease.expiresAt) - now() < minValidity) deny();
+      return structuredClone(lease);
     }); },
-    invalidate(tokenId) { revision++; for (const [key, value] of cached) if (!tokenId || value.tokenId === tokenId) cached.delete(key); },
+    invalidate(tokenId) {
+      revision++;
+      for (const issuance of issuing.values()) issuance.controller.abort();
+      issuing.clear();
+      for (const [key, value] of cached) if (!tokenId || value.tokenId === tokenId) cached.delete(key);
+    },
     close() { if (!closing) { closed = true; revision++; clearInterval(timer); cached.clear(); for (const controller of active) controller.abort(); closing = drained; } return closing; },
   };
 }

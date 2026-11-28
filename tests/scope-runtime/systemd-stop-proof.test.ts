@@ -7,6 +7,7 @@ import { createScopeRuntimeController } from '../../packages/scope-runtime/src/s
 import { SCOPE_RUNTIME_PROFILE_ID, SCOPE_RUNTIME_PROFILE_VERSION, SCOPE_RUNTIME_PROFILE_DIGEST, SCOPE_RUNTIME_HARNESS_VERSION } from '../../packages/scope-runtime/src/profile.js';
 const handle = `runtime_${'a'.repeat(32)}`;
 const unit = `matrix-scope-runtime-${'a'.repeat(32)}.service`;
+const successfulStopDeadlineMs = 2000;
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
   for (const fn of cleanups.splice(0)) await fn();
@@ -46,7 +47,7 @@ async function fixture() {
     status(value: Partial<typeof status>) { status = { ...status, ...value }; }, onStop(fn: typeof onStop) { onStop = fn; } };
 }
 it.each(['activating', 'deactivating', 'failed'])('unconditionally stops a known %s unit and waits for actual quiescence', async (initial) => {
-  const f = await fixture();
+  const f = await fixture(successfulStopDeadlineMs);
   f.status({ ActiveState: initial, SubState: initial === 'failed' ? 'failed' : 'stop-sigterm', MainPID: '123', TasksCurrent: '1' });
   await writeFile(join(f.group, 'cgroup.events'), 'populated 1\n');
   await writeFile(join(f.group, 'cgroup.procs'), '123\n');
@@ -77,7 +78,7 @@ it.each(['activating', 'deactivating', 'failed_process', 'remaining_tasks', 'rem
     expect(f.runCommand.mock.calls.some(([, args]) => args[0] === 'stop')).toBe(false);
 });
 it('only accepts a genuinely absent unit when exact prior provenance and cgroup absence are verified', async () => {
-  const f = await fixture();
+  const f = await fixture(successfulStopDeadlineMs);
   f.status({ LoadState: 'not-found', ControlGroup: '', TasksCurrent: '[not set]' });
   await rm(f.group, { recursive: true });
   f.onStop(async () => { throw new Error('not found'); });
@@ -138,7 +139,7 @@ it.each(['missing_events', 'missing_procs', 'cgroup_tasks', 'duplicate_property'
   expect(await readFile(f.metadata, 'utf8')).toContain('executionGeneration');
 });
 it('accepts a failed unit only after unconditional stop and confirmed task absence', async () => {
-  const f = await fixture();
+  const f = await fixture(successfulStopDeadlineMs);
   f.status({ ActiveState: 'failed', SubState: 'failed', TasksCurrent: '[not set]', Job: '0' });
   await expect(f.launcher.stop(handle, '7')).resolves.toBeUndefined();
   expect(f.runCommand).toHaveBeenCalledWith('/usr/bin/systemctl', ['stop', unit]);
