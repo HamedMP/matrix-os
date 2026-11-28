@@ -1,5 +1,47 @@
 import { describe, expect, it, vi } from "vitest";
-import { AppCapabilityInputSchema, createAppCapabilityClient } from "../../packages/contracts/src/app-capabilities";
+import {
+  APP_CAPABILITY_ERROR_KEY,
+  AppCapabilityInputSchema,
+  AppCapabilityRequestError,
+  appCapabilityFailureReply,
+  createAppCapabilityClient,
+  settleAppCapabilityClient,
+} from "../../packages/contracts/src/app-capabilities";
+
+describe("app capability failure status across a host boundary", () => {
+  it.each([400, 403, 404, 409, 429])("carries a safe %i through a failure reply and throws it as status", async (status) => {
+    const reply = appCapabilityFailureReply(status);
+    expect(reply).toEqual({ [APP_CAPABILITY_ERROR_KEY]: status });
+    const client = createAppCapabilityClient(async () => reply);
+    const error = await client.service("google_calendar", "list_calendars").catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(AppCapabilityRequestError);
+    expect(error).toMatchObject({ status, message: "App integrations are unavailable" });
+    await expect(createAppCapabilityClient(async () => reply).integrations()).rejects.toMatchObject({ status });
+  });
+
+  it.each([500, 502, 503, 200, 418])("never carries %i", (status) => {
+    expect(appCapabilityFailureReply(status)).toBeUndefined();
+  });
+
+  it("treats a failure reply with an unsafe or malformed status as a plain failure", async () => {
+    for (const value of [503, "409", null, { status: 409 }]) {
+      const client = createAppCapabilityClient(async () => ({ [APP_CAPABILITY_ERROR_KEY]: value }));
+      const error = await client.service("google_calendar", "list_calendars").catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(AppCapabilityRequestError);
+      expect((error as AppCapabilityRequestError).status).toBeUndefined();
+    }
+  });
+
+  it("settles every client call into a plain result that survives a structured copy", async () => {
+    const settled = settleAppCapabilityClient(createAppCapabilityClient(async (input) =>
+      input.kind === "integrations.call" ? appCapabilityFailureReply(429) : { services: [] }));
+    expect(await settled.integrations()).toEqual({ ok: true, value: [] });
+    expect(structuredClone(await settled.service("google_calendar", "free_busy", {}))).toEqual({ ok: false, status: 429 });
+    expect(await settled.service("../bad", "free_busy")).toEqual({ ok: false, invalid: true });
+    const offline = settleAppCapabilityClient(createAppCapabilityClient(async () => { throw new Error("token=secret"); }));
+    expect(await offline.capabilities()).toEqual({ ok: false });
+  });
+});
 
 describe("app capability contract", () => {
   it("rejects identity injection, arbitrary endpoints and oversized service parameters", () => {

@@ -10,8 +10,8 @@ function luminance(hex: string) {
 }
 function contrast(a: string,b: string) { const x=luminance(a),y=luminance(b); return (Math.max(x,y)+.05)/(Math.min(x,y)+.05); }
 test('every reviewed app has its own accessible light and dark identity', () => {
- assert.equal(Object.keys(identities).length,28);
- assert.equal(new Set(Object.values(identities).map(value=>value.accent)).size,28);
+ assert.equal(Object.keys(identities).length,29);
+ assert.equal(new Set(Object.values(identities).map(value=>value.accent)).size,29);
  for (const [id,palette] of Object.entries(identities)) {
   for(const key of ['accent','darkAccent','wash','glow'] as const) assert.match(palette[key],/^#[a-f0-9]{6}$/i,id);
   assert.ok(contrast(palette.accent,'#ffffff')>=4.5,`${id}: white button labels`);

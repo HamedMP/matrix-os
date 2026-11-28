@@ -217,3 +217,36 @@ it("runs the real integration preload -> IPC -> authenticated gateway request ch
   await expect(bridge.integrations()).rejects.toThrow("App integrations are unavailable");
   expect(fetchFn).toHaveBeenCalledTimes(5);
 });
+
+it("keeps a safe integration status from the gateway through IPC to the calendar adapter in the page world", async () => {
+  const { NativeAppBridge } = await import("../../desktop/src/main/embeds/native-app-bridge");
+  const { createNativeAppCapabilityRequester } = await import("../../desktop/src/main/embeds/native-app-capabilities");
+  const { createGoogleCalendarProvider } = await import("../../home/apps/_shared/office-accounts/calendar/index");
+  vi.spyOn(process, "argv", "get").mockReturnValue(["electron", "--matrix-app-bridge"]);
+  const statuses = [404, 409, 429, 403, 503];
+  const fetchFn = vi.fn(async () => Response.json({ error: "upstream secret for tenant-42" }, { status: statuses.shift() }));
+  const frame = {};
+  const event = { senderFrame: frame, sender: { id: 9, mainFrame: frame, getURL: () => "https://gateway.test/apps/calendar/", isDestroyed: () => false } };
+  const native = new NativeAppBridge({ authGeneration: () => 0, gatewayOrigin: () => "https://gateway.test", generate: vi.fn(), aiRequest: vi.fn(), request: vi.fn(), gatewayRequest: vi.fn(),
+    capabilityRequest: createNativeAppCapabilityRequester({ getGatewayOrigin: () => "https://gateway.test", getToken: () => "host-only-token", fetchFn }),
+    aiRoutesRequest: vi.fn() });
+  native.register(9, "calendar");
+  const handlers = new Map<string, (...args: unknown[]) => unknown>();
+  native.registerIpc({ handle: (channel, handler) => handlers.set(channel, handler as never) });
+  electron.ipcRenderer.invoke.mockImplementation(async (channel, input) => handlers.get(channel)!(event, input));
+  vi.spyOn(console, "warn").mockImplementation(() => undefined);
+  await import("../../desktop/src/preload/index.js");
+  const [name, matrixOS] = electron.contextBridge.exposeInMainWorld.mock.calls[0];
+  expect(name).toBe("MatrixOS");
+  expect(Object.hasOwn(matrixOS, "capabilityResults")).toBe(false);
+  const provider = createGoogleCalendarProvider({
+    account: { id: "google:owner@example.com", provider: "google", address: "owner@example.com", displayName: "Work" }, label: "Work", bridge: matrixOS,
+  });
+
+  for (const code of ["not_connected", "multiple_accounts", "rate_limited", "not_supported", "failed"]) {
+    const error = await provider.listCalendars().catch((caught: unknown) => caught);
+    expect(error).toMatchObject({ name: "ProviderError", code });
+    expect((error as Error).message).not.toContain("tenant");
+  }
+  expect(fetchFn).toHaveBeenCalledTimes(5);
+});

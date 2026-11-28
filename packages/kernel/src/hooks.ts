@@ -287,6 +287,10 @@ export const MANAGED_WRITE_ACTIONS = new Set([
   "xero_accounting_api/create_contact",
   "xero_accounting_api/update_contact",
   "zoom/create_meeting",
+  "google_calendar/create_event_with_attendees",
+  "google_calendar/update_event_details",
+  "google_calendar/delete_event",
+  "google_calendar/respond_event",
 ]);
 
 /**

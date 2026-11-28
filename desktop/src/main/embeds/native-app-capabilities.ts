@@ -8,6 +8,7 @@ import {
   type AppCapabilityInput,
   MAX_APP_BRIDGE_REPLY_BYTES,
   MAX_APP_RESPONSE_CHUNKS,
+  appCapabilityFailureReply,
   appCapabilityReplyBytes,
 } from "@matrix-os/contracts";
 import type { IpcMain, IpcMainInvokeEvent } from "electron";
@@ -19,6 +20,14 @@ export interface NativeAppRequesterOptions {
   fetchFn?: typeof fetch;
 }
 export interface CapabilitySender { id: number; readonly url: string }
+
+/** A gateway reply that was not OK. Only its status is kept; the body is never read. */
+export class NativeAppHttpError extends Error {
+  constructor(readonly status: number) {
+    super("Request failed");
+    this.name = "NativeAppHttpError";
+  }
+}
 
 export async function readBoundedResponse(response: Response, signal: AbortSignal, maxBytes: number): Promise<unknown> {
   if (signal.aborted) {
@@ -78,7 +87,7 @@ export async function requestNativeAppJson(options: NativeAppRequesterOptions, p
       ...init, redirect: "error", signal,
       headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
     });
-    if (!response.ok) { await response.body?.cancel(); throw new Error("Request failed"); }
+    if (!response.ok) { await response.body?.cancel(); throw new NativeAppHttpError(response.status); }
     return await readBoundedResponse(response, signal, maxBytes);
   } finally {
     clearTimeout(timer);
@@ -93,6 +102,9 @@ export function createNativeAppCapabilityRequester(options: NativeAppRequesterOp
       return await requestNativeAppJson(options, "/api/bridge/capabilities", { method: "POST", body: JSON.stringify({ app: identity, input }) }, appCapabilityReplyBytes(input), signal);
     } catch (error) {
       console.warn("[native-app-capabilities] request failed", error instanceof Error ? error.name : "UnknownError");
+      // IPC keeps only an error's message, so an allowlisted status is resolved as data.
+      const failure = error instanceof NativeAppHttpError ? appCapabilityFailureReply(error.status) : undefined;
+      if (failure) return failure;
       throw new Error("App integrations are unavailable");
     }
   };

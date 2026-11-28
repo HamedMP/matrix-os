@@ -5,11 +5,12 @@ import { DOCUMENT_WRITE_ACTIONS } from "../../packages/gateway/src/integrations/
 import { MICROSOFT_WRITE_ACTIONS } from "../../packages/gateway/src/integrations/microsoft-writes.js";
 import { FILE_COMMUNICATION_WRITE_ACTIONS } from "../../packages/gateway/src/integrations/file-communication-writes.js";
 import { FINANCE_WRITE_ACTIONS } from "../../packages/gateway/src/integrations/finance-writes.js";
+import { OFFICE_WRITE_ACTIONS } from "../../packages/gateway/src/integrations/office-actions.js";
 import { executeIntegrationAction } from "../../packages/gateway/src/integrations/action-execution.js";
 import type { PipedreamConnectClient } from "../../packages/gateway/src/integrations/pipedream.js";
 
 describe("managed write action wiring", () => {
-  for (const map of [TASK_CRM_WRITE_ACTIONS, DOCUMENT_WRITE_ACTIONS, MICROSOFT_WRITE_ACTIONS, FILE_COMMUNICATION_WRITE_ACTIONS, FINANCE_WRITE_ACTIONS]) {
+  for (const map of [TASK_CRM_WRITE_ACTIONS, DOCUMENT_WRITE_ACTIONS, MICROSOFT_WRITE_ACTIONS, FILE_COMMUNICATION_WRITE_ACTIONS, FINANCE_WRITE_ACTIONS, OFFICE_WRITE_ACTIONS]) {
     for (const [serviceId, actions] of Object.entries(map)) {
       it(`publishes reviewed ${serviceId} actions with their validation and approval policy`, () => {
         for (const [id, action] of Object.entries(actions)) {

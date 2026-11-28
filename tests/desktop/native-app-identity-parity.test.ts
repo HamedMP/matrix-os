@@ -2,7 +2,7 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
-import { APP_AI_CHANNEL, APP_AI_ROUTES_CHANNEL, APP_CAPABILITY_CHANNEL, MAX_APP_DATABASE_REPLY_BYTES, appRuntimeSlugFromIdentity } from "@matrix-os/contracts";
+import { APP_AI_CHANNEL, APP_AI_ROUTES_CHANNEL, APP_CAPABILITY_CHANNEL, APP_CAPABILITY_ERROR_KEY, MAX_APP_DATABASE_REPLY_BYTES, appRuntimeSlugFromIdentity, createAppCapabilityClient } from "@matrix-os/contracts";
 import { NATIVE_APP_QUERY_CHANNEL } from "@desktop/shared/native-app-bridge";
 import { NativeAppBridge, createNativeAppAiRequester, createNativeAppQueryRequester } from "@desktop/main/embeds/native-app-bridge";
 import { createNativeAppAiRoutesRequester, createNativeAppCapabilityRequester } from "@desktop/main/embeds/native-app-capabilities";
@@ -46,12 +46,18 @@ it("preserves independent nested identities through IPC, HTTP and exact integrat
     await expect(handlers.get(APP_CAPABILITY_CHANNEL)!(event, { kind: "capabilities" })).resolves.toEqual({ version: 1, integrations: app === "games/chess", ai: app === "games/chess" });
     const inventory = handlers.get(APP_CAPABILITY_CHANNEL)!(event, { kind: "integrations.list" });
     if (app === "games/chess") await expect(inventory).resolves.toEqual({ services: [{ service: "google_drive", account_label: "Personal", status: "active" }] });
-    else await expect(inventory).rejects.toThrow("App integrations are unavailable");
+    else {
+      // An app without a grant learns only "denied" (403), never which accounts exist.
+      await expect(inventory).resolves.toEqual({ [APP_CAPABILITY_ERROR_KEY]: 403 });
+      const client = createAppCapabilityClient(input => handlers.get(APP_CAPABILITY_CHANNEL)!(event, input));
+      await expect(client.integrations()).rejects.toMatchObject({ message: "App integrations are unavailable", status: 403 });
+    }
     const before = observed.length;
     await expect(handlers.get(APP_CAPABILITY_CHANNEL)!(event, { kind: "capabilities", app: "games/chess" })).rejects.toThrow();
     await expect(handlers.get(NATIVE_APP_QUERY_CHANNEL)!(event, { action: "find", table: "notes", app: "games/chess" })).rejects.toThrow();
     expect(observed).toHaveLength(before);
-    expect(observed.filter(row => row.app === app).map(row => row.path)).toEqual(["/api/bridge/query", "/api/bridge/ai", "/api/bridge/ai/routes", "/api/bridge/capabilities", "/api/bridge/capabilities"]);
+    expect(observed.filter(row => row.app === app).map(row => row.path)).toEqual(["/api/bridge/query", "/api/bridge/ai", "/api/bridge/ai/routes",
+      ...Array<string>(app === "games/chess" ? 2 : 3).fill("/api/bridge/capabilities")]);
   }
   expect(integrations.inventory).toHaveBeenCalledTimes(1);
 });
