@@ -10,6 +10,17 @@ import type { PipedreamConnectClient } from '../../packages/gateway/src/integrat
 import { GMAIL_SCOPE } from '../../packages/gateway/src/integrations/native-gmail/types.js';
 import { AccountDeletionRepository } from '../../packages/platform/src/account-deletion/repository.js';
 describe('platform native Gmail startup', () => {
+  it('validates and snapshots the fixed callback target before asynchronous module loading', async () => {
+    const loadModule = vi.fn();
+    await expect(createConfiguredPlatformGmail({ db: {} as PlatformDB, integrationDb: { getUserById: vi.fn() }, legacy: {} as any,
+      env: { MATRIX_NATIVE_MOBILE_TARGET: 'arbitrary://return' }, loadModule })).rejects.toThrow('Native mobile target unavailable');
+    expect(loadModule).not.toHaveBeenCalled();
+    const env = { GMAIL_OAUTH_ENABLED: 'true', MATRIX_NATIVE_MOBILE_TARGET: 'gmail-pilot' };
+    const createRuntime = vi.fn(() => ({ client: {} as any }));
+    await createConfiguredPlatformGmail({ db: {} as PlatformDB, integrationDb: { getUserById: vi.fn() }, legacy: {} as any, env,
+      loadModule: async () => { env.MATRIX_NATIVE_MOBILE_TARGET = 'production'; return { createNativeGmailRuntime: createRuntime }; } });
+    expect(createRuntime).toHaveBeenCalledWith(expect.objectContaining({ env: expect.objectContaining({ MATRIX_NATIVE_MOBILE_TARGET: 'gmail-pilot' }) }));
+  });
   it('uses existing legacy client when disabled, without loading secrets', async () => {
     const loadModule = vi.fn(); const client = { listAccounts: vi.fn(), revokeAccount: vi.fn() };
     const result = await createConfiguredPlatformGmail({ db: {} as PlatformDB, integrationDb: { getUserById: vi.fn() }, legacy: client, env: {}, loadModule });

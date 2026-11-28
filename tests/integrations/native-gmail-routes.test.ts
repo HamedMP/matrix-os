@@ -3,17 +3,17 @@ import { createHash } from 'node:crypto';
 import { inspect } from 'node:util';
 import { createNativeGmailLaunchRoutes } from '../../packages/gateway/src/integrations/native-gmail/routes.js';
 import { Hono } from 'hono';
-import { createNativeGmailRoutes } from '../../packages/gateway/src/integrations/native-gmail/routes.js';
+import { createNativeGmailRoutes, type NativeGmailLifecycle } from '../../packages/gateway/src/integrations/native-gmail/routes.js';
 const connection = { id: '11111111-1111-4111-8111-111111111111', user_id: 'owner', service: 'gmail', pipedream_account_id: 'gmail_11111111-1111-4111-8111-111111111111', status: 'active' };
-function setup() {
+function setup(nativeMobileTarget?: 'gmail-pilot') {
   const oauth = { start: vi.fn(async () => ({ url: 'https://accounts.google.com/o/oauth2/v2/auth?state=opaque&redirect_uri=https%3A%2F%2Fapp.matrix-os.com%2Fapi%2Fintegrations%2Fgmail%2Foauth%2Fcallback' })),
     authorization: vi.fn(async () => ({ url: 'https://accounts.google.com/o/oauth2/v2/auth?state=opaque', browserProof: 'ab'.repeat(32) })),
-    complete: vi.fn(async () => ({ connectionId: connection.id, accountLabel: 'Gmail' })), cancel: vi.fn(async () => {}),
+    complete: vi.fn<NativeGmailLifecycle['complete']>(async () => ({ connectionId: connection.id, accountLabel: 'Gmail' })), cancel: vi.fn(async () => {}),
     refresh: vi.fn(async () => {}), revoke: vi.fn(async () => true) };
   const db = { getUserById: vi.fn(async () => ({ pipedream_external_id: 'external-owner' })),
     updatePipedreamExternalId: vi.fn(), getConnectedService: vi.fn(async () => connection) };
   const broadcast = vi.fn();
-  const app = new Hono().route('/', createNativeGmailRoutes({ db, oauth, broadcast, isEligible: async () => true, resolveUserId: async c => c.req.header('x-owner') ?? null }));
+  const app = new Hono().route('/', createNativeGmailRoutes({ db, oauth, broadcast, nativeMobileTarget, isEligible: async () => true, resolveUserId: async c => c.req.header('x-owner') ?? null }));
   app.route('/auth', createNativeGmailLaunchRoutes({ oauth, resolveUserId: async c => c.req.header('x-owner') ?? null }));
   app.all('*', c => c.json({ legacy: true })); return { app, db, oauth, broadcast };
 }
@@ -22,6 +22,19 @@ const proof = 'ab'.repeat(32);
 const cookie = `__Host-matrix-gmail-${hash.slice(0,32)}=${proof}`;
 const headers = { 'x-owner': 'owner', 'content-type': 'application/json' };
 describe('native Gmail lifecycle routes', () => {
+  it('selects only the exact pilot URI and independently checks lifecycle callback output', async () => {
+    const s = setup('gmail-pilot');
+    const connect = (redirectUri: string) => s.app.request('/connect', { method: 'POST', headers, body: JSON.stringify({ service: 'gmail', redirectUri }) });
+    expect((await connect('matrixos://integrations')).status).toBe(400);
+    expect((await connect('matrixos-gmail-pilot://integrations')).status).toBe(200);
+    expect(s.oauth.start).toHaveBeenCalledWith(expect.objectContaining({ redirectUri: 'matrixos-gmail-pilot://integrations' }));
+    s.oauth.complete.mockResolvedValue({ connectionId: connection.id, accountLabel: 'Gmail', redirectUri: 'matrixos://integrations' });
+    const wrong = await s.app.request('/gmail/oauth/callback?state=opaque&code=code', { headers: { cookie } });
+    expect(wrong.status).toBe(502); expect(wrong.headers.get('location')).toBeNull();
+    s.oauth.complete.mockResolvedValue({ connectionId: connection.id, accountLabel: 'Gmail', redirectUri: 'matrixos-gmail-pilot://integrations' });
+    const good = await s.app.request('/gmail/oauth/callback?state=opaque&code=code', { headers: { cookie } });
+    expect(good.status).toBe(302); expect(good.headers.get('location')).toBe('matrixos-gmail-pilot://integrations');
+  });
   it('uses existing one-click connect contract and persisted external owner ID', async () => {
     const s = setup(); const r = await s.app.request('/connect', { method: 'POST', headers, body: JSON.stringify({ service: 'gmail', label: 'Work Gmail' }) });
     expect(r.status).toBe(200); expect(await r.json()).toEqual({ service: 'gmail', url: 'https://app.matrix-os.com/auth/gmail?state=opaque' });
