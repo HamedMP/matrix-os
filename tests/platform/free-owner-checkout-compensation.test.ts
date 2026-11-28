@@ -319,6 +319,44 @@ describe('free owner paid checkout compensation', () => {
       expect(await compensations()).toMatchObject([{ stripe_checkout_session_id: 'cs_att_blocked', status: 'refund_pending' }]);
     });
 
+    it('lets the cancellation of a stored pre-rollout subscription through and restores the free entitlement', async () => {
+      await makeFree();
+      // Before rollout: the subscription was recorded normally and replaced the free entitlement.
+      await deliver(subscriptionEvent('evt_s1', FREE));
+      expect(await getBillingEntitlement(db, FREE)).toMatchObject({ source: 'stripe', status: 'active' });
+      await blockedAttempt();
+      await db.executor.updateTable('billing_checkout_attempts').set({ status: 'paid' }).where('id', '=', 'att_blocked').execute();
+      compensateFreeOwnerCheckout.mockResolvedValueOnce({ subscriptionId: 'sub_free', settled: true, refund: null });
+      await runFreeOwnerBillingSweep({ db, stripe, now: () => NOW });
+      expect(await compensations()).toMatchObject([{ stripe_subscription_id: 'sub_free', status: 'done' }]);
+
+      // Our cancellation's webhook updates the stored subscription normally.
+      expect(await deliver(subscriptionEvent('evt_s2', FREE, { type: 'customer.subscription.deleted', status: 'canceled' })))
+        .toEqual({ received: true, processed: true });
+      expect(await db.executor.selectFrom('billing_subscriptions').select(['stripe_subscription_id', 'status']).execute())
+        .toEqual([{ stripe_subscription_id: 'sub_free', status: 'canceled' }]);
+      expect(await getBillingEntitlement(db, FREE)).toMatchObject({ source: 'free', status: 'active', planSlug: 'matrix_free' });
+      expect(await runtimeActions()).toEqual([]);
+      expect(await db.executor.selectFrom('user_machines').select('status').where('machine_id', '=', `metal-${FREE}`)
+        .executeTakeFirstOrThrow()).toEqual({ status: 'running' });
+    });
+
+    it('is not starved by older legitimate paid checkouts', async () => {
+      await makeFree();
+      for (let index = 0; index < 30; index += 1) {
+        await insertCheckoutAttempt(db, {
+          id: `att_old_${index}`, clerkUserId: FREE, stripeSessionId: `cs_old_${index}`, status: 'paid',
+          createdAt: new Date(NOW.getTime() - (index + 1) * 86_400_000).toISOString(),
+          resolvedAt: new Date(NOW.getTime() - index * 86_400_000).toISOString(),
+        });
+      }
+      await blockedAttempt();
+      await db.executor.updateTable('billing_checkout_attempts').set({ status: 'paid' }).where('id', '=', 'att_blocked').execute();
+      await runFreeOwnerBillingSweep({ db, stripe, now: () => NOW });
+      expect((await compensations()).map((row) => row.stripe_checkout_session_id)).toEqual(['cs_att_blocked']);
+      expect(await attemptStatus('att_old_0')).toBe('paid');
+    });
+
     it('lets a former paid owner\'s historical subscription flow through the normal handlers only', async () => {
       const yearAgo = new Date(NOW.getTime() - 365 * 86_400_000);
       expect(await deliver(subscriptionEvent('evt_old1', FREE, {

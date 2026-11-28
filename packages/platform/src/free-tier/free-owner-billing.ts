@@ -3,7 +3,7 @@ import type { PlatformDB } from '../db.js';
 import type { StripeBillingClient } from '../billing/stripe-client.js';
 import { createStripeBillingClient } from '../stripe-billing.js';
 import { freeOwnerPredicate, ownerOnFreePlan } from './free-checkout-guard.js';
-import { enqueueCheckoutCompensation, freeOwnerSince, runCheckoutCompensations } from './free-owner-compensation.js';
+import { enqueueCheckoutCompensation, freeOwnerSince, freeOwnerSinceSql, runCheckoutCompensations } from './free-owner-compensation.js';
 
 /**
  * ENG-520 launch guard, layer 2 (review P1): free to paid upgrade (ENG-606)
@@ -121,6 +121,9 @@ async function queuePaidCheckoutsOfFreeOwners(db: PlatformDB, at: Date): Promise
     .where((eb) => eb.not(eb.exists(eb.selectFrom('billing_free_owner_compensations')
       .select('billing_free_owner_compensations.stripe_checkout_session_id')
       .whereRef('billing_free_owner_compensations.stripe_checkout_session_id', '=', 'billing_checkout_attempts.stripe_session_id'))))
+    // Started while free, filtered before the limit so older real purchases never starve blocked ones.
+    .where(sql<boolean>`billing_checkout_attempts.created_at::timestamptz >= ${freeOwnerSinceSql(sql.ref('billing_checkout_attempts.clerk_user_id'))}`)
+    .orderBy('billing_checkout_attempts.created_at')
     .limit(SWEEP_BATCH)
     .execute();
   const atIso = at.toISOString();

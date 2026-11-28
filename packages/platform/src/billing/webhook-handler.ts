@@ -58,6 +58,7 @@ import {
   freeOwnerSince,
   readInvoiceSubscriptionId,
   rearmCompensationsForSubscription,
+  freeEntitlementToRestoreAfterCompensation,
 } from '../free-tier/free-owner-compensation.js';
 const BILLING_CHECKOUT_COMPLETED_EVENT =
   MATRIX_TELEMETRY_EVENTS.BILLING_CHECKOUT_COMPLETED ?? 'matrix_billing_checkout_completed';
@@ -434,6 +435,11 @@ export function createStripeWebhookHandler(options: Parameters<typeof createBill
         }
         const summary = await recomputeStripeSummary(trx, projection.clerkUserId, priceCatalog, env, webhookProcessedAt);
         if (summary) await persistEntitlement(trx, summary);
+        // ENG-520: a compensated pre-rollout subscription that is now canceled leaves no paid rights.
+        const restoredFree = await freeEntitlementToRestoreAfterCompensation(trx, {
+          clerkUserId: projection.clerkUserId, stripeSubscriptionId: projection.stripeSubscriptionId, at: webhookProcessedAt,
+        });
+        if (restoredFree) await persistEntitlement(trx, restoredFree);
         if (
           summary
           && projection.prebillingIntentId

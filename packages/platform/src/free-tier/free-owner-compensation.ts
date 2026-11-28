@@ -1,7 +1,8 @@
-import { sql, type ColumnType } from 'kysely';
+import { sql, type ColumnType, type Expression, type RawBuilder } from 'kysely';
 import type { PlatformDB } from '../db.js';
 import type { FreeOwnerCheckoutRefundStatus, StripeBillingClient } from '../billing/stripe-client.js';
-import { FREE_RUNTIME_SLOT } from './free-entitlement.js';
+import { buildFreeEntitlement, FREE_RUNTIME_SLOT } from './free-entitlement.js';
+import type { BillingEntitlement } from '../billing.js';
 
 /**
  * ENG-520 launch guard, layer 3: compensation for a paid Checkout that a free
@@ -187,18 +188,58 @@ export async function applyCompensationRefundEvent(db: PlatformDB, value: unknow
 export async function blockedCheckoutHoldsSubscription(db: PlatformDB, input: {
   clerkUserId: string; runtimeSlot: string; stripeSubscriptionId: string; subscriptionCreated: unknown;
 }): Promise<boolean> {
-  if (await compensationHoldsSubscription(db, input.stripeSubscriptionId)) return true;
-  const since = await freeOwnerSince(db, input.clerkUserId);
-  if (!since || typeof input.subscriptionCreated !== 'number' || input.subscriptionCreated * 1000 < since.getTime()) return false;
+  // A stored subscription (recorded before the guard shipped) always flows through
+  // the normal handlers, so its cancellation clears the stored paid rights.
   const recorded = await db.executor.selectFrom('billing_subscriptions').select('stripe_subscription_id')
     .where('stripe_subscription_id', '=', input.stripeSubscriptionId).executeTakeFirst();
   if (recorded) return false;
+  if (await compensationHoldsSubscription(db, input.stripeSubscriptionId)) return true;
+  const since = await freeOwnerSince(db, input.clerkUserId);
+  if (!since || typeof input.subscriptionCreated !== 'number' || input.subscriptionCreated * 1000 < since.getTime()) return false;
   const attempts = await db.executor.selectFrom('billing_checkout_attempts').select('created_at')
     .where('clerk_user_id', '=', input.clerkUserId)
     .where('runtime_slot', '=', input.runtimeSlot)
     .where('status', 'in', ['creating', 'open', 'paid', 'abandoned'])
     .execute();
   return attempts.some((attempt) => Date.parse(attempt.created_at) >= since.getTime());
+}
+
+/** SQL for freeOwnerSince over an owner id expression (null when not free). */
+export function freeOwnerSinceSql(owner: Expression<unknown>): RawBuilder<Date | null> {
+  return sql<Date | null>`COALESCE(
+    (SELECT since_entitlement.effective_from::timestamptz FROM billing_entitlements since_entitlement
+      WHERE since_entitlement.clerk_user_id = ${owner} AND since_entitlement.source = 'free'),
+    (SELECT MIN(since_machine.provisioned_at::timestamptz) FROM user_machines since_machine
+      WHERE since_machine.clerk_user_id = ${owner} AND since_machine.deleted_at IS NULL
+        AND since_machine.substrate = 'metal' AND since_machine.runtime_slot = ${FREE_RUNTIME_SLOT}))`;
+}
+
+/**
+ * After a compensated subscription that was stored before the guard shipped
+ * is canceled, its paid rights are void (the payment was refunded), even if
+ * the projection still carries a period end. Restore the owner's free
+ * entitlement (the caller persists it in the webhook transaction), unless another subscription or
+ * override still grants paid rights. Their free metal runtime is never touched.
+ */
+export async function freeEntitlementToRestoreAfterCompensation(db: PlatformDB, input: {
+  clerkUserId: string; stripeSubscriptionId: string; at: Date;
+}): Promise<BillingEntitlement | null> {
+  if (!await compensationHoldsSubscription(db, input.stripeSubscriptionId)) return null;
+  const since = await freeOwnerSince(db, input.clerkUserId);
+  if (!since) return null;
+  const subscriptions = await db.executor.selectFrom('billing_subscriptions')
+    .select(['stripe_subscription_id', 'status']).where('clerk_user_id', '=', input.clerkUserId).execute();
+  const ended = (status: string) => status === 'canceled' || status === 'ended';
+  const compensated = subscriptions.find((row) => row.stripe_subscription_id === input.stripeSubscriptionId);
+  if (!compensated || !ended(compensated.status)) return null;
+  if (subscriptions.some((row) => row.stripe_subscription_id !== input.stripeSubscriptionId && !ended(row.status))) return null;
+  const atIso = input.at.toISOString();
+  const override = await db.executor.selectFrom('billing_entitlement_overrides').select('id')
+    .where('clerk_user_id', '=', input.clerkUserId).where('revoked_at', 'is', null).where('status', '=', 'active')
+    .where(sql<boolean>`(expires_at IS NULL OR expires_at::timestamptz > ${atIso}::timestamptz)`)
+    .executeTakeFirst();
+  if (override) return null;
+  return { ...buildFreeEntitlement(input.clerkUserId, input.at), effectiveFrom: since.toISOString() };
 }
 
 async function claim(db: PlatformDB, at: Date) {
