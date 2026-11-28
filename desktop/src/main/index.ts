@@ -70,9 +70,6 @@ import {registerAiUsageIpc} from "./ipc/ai-usage";
 import {createUsageSyncService} from "./usage-sync/service";
 import { registerLocalChatImportIpc } from "./ipc/local-chat-import";
 import { registerIpcHandlers } from "./ipc/handlers";
-import { registerChatElectronPreview } from "./chat-electron-preview/register";
-import { createChatElectronPreviewTransport } from "./chat-electron-preview/transport";
-import { registerChatMacTerminal } from "./chat-mac-terminal/register";
 import { fetchDesktopSupportIdentity } from "./support/support-identity-client";
 import { createLocalStore } from "./persistence/local-store";
 import { installShortcuts } from "./shortcuts/install-shortcuts";
@@ -384,8 +381,6 @@ if (!gotLock) {
       }) : null;
 
       let invalidateAppCapabilities: (() => void) | undefined;
-      let cancelChatElectronPreview: (() => void) | undefined;
-      let cancelChatMacTerminal: (() => Promise<void>) | undefined;
       const auth = new AuthService({
         ...(previewContext ? { previewContext } : {}),
         authRedirectUri: channelIdentity.authRedirectUri,
@@ -396,8 +391,6 @@ if (!gotLock) {
         saveProfile: (profile) => store.set("profile", profile),
         clearProfile: () => store.delete("profile"),
         onAuthChanged: (status) => {
-          cancelChatElectronPreview?.();
-          void cancelChatMacTerminal?.();
           invalidateAppCapabilities?.();
           nativeAppChatNavigation?.cancelAll();
           navigationCache?.observe(status);
@@ -712,19 +705,6 @@ if (!gotLock) {
         terminalUrl: terminalRendererUrl,
       };
       const authorizeSender = createSenderPolicy(windowSenders);
-      const chatDeviceTransport = createChatElectronPreviewTransport(auth);
-      const chatElectronPreview = registerChatElectronPreview(ipcMain, {
-        allowed: process.platform === "darwin" && !app.isPackaged && !previewContext,
-        checkout: process.env.MATRIX_ELECTRON_PREVIEW_CHECKOUT,
-        userData,
-        electronPath: app.getPath("exe"),
-        auth,
-        transport: chatDeviceTransport,
-        window: () => mainWindow,
-        isTrustedSender: (event) => senderRole(windowSenders, event) === "main",
-      });
-      cancelChatElectronPreview = chatElectronPreview.cancel;
-      app.once("before-quit", cancelChatElectronPreview);
       const localRuntime = resolveLocalTerminalRuntime({
         isPackaged: app.isPackaged, resourcesPath: process.resourcesPath, userData, home: homedir(), env: process.env,
       });
@@ -742,25 +722,6 @@ if (!gotLock) {
       streams.bind(localTerminalHost);
       localTerminals = localTerminalHost;
       registerLocalTerminalIpc(ipcMain, localTerminalHost, authorizeSender, streams);
-      const macTerminalChecksAllowed = process.platform === "darwin" && !app.isPackaged && !previewContext
-        && process.env.MATRIX_MAC_TERMINAL_CHECK === "1";
-      let macBackgroundChecksActive = false;
-      let showMacBackgroundStop: ((active: boolean) => void) | undefined;
-      const macTerminalChecks = registerChatMacTerminal(ipcMain, {
-        auth,
-        transport: chatDeviceTransport,
-        tryBackgroundPreview: chatElectronPreview.tryBackgroundPreview,
-        host: localTerminalHost,
-        allowed: macTerminalChecksAllowed,
-        window: () => mainWindow,
-        isTrustedSender: (event) => senderRole(windowSenders, event) === "main",
-        onBackgroundActiveChange(active) {
-          macBackgroundChecksActive = active;
-          showMacBackgroundStop?.(active);
-        },
-      });
-      cancelChatMacTerminal = macTerminalChecks.cancelAll;
-      app.once("before-quit", () => { void cancelChatMacTerminal?.(); });
       // Both trusted windows host terminals, so both may read copied files.
       registerTerminalClipboardIpc(ipcMain, {
         clipboard,
@@ -804,8 +765,6 @@ if (!gotLock) {
           notification.show();
         },
         onRuntimeChanged: (slot) => {
-          cancelChatElectronPreview?.();
-          void cancelChatMacTerminal?.();
           navigationCache?.observe(auth.getStatus());
           chatgptPlan?.cancelAll();
           chatgptPlan?.resume();
@@ -967,12 +926,7 @@ if (!gotLock) {
           void terminalWindowController.openOrFocus()
             .catch((error: unknown) => logMainError("failed to open Terminal window", error));
         },
-        ...(macTerminalChecksAllowed ? {
-          stopBackgroundMacChecks: () => { void macTerminalChecks.stopBackground(); },
-        } : {}),
       });
-      showMacBackgroundStop = terminalMenu.backgroundMacChecksActive;
-      showMacBackgroundStop(macBackgroundChecksActive);
 
       void updater.check();
       updateCheckTimer = setInterval(() => {

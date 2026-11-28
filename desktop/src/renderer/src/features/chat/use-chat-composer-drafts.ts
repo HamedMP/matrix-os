@@ -109,18 +109,16 @@ export function useChatComposerDrafts({
   }, [scope, updateScope]);
 
   return {
-    seedChatDraft: (targetChatId: string, text: string, replace?: { text: string; revision: number }) => {
+    seedChatDraft: (targetChatId: string, text: string) => {
       if (retentionIdentity !== undefined && retentionIdentity !== desktopComposerDraftIdentity(useConnection.getState())) return false;
       const target = `chat:${targetChatId}`;
       const saved = retentionIdentity === undefined ? draftsRef.current[target]
         : useRetainedComposerDrafts.getState().drafts[target];
-      const canSeed = (existing: ComposerDraft | undefined) => replace
-        ? existing?.text === replace.text && existing.revision === replace.revision && !existing.referenceTokens.length
-        : !existing || (!existing.text.trim() && !existing.referenceTokens.length);
-      if (!canSeed(saved)) return false;
+      if (saved && (saved.text.trim() || saved.referenceTokens.length)) return false;
       setDrafts((current, revision) => {
-        return canSeed(current[target])
-          ? rememberDraft(current, target, { text, referenceTokens: [] }, null, revision) : current;
+        const existing = current[target];
+        return existing && (existing.text.trim() || existing.referenceTokens.length) ? current
+          : rememberDraft(current, target, { text, referenceTokens: [] }, null, revision);
       });
       return true;
     },

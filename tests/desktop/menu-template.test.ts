@@ -51,24 +51,6 @@ function accelerators(template: MenuItemConstructorOptions[], platform: Platform
 }
 
 describe("createAppMenuTemplate", () => {
-  it("offers a native stop control for enabled Mac background checks independent of the renderer", () => {
-    const stopBackgroundMacChecks = vi.fn();
-    const menuOptions = options({ isPackaged: false, stopBackgroundMacChecks });
-    function stopItem(template: ReturnType<typeof createAppMenuTemplate>) {
-      const appMenu = template.find(item => item.label === "Matrix OS");
-      return Array.isArray(appMenu?.submenu)
-        ? appMenu.submenu.find(item => item.id === "stop-background-mac-checks")
-        : undefined;
-    }
-    const item = stopItem(createAppMenuTemplate(menuOptions));
-    expect(item).toMatchObject({ label: "Stop Background Mac Terminal Checks", visible: false });
-    if (!item?.click) throw new Error("missing native stop callback");
-    item.click({} as never, {} as never, {} as never);
-    expect(stopBackgroundMacChecks).toHaveBeenCalledOnce();
-    expect(menuOptions.send).not.toHaveBeenCalled();
-    expect(stopItem(createAppMenuTemplate({ ...menuOptions, stopBackgroundMacChecks: undefined }))).toBeUndefined();
-  });
-
   it("preserves Electron's standard non-terminal Edit menu roles", () => {
     expect(createAppMenuTemplate(options()).some((item) => item.role === "editMenu")).toBe(true);
   });
